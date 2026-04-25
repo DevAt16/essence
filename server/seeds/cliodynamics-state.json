@@ -1,0 +1,327 @@
+{
+  "activeNoteId": "clio-regularities",
+  "folders": [
+    {
+      "id": "research-cliodynamics",
+      "name": "Cliodynamics",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-cliodynamics-methods",
+      "name": "Methods",
+      "parentId": "research-cliodynamics",
+      "collectionId": "research"
+    },
+    {
+      "id": "research-cliodynamics-cases",
+      "name": "Case Studies",
+      "parentId": "research-cliodynamics",
+      "collectionId": "research"
+    },
+    {
+      "id": "research-datasets",
+      "name": "Datasets",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-datasets-seshat",
+      "name": "Seshat",
+      "parentId": "research-datasets",
+      "collectionId": "research"
+    },
+    {
+      "id": "ideas-clio",
+      "name": "Cliodynamics Questions",
+      "parentId": null,
+      "collectionId": "ideas"
+    },
+    {
+      "id": "ideas-clio-models",
+      "name": "Models",
+      "parentId": "ideas-clio",
+      "collectionId": "ideas"
+    },
+    {
+      "id": "ideas-clio-quotes",
+      "name": "Quotes",
+      "parentId": null,
+      "collectionId": "ideas"
+    }
+  ],
+  "notes": [
+    {
+      "id": "clio-regularities",
+      "title": "Cliodynamics and the Search for Historical Regularities",
+      "collectionId": "research",
+      "folderId": "research-cliodynamics",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-clio-1",
+          "type": "paragraph",
+          "text": "Cliodynamics begins with a simple but demanding claim: large historical societies produce enough recurring structure that their trajectories can be studied with the same patience we bring to ecology or macroeconomics. It does not deny contingency. It asks whether contingency sits on top of slower moving pressures such as population growth, elite competition, fiscal stress, and declining social cohesion."
+        },
+        {
+          "id": "block-clio-2",
+          "type": "paragraph",
+          "text": "The attraction of the field is not prediction for its own sake. It is the possibility of turning broad historical narratives into testable questions. When instability rises, what changed first: wages, elite numbers, tax capacity, frontier violence, or food prices? A cliodynamic approach tries to make those sequences explicit."
+        },
+        {
+          "id": "block-clio-3",
+          "type": "quote",
+          "text": "Good historical theory should narrow the range of surprises without pretending to abolish surprise.",
+          "citation": "Seed note"
+        },
+        {
+          "id": "block-clio-4",
+          "type": "heading",
+          "text": "Why the field feels timely"
+        },
+        {
+          "id": "block-clio-5",
+          "type": "paragraph",
+          "text": "Digital archives, standardized event datasets, and comparative historical databases now make it possible to work across centuries with more discipline than earlier generations could manage. The result is a research culture that can move between narrative interpretation and numerical pattern-seeking without forcing one to eliminate the other."
+        }
+      ],
+      "tags": ["cliodynamics", "historical-data", "long-form"],
+      "previewDate": "Apr 25, 2026",
+      "isFavorite": true,
+      "layout": "feature"
+    },
+    {
+      "id": "structural-demography",
+      "title": "Why Structural-Demographic Theory Matters Again",
+      "collectionId": "research",
+      "folderId": "research-cliodynamics-methods",
+      "status": "Research",
+      "blocks": [
+        {
+          "id": "block-sdt-1",
+          "type": "paragraph",
+          "text": "Structural-demographic theory tries to explain why periods of apparent order can give way to abrupt instability. Its central intuition is that political turbulence is often the downstream result of interacting structural pressures rather than a single bad decision or charismatic leader."
+        },
+        {
+          "id": "block-sdt-2",
+          "type": "bullet-list",
+          "items": [
+            "popular immiseration or stagnating living standards",
+            "elite overproduction and sharper intra-elite conflict",
+            "state fiscal weakness or declining administrative capacity"
+          ]
+        },
+        {
+          "id": "block-sdt-3",
+          "type": "paragraph",
+          "text": "What makes the theory useful is that each component can be proxied. Wages, debt burdens, office-seeking elites, military expenditures, and tax extraction all leave traces. The challenge is less the existence of evidence than the discipline required to compare the same pressures across very different societies."
+        },
+        {
+          "id": "block-sdt-4",
+          "type": "heading",
+          "text": "Working question"
+        },
+        {
+          "id": "block-sdt-5",
+          "type": "paragraph",
+          "text": "Can modern democracies display the same pressure profile identified in premodern empires, or do electoral institutions change the timing without changing the underlying mechanism?"
+        }
+      ],
+      "tags": ["structural-demography", "elite-competition", "state-capacity"],
+      "previewDate": "Apr 24, 2026",
+      "isFavorite": true,
+      "layout": "feature"
+    },
+    {
+      "id": "imperial-cycles",
+      "title": "Asabiya, State Capacity, and Imperial Cycles",
+      "collectionId": "research",
+      "folderId": "research-cliodynamics-cases",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-empire-1",
+          "type": "paragraph",
+          "text": "One of the enduring bridges between classical historical thought and cliodynamics is the question of collective solidarity. Ibn Khaldun's idea of asabiya can be read as a way of asking how strongly groups coordinate, sacrifice, and organize before institutions harden into hierarchy and self-preservation."
+        },
+        {
+          "id": "block-empire-2",
+          "type": "paragraph",
+          "text": "In later imperial phases, success can undermine the social glue that made expansion possible. Administrative layers thicken, rents accumulate, and the ruling coalition becomes more interested in defending privilege than renewing capacity. Cliodynamic models treat this not as moral decline alone, but as a measurable shift in incentives."
+        },
+        {
+          "id": "block-empire-3",
+          "type": "heading",
+          "text": "Case comparison"
+        },
+        {
+          "id": "block-empire-4",
+          "type": "bullet-list",
+          "items": [
+            "late Roman fiscal pressure and military overstretch",
+            "Abbasid fragmentation and provincial autonomy",
+            "Qing demographic expansion alongside administrative strain"
+          ]
+        }
+      ],
+      "tags": ["asabiya", "imperial-cycles", "state-formation"],
+      "previewDate": "Apr 22, 2026",
+      "isFavorite": false,
+      "layout": "standard"
+    },
+    {
+      "id": "topic-elite-overproduction",
+      "title": "Research Topic: Elite Overproduction and Political Stress",
+      "collectionId": "research",
+      "folderId": "research-cliodynamics-methods",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-topic-elite-1",
+          "type": "paragraph",
+          "text": "Research angle: identify historical moments when the supply of status-seeking elites appears to outrun the number of available offices, estates, or patronage channels."
+        },
+        {
+          "id": "block-topic-elite-2",
+          "type": "bullet-list",
+          "items": [
+            "Possible signals: falling returns to elite credentials, factional pamphlet wars, dynastic branching, court conspiracies.",
+            "Candidate comparisons: late Roman Republic, late Tang, ancien regime France, early twentieth-century Russia.",
+            "Need: a better proxy for aspirant elites beyond formal officeholders."
+          ]
+        }
+      ],
+      "tags": ["elite-competition", "research-topic", "structural-demography"],
+      "previewDate": "Apr 21, 2026",
+      "isFavorite": true,
+      "layout": "standard"
+    },
+    {
+      "id": "topic-seshat",
+      "title": "Research Topic: Seshat as a Machine-Readable Archive",
+      "collectionId": "research",
+      "folderId": "research-datasets-seshat",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-seshat-1",
+          "type": "paragraph",
+          "text": "Seshat is interesting not only because it aggregates historical variables, but because it forces methodological choices into the open. Coding uncertainty, regional scope, and temporal resolution become part of the research design rather than afterthoughts."
+        },
+        {
+          "id": "block-seshat-2",
+          "type": "heading",
+          "text": "Questions to test"
+        },
+        {
+          "id": "block-seshat-3",
+          "type": "bullet-list",
+          "items": [
+            "Which variables are robust enough for forecasting instability windows?",
+            "How much does imputation change the apparent timing of social breakdown?",
+            "Can dataset granularity distinguish reform from delayed collapse?"
+          ]
+        }
+      ],
+      "tags": ["seshat", "historical-data", "research-topic"],
+      "previewDate": "Apr 20, 2026",
+      "isFavorite": false,
+      "layout": "standard"
+    },
+    {
+      "id": "topic-urbanization",
+      "title": "Research Topic: Urbanization, Fiscal Strain, and Revolt",
+      "collectionId": "research",
+      "folderId": "research-cliodynamics-cases",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-urban-1",
+          "type": "paragraph",
+          "text": "Hypothesis: rapid urban concentration increases both extractive capacity and fragility. When grain supply, credit, or policing falter, dense cities convert administrative weakness into visible political crisis."
+        },
+        {
+          "id": "block-urban-2",
+          "type": "bullet-list",
+          "items": [
+            "Track links between capital growth, tax arrears, and riot frequency.",
+            "Compare provisioning systems rather than city size alone.",
+            "Look for thresholds where fiscal adaptation lags urban expansion."
+          ]
+        }
+      ],
+      "tags": ["demographic-pressure", "state-capacity", "research-topic"],
+      "previewDate": "Apr 19, 2026",
+      "isFavorite": false,
+      "layout": "standard"
+    },
+    {
+      "id": "topic-model-checklist",
+      "title": "Research Topic: What Makes a Historical Dataset Predictive?",
+      "collectionId": "ideas",
+      "folderId": "ideas-clio-models",
+      "status": "Ideas",
+      "blocks": [
+        {
+          "id": "block-model-1",
+          "type": "paragraph",
+          "text": "A useful cliodynamic dataset should do more than archive interesting facts. It should preserve temporal ordering, handle missingness honestly, and allow pressures to be compared before and during crisis periods."
+        },
+        {
+          "id": "block-model-2",
+          "type": "bullet-list",
+          "items": [
+            "clear definitions of instability events",
+            "consistent units across regions",
+            "documented uncertainty and coder disagreement",
+            "enough time depth to detect pre-crisis buildup"
+          ]
+        }
+      ],
+      "tags": ["modeling", "historical-data", "ideas"],
+      "previewDate": "Apr 18, 2026",
+      "isFavorite": true,
+      "layout": "standard"
+    },
+    {
+      "id": "quote-khaldun",
+      "title": "Ibn Khaldun on recurrence",
+      "collectionId": "ideas",
+      "folderId": "ideas-clio-quotes",
+      "status": "Quote",
+      "blocks": [
+        {
+          "id": "block-quote-khaldun-1",
+          "type": "quote",
+          "text": "The past resembles the future more than one drop of water resembles another.",
+          "citation": "Ibn Khaldun"
+        }
+      ],
+      "tags": ["asabiya", "cliodynamics"],
+      "previewDate": "Apr 17, 2026",
+      "isFavorite": true,
+      "type": "quote",
+      "layout": "quote"
+    },
+    {
+      "id": "quote-marx",
+      "title": "Karl Marx on structure and agency",
+      "collectionId": "ideas",
+      "folderId": "ideas-clio-quotes",
+      "status": "Quote",
+      "blocks": [
+        {
+          "id": "block-quote-marx-1",
+          "type": "quote",
+          "text": "Men make their own history, but they do not make it as they please.",
+          "citation": "Karl Marx"
+        }
+      ],
+      "tags": ["historical-theory", "cliodynamics"],
+      "previewDate": "Apr 16, 2026",
+      "isFavorite": false,
+      "type": "quote",
+      "layout": "quote"
+    }
+  ]
+}

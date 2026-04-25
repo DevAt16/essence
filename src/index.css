@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
+
+:root {
+  --paper: #fdf8f8;
+  --paper-panel: #ffffff;
+  --paper-soft: #f7f3f2;
+  --ink: #1c1b1b;
+  --ink-strong: #131212;
+  --ink-subtle: #4a4746;
+  --ink-muted: #7a7472;
+  --line: #e5e2e1;
+  --line-strong: #d2ccca;
+  --line-dark: #a09794;
+  --focus: #2f6df6;
+  --focus-soft: rgba(47, 109, 246, 0.14);
+  --editor-width: 800px;
+  --font-serif: 'Newsreader', Georgia, serif;
+  --font-sans: 'Instrument Sans', 'Segoe UI', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, monospace;
+
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100svh;
+  background: var(--paper);
+}
+
+::selection {
+  background: var(--focus-soft);
+}
+
+a,
+button,
+input {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+#root {
+  min-height: 100svh;
+}
