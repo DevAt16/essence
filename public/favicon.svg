@@ -1,27 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <rect x="6" y="6" width="52" height="52" rx="16" fill="#FFFFFF" stroke="#D2CCCA" stroke-width="1.2" />
-  <text
-    x="11.5"
-    y="8"
-    dominant-baseline="hanging"
+  <rect x="5" y="5" width="54" height="54" rx="18" fill="#FFFFFF" stroke="#D2CCCA" stroke-width="1.2" />
+  <path
     fill="#1C1B1B"
-    font-family="Georgia, 'Times New Roman', serif"
-    font-size="37"
-    font-weight="700"
-    letter-spacing="-2.2"
-  >
-    E
-  </text>
-  <text
-    x="31"
-    y="24.5"
-    dominant-baseline="hanging"
-    fill="#1C1B1B"
-    font-family="Georgia, 'Times New Roman', serif"
-    font-size="35"
-    font-weight="700"
-    letter-spacing="-2.1"
-  >
-    S
-  </text>
+    d="M45.8 12H25.7C16.2 12 10 17.7 10 25.3c0 4.9 2.5 8.6 6.8 10.5C12.4 37.8 10 41.5 10 46.3 10 53.8 16.3 59 25.8 59h20c3.7 0 6.4-2.6 6.4-5.9s-2.7-5.8-6.4-5.8H27.2c-2.5 0-4.1-1.2-4.1-3s1.6-3 4.1-3h15.6c3.4 0 5.9-2.4 5.9-5.5s-2.5-5.5-5.9-5.5H27.2c-2.4 0-4.1-1.2-4.1-3s1.7-3 4.1-3h18.6c3.7 0 6.4-2.5 6.4-5.8S49.5 12 45.8 12Z"
+  />
 </svg>

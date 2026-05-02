@@ -1,8 +1,23 @@
 import 'dotenv/config'
 
+import { randomUUID } from 'node:crypto'
+
 import express from 'express'
 
-import { ensureSchema, getAppState, getNoteRevisions, pool, saveAppState, searchNotes } from './db.mjs'
+import {
+  createUserSession,
+  deleteUserSession,
+  ensureSchema,
+  getAppState,
+  getLocalUser,
+  getNoteRevisions,
+  getOrCreateUserByEmail,
+  getUserBySessionToken,
+  localUserId,
+  pool,
+  saveAppState,
+  searchNotes,
+} from './db.mjs'
 
 const port = Number(process.env.PORT ?? 4000)
 const app = express()
@@ -18,10 +33,68 @@ app.get('/api/health', async (_request, response, next) => {
   }
 })
 
-app.get('/api/state', async (_request, response, next) => {
+app.get('/api/auth/session', async (request, response, next) => {
   try {
-    const state = await getAppState()
-    response.json({ state })
+    const user = await getRequestUser(request)
+    const state = await getAppState(user.id)
+
+    response.json({ state, user: serializeUser(user) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/login', async (request, response, next) => {
+  try {
+    const { email, state } = request.body ?? {}
+    const user = await getOrCreateUserByEmail(email)
+
+    if (!user) {
+      response.status(400).json({ error: 'Enter a valid email address.' })
+      return
+    }
+
+    let accountState = await getAppState(user.id)
+
+    if (!accountState && isPersistedAppState(state)) {
+      accountState = cloneStateForAccount(state)
+      await saveAppState(accountState, {
+        userId: user.id,
+        recordRevisions: false,
+      })
+    }
+
+    const session = await createUserSession(user.id)
+    setSessionCookie(response, session.token, session.expiresAt)
+
+    response.json({
+      state: accountState ?? createEmptyPersistedState(),
+      user: serializeUser(user),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/logout', async (request, response, next) => {
+  try {
+    await deleteUserSession(getSessionToken(request))
+    clearSessionCookie(response)
+
+    const user = await getRequestUser({ headers: {} })
+    const state = await getAppState(user.id)
+
+    response.json({ state, user: serializeUser(user) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/state', async (request, response, next) => {
+  try {
+    const user = await getRequestUser(request)
+    const state = await getAppState(user.id)
+    response.json({ state, user: serializeUser(user) })
   } catch (error) {
     next(error)
   }
@@ -29,9 +102,10 @@ app.get('/api/state', async (_request, response, next) => {
 
 app.get('/api/notes/:noteId/revisions', async (request, response, next) => {
   try {
+    const user = await getRequestUser(request)
     const { noteId } = request.params
     const limit = Number(request.query.limit ?? 20)
-    const revisions = await getNoteRevisions(noteId, limit)
+    const revisions = await getNoteRevisions(noteId, limit, user.id)
     response.json({ revisions })
   } catch (error) {
     next(error)
@@ -40,10 +114,59 @@ app.get('/api/notes/:noteId/revisions', async (request, response, next) => {
 
 app.get('/api/search', async (request, response, next) => {
   try {
+    const user = await getRequestUser(request)
     const query = String(request.query.q ?? '')
     const limit = Number(request.query.limit ?? 24)
-    const results = await searchNotes(query, limit)
+    const results = await searchNotes(query, limit, user.id)
     response.json({ results })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/ai/draft', async (request, response, next) => {
+  try {
+    await getRequestUser(request)
+
+    const requestContext = normalizeAiDraftRequest(request.body)
+
+    if (!requestContext.ok) {
+      response.status(400).json({ error: requestContext.error })
+      return
+    }
+
+    const rawDraft = await generateGeminiJson(
+      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta),
+      geminiDraftResponseSchema,
+      { temperature: 0.72 },
+    )
+    const draft = normalizeAiDraft(rawDraft, requestContext)
+
+    response.json({ draft })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/ai/assist', async (request, response, next) => {
+  try {
+    await getRequestUser(request)
+
+    const requestContext = normalizeAiAssistRequest(request.body)
+
+    if (!requestContext.ok) {
+      response.status(400).json({ error: requestContext.error })
+      return
+    }
+
+    const rawResult = await generateGeminiJson(
+      buildGeminiAssistPrompt(requestContext),
+      geminiAssistResponseSchema,
+      { temperature: requestContext.meta.temperature },
+    )
+    const result = normalizeAiAssistResult(rawResult, requestContext)
+
+    response.json({ result })
   } catch (error) {
     next(error)
   }
@@ -60,7 +183,11 @@ app.put('/api/state', async (request, response, next) => {
       return
     }
 
-    await saveAppState(state, { revisionEvents: normalizeRevisionEvents(revisionEvents) })
+    const user = await getRequestUser(request)
+    await saveAppState(state, {
+      userId: user.id,
+      revisionEvents: normalizeRevisionEvents(revisionEvents),
+    })
     response.status(204).end()
   } catch (error) {
     next(error)
@@ -69,7 +196,8 @@ app.put('/api/state', async (request, response, next) => {
 
 app.use((error, _request, response, _next) => {
   console.error(error)
-  response.status(500).json({ error: 'Internal server error' })
+  const statusCode = Number.isInteger(error?.status) ? error.status : 500
+  response.status(statusCode).json({ error: statusCode === 500 ? 'Internal server error' : error.message })
 })
 
 await ensureSchema()
@@ -121,4 +249,656 @@ function normalizeRevisionEvents(value) {
 
     return noteId && revisionKind ? [{ noteId, revisionKind }] : []
   })
+}
+
+const aiDraftCategoryMeta = {
+  article: {
+    collectionId: 'research',
+    guidance:
+      'Write a clear explanatory article for students and researchers. Use an accessible introduction, several well-structured sections, and a concise closing synthesis.',
+    label: 'Article',
+    layout: 'feature',
+    noteType: undefined,
+    status: 'Article',
+    tag: 'article',
+  },
+  essay: {
+    collectionId: 'research',
+    guidance:
+      'Write an original argumentative essay. Establish a thesis, develop it with careful reasoning, and end with a reflective conclusion.',
+    label: 'Essay',
+    layout: 'feature',
+    noteType: undefined,
+    status: 'Essay',
+    tag: 'essay',
+  },
+  quote: {
+    collectionId: 'ideas',
+    guidance:
+      'Write one original aphoristic quote, then add a short reflective note that explains the thought without over-explaining it.',
+    label: 'Quote',
+    layout: 'quote',
+    noteType: 'quote',
+    status: 'Quote',
+    tag: 'quote',
+  },
+  'research-topic': {
+    collectionId: 'research',
+    guidance:
+      'Create a research brief. Include a working framing, research questions, possible hypotheses, methods, and what to verify next.',
+    label: 'Research Topic',
+    layout: 'standard',
+    noteType: undefined,
+    status: 'Research',
+    tag: 'research-topic',
+  },
+}
+
+const aiAssistActionMeta = {
+  'continue-writing': {
+    label: 'Continue writing',
+    guidance:
+      'Continue the current note with 2 to 4 coherent blocks. Match the existing tone and structure. Do not summarize what is already written.',
+    temperature: 0.72,
+  },
+  'improve-clarity': {
+    label: 'Improve clarity',
+    guidance:
+      'Improve clarity and flow. If selected text is provided, return replacement blocks for that selected text only. If no selection is provided, return a concise clarity pass as insertable blocks.',
+    temperature: 0.54,
+  },
+  'create-outline': {
+    label: 'Create outline',
+    guidance:
+      'Create a clean outline for the note. Use headings and bullet lists that reveal structure, gaps, and next sections to write.',
+    temperature: 0.5,
+  },
+  'study-questions': {
+    label: 'Study questions',
+    guidance:
+      'Create study material from the note: key questions, short answer prompts, and concepts to review. Prefer bullet lists and concise headings.',
+    temperature: 0.48,
+  },
+  counterarguments: {
+    label: 'Counterarguments',
+    guidance:
+      'Create a thoughtful counterargument layer for the note. Identify objections, assumptions, tensions, alternate interpretations, and what would weaken or strengthen the central claim. Prefer concise headings and bullet lists.',
+    temperature: 0.56,
+  },
+  'reading-list': {
+    label: 'Reading list',
+    guidance:
+      'Create a research path from the note. Do not invent exact citations, URLs, or papers. Suggest source categories, search queries, canonical areas to investigate, and verification steps. Prefer headings and bullet lists.',
+    temperature: 0.5,
+  },
+}
+
+const geminiDraftResponseSchema = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      description: 'A concise title for the generated note.',
+    },
+    summary: {
+      type: 'string',
+      description: 'A one-sentence summary of the note.',
+    },
+    status: {
+      type: 'string',
+      description: 'A short category/status label for the note.',
+    },
+    tags: {
+      type: 'array',
+      description: 'Short lowercase topic tags.',
+      minItems: 2,
+      maxItems: 6,
+      items: {
+        type: 'string',
+      },
+    },
+    blocks: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 12,
+      items: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['paragraph', 'heading', 'quote', 'bullet-list', 'code'],
+          },
+          text: {
+            type: 'string',
+          },
+          items: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+          citation: {
+            type: 'string',
+          },
+        },
+        required: ['type'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['title', 'summary', 'status', 'tags', 'blocks'],
+  additionalProperties: false,
+}
+
+const geminiAssistResponseSchema = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      description: 'A concise label for the assistance result.',
+    },
+    summary: {
+      type: 'string',
+      description: 'A one-sentence explanation of what changed or was generated.',
+    },
+    blocks: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 10,
+      items: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['paragraph', 'heading', 'quote', 'bullet-list', 'code'],
+          },
+          text: {
+            type: 'string',
+          },
+          items: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+          citation: {
+            type: 'string',
+          },
+        },
+        required: ['type'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['title', 'summary', 'blocks'],
+  additionalProperties: false,
+}
+
+const supportedDraftBlockTypes = new Set(['paragraph', 'heading', 'quote', 'bullet-list', 'code'])
+
+function normalizeAiDraftRequest(body) {
+  const topic = typeof body?.topic === 'string' ? body.topic.trim().replace(/\s+/g, ' ') : ''
+  const category = typeof body?.category === 'string' ? body.category.trim() : ''
+  const meta = aiDraftCategoryMeta[category]
+
+  if (topic.length < 3) {
+    return { ok: false, error: 'Enter a topic with at least 3 characters.' }
+  }
+
+  if (topic.length > 220) {
+    return { ok: false, error: 'Keep the topic under 220 characters for now.' }
+  }
+
+  if (!meta) {
+    return { ok: false, error: 'Choose Essay, Article, Research Topic, or Quote.' }
+  }
+
+  return {
+    ok: true,
+    category,
+    meta,
+    topic,
+  }
+}
+
+function normalizeAiAssistRequest(body) {
+  const action = typeof body?.action === 'string' ? body.action.trim() : ''
+  const meta = aiAssistActionMeta[action]
+  const note = body?.note && typeof body.note === 'object' ? body.note : {}
+  const title = normalizeDraftString(note.title, 'Untitled Note', 180)
+  const status = normalizeDraftString(note.status, '', 60)
+  const text = normalizeDraftString(note.text, '', 12000)
+  const selectedText = normalizeDraftString(note.selectedText, '', 2600)
+  const tags = Array.isArray(note.tags)
+    ? note.tags.map((tag) => normalizeDraftString(tag, '', 40)).filter(Boolean).slice(0, 10)
+    : []
+
+  if (!meta) {
+    return { ok: false, error: 'Choose Continue, Clarify, Outline, Study Questions, Counterarguments, or Reading List.' }
+  }
+
+  if (text.length < 3 && selectedText.length < 3) {
+    return { ok: false, error: 'Open a note with a little content before using active-note Composer.' }
+  }
+
+  return {
+    ok: true,
+    action,
+    meta,
+    note: {
+      selectedText,
+      status,
+      tags,
+      text,
+      title,
+    },
+  }
+}
+
+function buildGeminiDraftPrompt(topic, meta) {
+  return [
+    'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
+    `Topic: ${topic}`,
+    `Requested note type: ${meta.label}`,
+    meta.guidance,
+    'Create original prose suitable for a minimalist note-taking app.',
+    'Do not invent citations, studies, URLs, books, or source names. If the topic requires sources, include a short verification note instead of pretending sources were checked.',
+    'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
+    'Return only JSON matching the schema. Use block types paragraph, heading, quote, bullet-list, or code.',
+  ].join('\n\n')
+}
+
+function buildGeminiAssistPrompt(context) {
+  const selectedSection = context.note.selectedText
+    ? [`Selected block to focus on:`, context.note.selectedText].join('\n')
+    : 'No selected block was provided. Work from the full note context.'
+
+  return [
+    'You are Essence Composer, an active-note assistant for students, researchers, and deep readers.',
+    `Action: ${context.meta.label}`,
+    context.meta.guidance,
+    'Return only original, insertable Essence blocks. Do not invent citations, studies, URLs, books, or source names.',
+    'If source verification is needed, include a short note telling the user what to verify rather than pretending it was checked.',
+    `Note title: ${context.note.title}`,
+    context.note.status ? `Note status: ${context.note.status}` : '',
+    context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
+    selectedSection,
+    'Full note context:',
+    context.note.text,
+    'Return only JSON matching the schema.',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+async function generateGeminiJson(prompt, schema, options = {}) {
+  const apiKey = process.env.GEMINI_API_KEY?.trim()
+
+  if (!apiKey) {
+    const error = new Error('Gemini is not configured yet. Add GEMINI_API_KEY to your .env file and restart the server.')
+    error.status = 503
+    throw error
+  }
+
+  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseJsonSchema: schema,
+          temperature: options.temperature ?? 0.64,
+          topP: options.topP ?? 0.9,
+        },
+      }),
+    },
+  )
+
+  const geminiPayload = await geminiResponse.json().catch(() => null)
+
+  if (!geminiResponse.ok) {
+    const upstreamMessage =
+      typeof geminiPayload?.error?.message === 'string'
+        ? geminiPayload.error.message
+        : `Gemini request failed with status ${geminiResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = geminiResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = extractGeminiText(geminiPayload)
+
+  if (!responseText) {
+    const error = new Error('Gemini returned an empty draft.')
+    error.status = 502
+    throw error
+  }
+
+  try {
+    return parseJsonText(responseText)
+  } catch {
+    const error = new Error('Gemini returned content the app could not parse. Try again.')
+    error.status = 502
+    throw error
+  }
+}
+
+function extractGeminiText(payload) {
+  const parts = payload?.candidates?.[0]?.content?.parts
+
+  if (!Array.isArray(parts)) {
+    return ''
+  }
+
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim()
+}
+
+function parseJsonText(value) {
+  const trimmedValue = value.trim()
+  const fencedMatch = trimmedValue.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  const jsonText = fencedMatch ? fencedMatch[1].trim() : trimmedValue
+
+  return JSON.parse(jsonText)
+}
+
+function normalizeAiDraft(rawDraft, context) {
+  const candidate = rawDraft && typeof rawDraft === 'object' ? rawDraft : {}
+  const title = normalizeDraftString(candidate.title, `${context.meta.label}: ${context.topic}`, 140)
+  const summary = normalizeDraftString(candidate.summary, '', 260)
+  const status = normalizeDraftString(candidate.status, context.meta.status, 32) || context.meta.status
+  const tags = normalizeDraftTags([...(Array.isArray(candidate.tags) ? candidate.tags : []), context.meta.tag, 'ai-draft'])
+  const blocks = normalizeDraftBlocks(candidate.blocks, context)
+
+  return {
+    blocks,
+    collectionId: context.meta.collectionId,
+    layout: context.meta.layout,
+    noteType: context.meta.noteType,
+    status,
+    summary,
+    tags,
+    title,
+  }
+}
+
+function normalizeAiAssistResult(rawResult, context) {
+  const candidate = rawResult && typeof rawResult === 'object' ? rawResult : {}
+  const blocks = normalizeDraftBlocks(candidate.blocks, {
+    category: 'assist',
+    topic: context.note.title,
+  })
+
+  return {
+    action: context.action,
+    actionLabel: context.meta.label,
+    blocks,
+    canReplaceSelection: context.action === 'improve-clarity' && context.note.selectedText.length > 0,
+    summary: normalizeDraftString(candidate.summary, '', 260),
+    title: normalizeDraftString(candidate.title, context.meta.label, 140) || context.meta.label,
+  }
+}
+
+function normalizeDraftBlocks(rawBlocks, context) {
+  const blocks = Array.isArray(rawBlocks)
+    ? rawBlocks.map(normalizeDraftBlock).filter((block) => block !== null)
+    : []
+
+  if (context.category === 'quote') {
+    const quoteBlock = blocks.find((block) => block.type === 'quote')
+
+    if (quoteBlock) {
+      return [quoteBlock, ...blocks.filter((block) => block !== quoteBlock).slice(0, 3)]
+    }
+
+    const fallbackText = blocks.find((block) => typeof block.text === 'string' && block.text.trim())?.text
+
+    return [
+      {
+        type: 'quote',
+        text: fallbackText || `A quiet thought on ${context.topic}.`,
+        citation: '',
+      },
+      ...blocks.slice(0, 2),
+    ]
+  }
+
+  return blocks.length > 0
+    ? blocks
+    : [
+        {
+          type: 'paragraph',
+          text: `Begin a note on ${context.topic}.`,
+        },
+      ]
+}
+
+function normalizeDraftBlock(rawBlock) {
+  if (!rawBlock || typeof rawBlock !== 'object') {
+    return null
+  }
+
+  const type = supportedDraftBlockTypes.has(rawBlock.type) ? rawBlock.type : 'paragraph'
+
+  if (type === 'bullet-list') {
+    const items = Array.isArray(rawBlock.items)
+      ? rawBlock.items.map((item) => normalizeDraftString(item, '', 180)).filter(Boolean)
+      : []
+
+    return {
+      type,
+      items: items.length > 0 ? items.slice(0, 10) : ['Expand this point.'],
+    }
+  }
+
+  const text = normalizeDraftString(rawBlock.text, '', type === 'heading' ? 120 : 3000)
+
+  if (!text && type !== 'quote') {
+    return null
+  }
+
+  if (type === 'quote') {
+    return {
+      type,
+      text: text || 'A thought worth returning to.',
+      citation: normalizeDraftString(rawBlock.citation, '', 120),
+    }
+  }
+
+  if (type === 'code') {
+    return {
+      type,
+      text,
+    }
+  }
+
+  return {
+    type,
+    text,
+  }
+}
+
+function normalizeDraftString(value, fallback, maxLength) {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : fallback
+
+  if (text.length <= maxLength) {
+    return text
+  }
+
+  return `${text.slice(0, maxLength - 3).trimEnd()}...`
+}
+
+function normalizeDraftTags(values) {
+  const tags = values
+    .map((value) =>
+      typeof value === 'string'
+        ? value
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 36)
+        : '',
+    )
+    .filter(Boolean)
+
+  return [...new Set(tags)].slice(0, 8)
+}
+
+async function getRequestUser(request) {
+  const sessionUser = await getUserBySessionToken(getSessionToken(request))
+
+  if (sessionUser) {
+    return sessionUser
+  }
+
+  return (
+    (await getLocalUser()) ?? {
+      id: localUserId,
+      email: 'local@essence.local',
+      displayName: 'Local Workspace',
+      isLocal: true,
+    }
+  )
+}
+
+function serializeUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    isLocal: Boolean(user.isLocal),
+  }
+}
+
+function getSessionToken(request) {
+  const cookieHeader = request?.headers?.cookie
+  const cookies = parseCookies(cookieHeader)
+
+  return cookies[getSessionCookieName()] ?? null
+}
+
+function parseCookies(cookieHeader) {
+  return String(cookieHeader ?? '')
+    .split(';')
+    .map((cookie) => cookie.trim())
+    .filter(Boolean)
+    .reduce((cookies, cookie) => {
+      const separatorIndex = cookie.indexOf('=')
+
+      if (separatorIndex === -1) {
+        return cookies
+      }
+
+      const key = decodeURIComponent(cookie.slice(0, separatorIndex).trim())
+      const value = decodeURIComponent(cookie.slice(separatorIndex + 1).trim())
+
+      cookies[key] = value
+      return cookies
+    }, {})
+}
+
+function setSessionCookie(response, token, expiresAt) {
+  const maxAgeSeconds = Math.max(Math.floor((expiresAt.getTime() - Date.now()) / 1000), 0)
+  response.setHeader(
+    'Set-Cookie',
+    [
+      `${getSessionCookieName()}=${encodeURIComponent(token)}`,
+      'Path=/',
+      `Max-Age=${maxAgeSeconds}`,
+      'HttpOnly',
+      'SameSite=Lax',
+      process.env.AUTH_COOKIE_SECURE === 'true' ? 'Secure' : null,
+    ]
+      .filter(Boolean)
+      .join('; '),
+  )
+}
+
+function clearSessionCookie(response) {
+  response.setHeader(
+    'Set-Cookie',
+    [
+      `${getSessionCookieName()}=`,
+      'Path=/',
+      'Max-Age=0',
+      'HttpOnly',
+      'SameSite=Lax',
+      process.env.AUTH_COOKIE_SECURE === 'true' ? 'Secure' : null,
+    ]
+      .filter(Boolean)
+      .join('; '),
+  )
+}
+
+function getSessionCookieName() {
+  return process.env.AUTH_COOKIE_NAME || 'essence_session'
+}
+
+function createEmptyPersistedState() {
+  return {
+    activeNoteId: null,
+    composerHistory: [],
+    folders: [],
+    notes: [],
+  }
+}
+
+function cloneStateForAccount(state) {
+  const folderIdMap = new Map(state.folders.map((folder) => [folder.id, createEntityId('folder')]))
+  const noteIdMap = new Map(state.notes.map((note) => [note.id, createEntityId('note')]))
+
+  return {
+    activeNoteId: state.activeNoteId ? noteIdMap.get(state.activeNoteId) ?? null : null,
+    composerHistory: Array.isArray(state.composerHistory) ? state.composerHistory : [],
+    folders: state.folders.map((folder) => ({
+      ...folder,
+      id: folderIdMap.get(folder.id),
+      parentId: folder.parentId ? folderIdMap.get(folder.parentId) ?? null : null,
+    })),
+    notes: state.notes.map((note) => ({
+      ...note,
+      id: noteIdMap.get(note.id),
+      folderId: note.folderId ? folderIdMap.get(note.folderId) ?? null : null,
+      editorDoc: note.editorDoc && typeof note.editorDoc === 'object' ? JSON.parse(JSON.stringify(note.editorDoc)) : null,
+      blocks: Array.isArray(note.blocks)
+        ? note.blocks.map((block) => ({
+            ...block,
+            id: createEntityId('block'),
+            items: Array.isArray(block.items) ? [...block.items] : block.items,
+          }))
+        : [],
+      sources: Array.isArray(note.sources)
+        ? note.sources.map((source) => ({
+            ...source,
+            id: createEntityId('source'),
+          }))
+        : [],
+      tags: Array.isArray(note.tags) ? [...note.tags] : [],
+    })),
+  }
+}
+
+function createEntityId(prefix) {
+  return `${prefix}-${randomUUID()}`
 }

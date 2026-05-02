@@ -1,18 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
 
 :root {
-  --paper: #fdf8f8;
-  --paper-panel: #ffffff;
-  --paper-soft: #f7f3f2;
-  --ink: #1c1b1b;
-  --ink-strong: #131212;
-  --ink-subtle: #4a4746;
-  --ink-muted: #7a7472;
-  --line: #e5e2e1;
-  --line-strong: #d2ccca;
-  --line-dark: #a09794;
-  --focus: #2f6df6;
-  --focus-soft: rgba(47, 109, 246, 0.14);
+  --paper: rgba(6, 7, 10, 0.76);
+  --paper-panel: rgba(14, 16, 21, 0.88);
+  --paper-soft: rgba(255, 255, 255, 0.055);
+  --ink: #f3eee4;
+  --ink-strong: #fffaf0;
+  --ink-subtle: #cfc5b4;
+  --ink-muted: #8e877b;
+  --line: rgba(255, 255, 255, 0.105);
+  --line-strong: rgba(255, 255, 255, 0.17);
+  --line-dark: rgba(255, 255, 255, 0.3);
+  --focus: #a8c7ff;
+  --focus-soft: rgba(168, 199, 255, 0.18);
+  --night-base: #050608;
+  --night-glow: rgba(199, 214, 255, 0.11);
+  --night-warm-glow: rgba(245, 226, 184, 0.08);
+  --body-star-breath-low: 0.22;
+  --body-star-breath-high: 0.36;
   --editor-width: 800px;
   --font-serif: 'Newsreader', Georgia, serif;
   --font-sans: 'Instrument Sans', 'Segoe UI', sans-serif;
@@ -22,7 +27,7 @@
   line-height: 1.5;
   font-weight: 400;
   color: var(--ink);
-  background: var(--paper);
+  background: var(--night-base);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -40,14 +45,110 @@ html {
 }
 
 body {
+  position: relative;
   margin: 0;
   min-width: 320px;
   min-height: 100svh;
-  background: var(--paper);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 12%, var(--night-glow), transparent 31rem),
+    radial-gradient(circle at 86% 18%, rgba(126, 162, 255, 0.08), transparent 28rem),
+    radial-gradient(circle at 58% 92%, var(--night-warm-glow), transparent 32rem),
+    var(--night-base);
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+body::before {
+  opacity: 0.34;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.88) 0 1px, transparent 1.6px),
+    radial-gradient(circle, rgba(205, 220, 255, 0.72) 0 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(255, 238, 205, 0.56) 0 1px, transparent 1.45px);
+  background-position:
+    18px 34px,
+    120px 96px,
+    220px 18px;
+  background-size:
+    220px 220px,
+    340px 340px,
+    520px 520px;
+  animation: starfield-drift 96s linear infinite;
+}
+
+body::after {
+  opacity: 0.5;
+  background:
+    radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.18), transparent 1.7px),
+    radial-gradient(circle at 68% 16%, rgba(213, 225, 255, 0.16), transparent 1.4px),
+    radial-gradient(circle at 78% 72%, rgba(255, 234, 195, 0.12), transparent 1.5px),
+    linear-gradient(115deg, rgba(255, 255, 255, 0.03), transparent 28%, rgba(168, 199, 255, 0.035) 56%, transparent 72%);
+  background-size: 420px 420px, 560px 560px, 680px 680px, 100% 100%;
+  animation: star-breath 8s ease-in-out infinite;
+}
+
+:root[data-essence-ambience='still'] body::before,
+:root[data-essence-ambience='still'] body::after {
+  opacity: 0;
+  animation: none;
+}
+
+:root[data-essence-ambience='subtle'] body::before {
+  opacity: 0.16;
+  animation-duration: 140s;
+}
+
+:root[data-essence-ambience='subtle'] body::after {
+  --body-star-breath-low: 0.11;
+  --body-star-breath-high: 0.2;
+  opacity: 0.2;
+  animation-duration: 11s;
+}
+
+:root[data-essence-ambience='cosmic'] body::before {
+  opacity: 0.34;
+}
+
+:root[data-essence-ambience='cosmic'] body::after {
+  --body-star-breath-low: 0.26;
+  --body-star-breath-high: 0.44;
+  opacity: 0.44;
 }
 
 ::selection {
   background: var(--focus-soft);
+}
+
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.22) rgba(255, 255, 255, 0.04);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.34);
+  background-clip: padding-box;
 }
 
 a,
@@ -61,5 +162,42 @@ a {
 }
 
 #root {
+  position: relative;
+  z-index: 1;
   min-height: 100svh;
+  isolation: isolate;
+}
+
+@keyframes starfield-drift {
+  from {
+    background-position:
+      18px 34px,
+      120px 96px,
+      220px 18px;
+  }
+
+  to {
+    background-position:
+      258px -126px,
+      -160px 286px,
+      620px 260px;
+  }
+}
+
+@keyframes star-breath {
+  0%,
+  100% {
+    opacity: var(--body-star-breath-low);
+  }
+
+  50% {
+    opacity: var(--body-star-breath-high);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after {
+    animation: none;
+  }
 }

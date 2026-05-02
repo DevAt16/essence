@@ -1,5 +1,16 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react'
+import type { CSSProperties, ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
+import Highlight from '@tiptap/extension-highlight'
+import LinkExtension from '@tiptap/extension-link'
+import Placeholder from '@tiptap/extension-placeholder'
+import Subscript from '@tiptap/extension-subscript'
+import Superscript from '@tiptap/extension-superscript'
+import TextAlign from '@tiptap/extension-text-align'
+import Underline from '@tiptap/extension-underline'
+import { EditorContent, useEditor } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
+import StarterKit from '@tiptap/starter-kit'
+import type { JSONContent } from '@tiptap/core'
 import './App.css'
 
 type ViewMode = 'library' | 'collections' | 'search' | 'favorites' | 'archive' | 'editor'
@@ -10,6 +21,22 @@ type NoteLayout = 'feature' | 'standard' | 'quote'
 type NoteType = 'quote' | undefined
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
 type NoteViewMode = 'read' | 'edit'
+type AuthViewMode = 'signin' | 'signup'
+type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
+type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
+type AiComposerMode = 'draft' | 'assist'
+type AiComposerOutputMode = 'preview' | 'insert'
+type AiAssistAction =
+  | 'continue-writing'
+  | 'improve-clarity'
+  | 'create-outline'
+  | 'study-questions'
+  | 'counterarguments'
+  | 'reading-list'
+type AiAssistActionGroup = 'Write' | 'Review'
+type EditorContextSectionId = 'details' | 'topics' | 'sources'
+type AmbienceMode = 'still' | 'subtle' | 'cosmic'
+type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 
 interface NoteBlock {
   id: string
@@ -17,6 +44,17 @@ interface NoteBlock {
   text?: string
   items?: string[]
   citation?: string
+}
+
+interface NoteSource {
+  id: string
+  sourceType: NoteSourceKind
+  title: string
+  author: string
+  year: string
+  publisher: string
+  url: string
+  note: string
 }
 
 interface BlockFocusRequest {
@@ -45,6 +83,13 @@ interface LinkMenuState {
   replacementEnd: number
 }
 
+type InlineFormat = 'bold' | 'italic' | 'underline' | 'code' | 'link'
+
+interface TextSelectionRange {
+  start: number
+  end: number
+}
+
 interface Note {
   id: string
   title: string
@@ -52,6 +97,8 @@ interface Note {
   folderId: string | null
   status: string
   blocks: NoteBlock[]
+  editorDoc?: JSONContent | null
+  sources: NoteSource[]
   tags: string[]
   previewDate: string
   updatedAt: string
@@ -86,8 +133,21 @@ interface FilterOptions {
 
 interface PersistedAppState {
   activeNoteId: string | null
+  composerHistory: ComposerHistoryEntry[]
   folders: Folder[]
   notes: Note[]
+}
+
+interface AuthUser {
+  displayName: string
+  email: string
+  id: string
+  isLocal: boolean
+}
+
+interface RemoteAppSnapshot {
+  state: PersistedAppState | null
+  user: AuthUser | null
 }
 
 interface ImportedMarkdownNote {
@@ -128,6 +188,83 @@ interface SearchResult {
   score: number
 }
 
+interface AiDraftBlock {
+  citation?: string
+  items?: string[]
+  text?: string
+  type: BlockType
+}
+
+interface AiDraft {
+  blocks: AiDraftBlock[]
+  collectionId: CollectionId
+  layout: NoteLayout
+  noteType?: NoteType
+  status: string
+  summary: string
+  tags: string[]
+  title: string
+}
+
+interface AiAssistResult {
+  action: AiAssistAction
+  actionLabel: string
+  blocks: AiDraftBlock[]
+  canReplaceSelection: boolean
+  summary: string
+  title: string
+}
+
+interface ComposerHistoryEntry {
+  assist?: {
+    action: AiAssistAction
+    actionLabel: string
+  }
+  blocks: AiDraftBlock[]
+  createdAt: string
+  draft?: {
+    category: AiDraftCategory
+    collectionId: CollectionId
+    layout: NoteLayout
+    noteType?: NoteType
+    status: string
+    tags: string[]
+  }
+  id: string
+  mode: AiComposerMode
+  prompt: string
+  sourceTitle: string
+  summary: string
+  title: string
+}
+
+type AppDialogState =
+  | {
+      confirmLabel: string
+      message: string
+      title: string
+      tone?: 'default' | 'danger'
+      type: 'alert'
+    }
+  | {
+      confirmLabel: string
+      message: string
+      onConfirm: () => void
+      title: string
+      tone?: 'default' | 'danger'
+      type: 'confirm'
+    }
+  | {
+      confirmLabel: string
+      initialValue: string
+      label: string
+      message: string
+      onConfirm: (value: string) => void
+      placeholder?: string
+      title: string
+      type: 'prompt'
+    }
+
 type QuickSwitcherItemKind = 'action' | 'collection' | 'folder' | 'note' | 'tag'
 
 type QuickSwitcherTarget =
@@ -148,11 +285,64 @@ interface QuickSwitcherItem {
 }
 
 const storageKey = 'lucid-notes-state'
+const authGateStorageKey = 'essence-auth-gate-dismissed'
+const ambienceStorageKey = 'essence-ambience-mode'
 const historyLimit = 120
+const composerHistoryLimit = 18
+
+const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
+  { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
+  { description: 'Quiet stars with rare motion.', label: 'Subtle', value: 'subtle' },
+  { description: 'Full cosmic field with shooting stars.', label: 'Cosmic', value: 'cosmic' },
+]
+
+const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
+  { label: 'Book', value: 'book' },
+  { label: 'Paper', value: 'paper' },
+  { label: 'Article', value: 'article' },
+  { label: 'Web', value: 'web' },
+  { label: 'Dataset', value: 'dataset' },
+  { label: 'Other', value: 'other' },
+]
+
+const richEditorExtensions = [
+  StarterKit.configure({
+    heading: {
+      levels: [2, 3],
+    },
+  }),
+  Underline,
+  Highlight.configure({
+    multicolor: false,
+  }),
+  Superscript,
+  Subscript,
+  LinkExtension.configure({
+    autolink: true,
+    openOnClick: false,
+  }),
+  TextAlign.configure({
+    types: ['heading', 'paragraph'],
+  }),
+  Placeholder.configure({
+    placeholder: ({ node }) => {
+      if (node.type.name === 'heading') {
+        return 'Section heading'
+      }
+
+      if (node.type.name === 'codeBlock') {
+        return 'Code, data, or structured notes'
+      }
+
+      return 'Start writing, or type / for structure'
+    },
+  }),
+]
 
 function createEmptyPersistedState(): PersistedAppState {
   return {
     activeNoteId: null,
+    composerHistory: [],
     folders: [],
     notes: [],
   }
@@ -202,7 +392,115 @@ const tagPool = [
   'philosophy',
   'personal',
   'writing',
+  'ai-draft',
+  'essay',
+  'article',
+  'research-topic',
+  'quote',
 ] as const
+
+const aiDraftCategories: Array<{ description: string; label: string; value: AiDraftCategory }> = [
+  {
+    value: 'essay',
+    label: 'Essay',
+    description: 'Argument, reflection, and synthesis.',
+  },
+  {
+    value: 'article',
+    label: 'Article',
+    description: 'Clear explanatory writing with sections.',
+  },
+  {
+    value: 'research-topic',
+    label: 'Research Topic',
+    description: 'Questions, hypotheses, and next checks.',
+  },
+  {
+    value: 'quote',
+    label: 'Quote',
+    description: 'A concise line with a short reflection.',
+  },
+]
+
+const aiAssistActions: Array<{
+  description: string
+  group: AiAssistActionGroup
+  label: string
+  value: AiAssistAction
+}> = [
+  {
+    value: 'continue-writing',
+    group: 'Write',
+    label: 'Continue',
+    description: 'Add the next coherent blocks.',
+  },
+  {
+    value: 'improve-clarity',
+    group: 'Write',
+    label: 'Clarify',
+    description: 'Rewrite the selected block, or suggest a clarity pass.',
+  },
+  {
+    value: 'create-outline',
+    group: 'Review',
+    label: 'Outline',
+    description: 'Find structure, gaps, and next sections.',
+  },
+  {
+    value: 'study-questions',
+    group: 'Review',
+    label: 'Study',
+    description: 'Generate review prompts and key questions.',
+  },
+  {
+    value: 'counterarguments',
+    group: 'Review',
+    label: 'Counterpoints',
+    description: 'Find objections, tensions, and alternate readings.',
+  },
+  {
+    value: 'reading-list',
+    group: 'Review',
+    label: 'Reading list',
+    description: 'Turn this note into a guided source-finding plan.',
+  },
+]
+
+const aiAssistActionGroups: AiAssistActionGroup[] = ['Write', 'Review']
+
+const readerExplorationActions: Array<{
+  action: ReaderExplorationAction
+  description: string
+  label: string
+}> = [
+  {
+    action: 'expand',
+    label: 'Expand',
+    description: 'Continue the essay with the next coherent layer.',
+  },
+  {
+    action: 'questions',
+    label: 'Questions',
+    description: 'Create study questions and review prompts.',
+  },
+  {
+    action: 'counterarguments',
+    label: 'Counterpoints',
+    description: 'Surface objections and alternate interpretations.',
+  },
+  {
+    action: 'reading-list',
+    label: 'Reading list',
+    description: 'Build a research path without fake citations.',
+  },
+]
+
+const readerExplorationAssistActionByAction: Record<ReaderExplorationAction, AiAssistAction> = {
+  expand: 'continue-writing',
+  questions: 'study-questions',
+  counterarguments: 'counterarguments',
+  'reading-list': 'reading-list',
+}
 
 const browseViewMeta: Record<NavMode, { heading: string; description: string }> = {
   library: {
@@ -226,14 +524,6 @@ const browseViewMeta: Record<NavMode, { heading: string; description: string }> 
     description: 'Earlier drafts and retired directions.',
   },
 }
-
-const blockToolbarButtons: Array<{ type: BlockType; label: string; ariaLabel: string }> = [
-  { type: 'paragraph', label: 'P', ariaLabel: 'Add paragraph block' },
-  { type: 'heading', label: 'H', ariaLabel: 'Add heading block' },
-  { type: 'quote', label: '“”', ariaLabel: 'Add quote block' },
-  { type: 'bullet-list', label: '•', ariaLabel: 'Add bullet list block' },
-  { type: 'code', label: '<>', ariaLabel: 'Add code block' },
-]
 
 const slashMenuOptions: SlashMenuItem[] = [
   {
@@ -355,6 +645,18 @@ const initialNotes: Note[] = [
     folderId: 'research-essays-silence',
     status: 'Philosophy',
     blocks: createBlocksFromHtml(noteBody.aesthetics),
+    sources: [
+      {
+        id: 'source-aesthetics-pascal',
+        sourceType: 'book',
+        title: 'Pensees',
+        author: 'Blaise Pascal',
+        year: '1670',
+        publisher: 'Posthumous collection',
+        url: '',
+        note: 'Useful anchor for the silence and solitude argument.',
+      },
+    ],
     tags: ['philosophy', 'draft'],
     previewDate: 'Today, 9:41 AM',
     updatedAt: '2026-04-25T09:41:00.000Z',
@@ -369,6 +671,18 @@ const initialNotes: Note[] = [
     folderId: 'research-essays-digital',
     status: 'Research',
     blocks: createBlocksFromHtml(noteBody.minimalism),
+    sources: [
+      {
+        id: 'source-minimalism-saint-exupery',
+        sourceType: 'book',
+        title: 'Airman’s Odyssey',
+        author: 'Antoine de Saint-Exupery',
+        year: '1942',
+        publisher: 'Reynal & Hitchcock',
+        url: '',
+        note: 'Often cited for the subtraction and clarity principle.',
+      },
+    ],
     tags: ['design-system', 'typography'],
     previewDate: 'Today, 9:41 AM',
     updatedAt: '2026-04-25T09:28:00.000Z',
@@ -383,6 +697,7 @@ const initialNotes: Note[] = [
     folderId: 'work-clients-horizon-briefs',
     status: 'Draft',
     blocks: createBlocksFromHtml(noteBody.horizon),
+    sources: [],
     tags: ['q1-planning', 'drafts'],
     previewDate: 'Yesterday',
     updatedAt: '2026-04-24T16:12:00.000Z',
@@ -397,6 +712,7 @@ const initialNotes: Note[] = [
     folderId: 'personal-journal-2026-april',
     status: 'Journal',
     blocks: createBlocksFromHtml(noteBody.morning),
+    sources: [],
     tags: ['personal', 'drafts'],
     previewDate: 'Oct 24, 2023',
     updatedAt: '2026-04-24T06:45:00.000Z',
@@ -411,6 +727,18 @@ const initialNotes: Note[] = [
     folderId: 'ideas-quotes-essential',
     status: 'Quote',
     blocks: createBlocksFromHtml(noteBody.perfection),
+    sources: [
+      {
+        id: 'source-perfection-saint-exupery',
+        sourceType: 'book',
+        title: 'Airman’s Odyssey',
+        author: 'Antoine de Saint-Exupery',
+        year: '1942',
+        publisher: 'Reynal & Hitchcock',
+        url: '',
+        note: 'Source for the quote card.',
+      },
+    ],
     tags: ['reading-list'],
     previewDate: 'Oct 20, 2023',
     updatedAt: '2026-04-20T12:00:00.000Z',
@@ -426,6 +754,7 @@ const initialNotes: Note[] = [
     folderId: 'ideas-systems-type',
     status: 'Ideas',
     blocks: createBlocksFromHtml(noteBody.typography),
+    sources: [],
     tags: ['typography', 'design-system'],
     previewDate: 'Apr 18, 2026',
     updatedAt: '2026-04-18T14:05:00.000Z',
@@ -440,6 +769,7 @@ const initialNotes: Note[] = [
     folderId: 'research-library-reading',
     status: 'Reference',
     blocks: createBlocksFromHtml(noteBody.reading),
+    sources: [],
     tags: ['reading-list'],
     previewDate: 'Apr 10, 2026',
     updatedAt: '2026-04-10T08:30:00.000Z',
@@ -454,6 +784,7 @@ const initialNotes: Note[] = [
     folderId: 'work-archive',
     status: 'Archive',
     blocks: createBlocksFromHtml(noteBody.archive),
+    sources: [],
     tags: ['design-system'],
     previewDate: 'Jan 11, 2026',
     updatedAt: '2026-01-11T11:15:00.000Z',
@@ -466,6 +797,7 @@ const initialNotes: Note[] = [
 
 export const sampleSeedState: PersistedAppState = {
   activeNoteId: initialNotes[0]?.id ?? null,
+  composerHistory: [],
   folders: initialFolders,
   notes: initialNotes,
 }
@@ -476,15 +808,37 @@ function App() {
   const [folders, setFolders] = useState<Folder[]>(loadStoredFolders)
   const [notes, setNotes] = useState<Note[]>(loadStoredNotes)
   const [activeNoteId, setActiveNoteId] = useState<string | null>(loadStoredActiveNoteId)
+  const [composerHistory, setComposerHistory] = useState<ComposerHistoryEntry[]>(loadStoredComposerHistory)
   const [activeCollectionId, setActiveCollectionId] = useState<CollectionId | null>(null)
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [dialogState, setDialogState] = useState<AppDialogState | null>(null)
+  const [editorActionsOpen, setEditorActionsOpen] = useState(false)
+  const [editorSidebarOpen, setEditorSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
+  const [authEmail, setAuthEmail] = useState('')
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authGateDismissed, setAuthGateDismissed] = useState(loadAuthGateDismissed)
+  const [authViewMode, setAuthViewMode] = useState<AuthViewMode>('signin')
+  const [aiAssistAction, setAiAssistAction] = useState<AiAssistAction>('continue-writing')
+  const [aiAssistError, setAiAssistError] = useState<string | null>(null)
+  const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
+  const [aiAssisting, setAiAssisting] = useState(false)
+  const [aiComposerOpen, setAiComposerOpen] = useState(false)
+  const [aiComposerMode, setAiComposerMode] = useState<AiComposerMode>('draft')
+  const [aiDraft, setAiDraft] = useState<AiDraft | null>(null)
+  const [aiDraftCategory, setAiDraftCategory] = useState<AiDraftCategory>('essay')
+  const [aiDraftError, setAiDraftError] = useState<string | null>(null)
+  const [aiDraftTopic, setAiDraftTopic] = useState('')
+  const [aiGenerating, setAiGenerating] = useState(false)
+  const [ambienceMode, setAmbienceMode] = useState<AmbienceMode>(loadStoredAmbienceMode)
   const [zenMode, setZenMode] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>('edit')
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
-  const [blockFocusRequest, setBlockFocusRequest] = useState<BlockFocusRequest | null>(null)
+  const [, setBlockFocusRequest] = useState<BlockFocusRequest | null>(null)
   const [slashMenuState, setSlashMenuState] = useState<SlashMenuState | null>(null)
   const [linkMenuState, setLinkMenuState] = useState<LinkMenuState | null>(null)
   const [remoteSyncReady, setRemoteSyncReady] = useState(false)
@@ -503,9 +857,13 @@ function App() {
   const [quickSwitcherQuery, setQuickSwitcherQuery] = useState('')
   const [quickSwitcherActiveIndex, setQuickSwitcherActiveIndex] = useState(0)
   const [searchFocusSignal, setSearchFocusSignal] = useState(0)
+  const [readingProgress, setReadingProgress] = useState(0)
+  const [readerExplorationAwake, setReaderExplorationAwake] = useState(false)
+  const [readerExplorationPendingAction, setReaderExplorationPendingAction] = useState<ReaderExplorationAction | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
+  const editorScreenRef = useRef<HTMLElement | null>(null)
   const historyInitializedRef = useRef(false)
   const historyRef = useRef<{ future: HistorySnapshot[]; past: HistorySnapshot[] }>({
     future: [],
@@ -526,13 +884,27 @@ function App() {
     [activeNoteId, notes],
   )
 
+  useEffect(() => {
+    setEditorActionsOpen(false)
+  }, [activeNoteId, view])
+
   const activeFolder = activeFolderId ? foldersById[activeFolderId] ?? null : null
+  const selectedBlock = useMemo(
+    () => activeNote?.blocks.find((block) => block.id === selectedBlockId) ?? null,
+    [activeNote, selectedBlockId],
+  )
+  const selectedBlockText = selectedBlock ? getBlockTextValue(selectedBlock) : ''
 
   useEffect(() => {
     setSelectedBlockId(activeNote?.blocks[0]?.id ?? null)
     setSlashMenuState(null)
     setLinkMenuState(null)
   }, [activeNoteId, activeNote])
+
+  useEffect(() => {
+    setAiAssistResult(null)
+    setAiAssistError(null)
+  }, [activeNoteId])
 
   useEffect(() => {
     if (slashMenuState && slashMenuState.blockId !== selectedBlockId) {
@@ -559,10 +931,32 @@ function App() {
   }, [activeNote, linkMenuState])
 
   useEffect(() => {
-    if (noteViewMode === 'read' && zenMode) {
-      setZenMode(false)
+    if (zenMode) {
+      setAiComposerOpen(false)
     }
-  }, [noteViewMode, zenMode])
+  }, [zenMode])
+
+  useEffect(() => {
+    setReadingProgress(0)
+    setReaderExplorationAwake(false)
+
+    if (editorScreenRef.current) {
+      editorScreenRef.current.scrollTop = 0
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const editorScreen = editorScreenRef.current
+
+      if (!editorScreen) {
+        return
+      }
+
+      const maxScrollTop = editorScreen.scrollHeight - editorScreen.clientHeight
+      setReadingProgress(maxScrollTop <= 0 ? 1 : 0)
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [activeNoteId, noteViewMode, zenMode])
 
   useEffect(() => {
     if (!quickSwitcherOpen) {
@@ -579,14 +973,16 @@ function App() {
 
     const hydrateRemoteState = async () => {
       try {
-        const remoteState = await fetchRemoteAppState()
-        const resolvedState = remoteState ?? createEmptyPersistedState()
+        const remoteSnapshot = await fetchRemoteAppState()
+        const resolvedState = remoteSnapshot.state ?? createEmptyPersistedState()
 
         if (isCancelled) {
           return
         }
 
+        setCurrentUser(remoteSnapshot.user)
         lastRemoteSnapshotRef.current = JSON.stringify(resolvedState)
+        setComposerHistory(resolvedState.composerHistory)
         setFolders(resolvedState.folders)
         setNotes(resolvedState.notes)
         setActiveNoteId(resolvedState.activeNoteId)
@@ -616,11 +1012,21 @@ function App() {
       storageKey,
       JSON.stringify({
         activeNoteId,
+        composerHistory,
         folders,
         notes,
       }),
     )
-  }, [activeNoteId, folders, notes])
+  }, [activeNoteId, composerHistory, folders, notes])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(ambienceStorageKey, ambienceMode)
+    document.documentElement.dataset.essenceAmbience = ambienceMode
+  }, [ambienceMode])
 
   useEffect(() => {
     if (!remoteSyncReady) {
@@ -682,6 +1088,7 @@ function App() {
 
     const nextState: PersistedAppState = {
       activeNoteId,
+      composerHistory,
       folders,
       notes,
     }
@@ -721,7 +1128,7 @@ function App() {
         window.clearTimeout(remoteSyncTimerRef.current)
       }
     }
-  }, [activeNoteId, folders, notes, remoteSyncReady])
+  }, [activeNoteId, composerHistory, folders, notes, remoteSyncReady])
 
   useEffect(() => {
     return () => {
@@ -921,14 +1328,6 @@ function App() {
   }, [activeNote, folders, foldersById])
 
   const activeWordCount = activeNote ? countWordsFromBlocks(activeNote.blocks) : 0
-  const activeSlashItems = useMemo(
-    () => (slashMenuState ? getMatchingSlashMenuItems(slashMenuState.query) : []),
-    [slashMenuState],
-  )
-  const activeLinkSuggestions = useMemo(
-    () => (linkMenuState ? getMatchingLinkNotes(linkMenuState.query, notes, activeNoteId) : []),
-    [activeNoteId, linkMenuState, notes],
-  )
   const activeLinkedNotes = useMemo(
     () => (activeNote ? getResolvedLinkedNotes(activeNote, notesByNormalizedTitle, notesById) : []),
     [activeNote, notesById, notesByNormalizedTitle],
@@ -1047,7 +1446,7 @@ function App() {
         kind: 'note' as const,
         title: note.title,
         subtitle: `${note.status} · ${getFolderPathLabel(note.folderId, foldersById) || collectionNameById[note.collectionId]}`,
-        keywords: `${note.title} ${note.status} ${note.tags.join(' ')} ${getPlainTextFromBlocks(note.blocks)}`.toLowerCase(),
+        keywords: `${note.title} ${note.status} ${note.tags.join(' ')} ${getPlainTextFromBlocks(note.blocks)} ${getPlainTextFromSources(note.sources)}`.toLowerCase(),
         target: { type: 'note', noteId: note.id } as QuickSwitcherTarget,
       })),
       ...collections.map((collection) => ({
@@ -1144,11 +1543,112 @@ function App() {
     }, 1800)
   }
 
+  const resetHistoryTracking = () => {
+    historyRef.current = { future: [], past: [] }
+    historyInitializedRef.current = false
+    isRestoringHistoryRef.current = false
+    lastHistorySnapshotJsonRef.current = null
+    lastHistorySnapshotRef.current = null
+    updateHistoryState()
+  }
+
+  const applyWorkspaceState = (nextState: PersistedAppState, message: string) => {
+    const normalizedState = normalizePersistedAppState(nextState)
+
+    startTransition(() => {
+      setFolders(normalizedState.folders)
+      setNotes(normalizedState.notes)
+      setActiveNoteId(normalizedState.activeNoteId)
+      setComposerHistory(normalizedState.composerHistory)
+      setActiveCollectionId(null)
+      setActiveFolderId(null)
+      setActiveTag(null)
+      setEditorContext('library')
+      setView('library')
+      setNoteViewMode('edit')
+      setNoteHistoryOpen(false)
+      setNoteHistoryEntries([])
+      setNoteHistoryError(null)
+      setSelectedNoteRevisionId(null)
+      setSearchQuery('')
+    })
+
+    pendingRevisionEventRef.current = null
+    lastRemoteSnapshotRef.current = JSON.stringify(normalizedState)
+    resetHistoryTracking()
+    setRemoteBrowseSearchResults(null)
+    setRemoteQuickSearchResults(null)
+    setRemoteSyncVersion((currentValue) => currentValue + 1)
+    flashSaveFeedback(message)
+  }
+
+  const getCurrentPersistedState = (): PersistedAppState => ({
+    activeNoteId,
+    composerHistory,
+    folders,
+    notes,
+  })
+
+  const handleSignIn = async () => {
+    if (!authEmail.trim()) {
+      setAuthError('Enter an email to continue.')
+      return
+    }
+
+    setAuthError(null)
+    setAuthBusy(true)
+
+    try {
+      const snapshot = await signInRemote(authEmail, getCurrentPersistedState())
+      setCurrentUser(snapshot.user)
+      setAuthEmail('')
+      setAuthGateDismissed(false)
+      clearAuthGateDismissed()
+      applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
+    } catch (error) {
+      console.warn('Unable to sign in.', error)
+      setAuthError('We could not open that workspace. Check the email and try again.')
+      flashSaveFeedback('Sign in failed')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    setAuthBusy(true)
+
+    try {
+      const snapshot = await signOutRemote()
+      setCurrentUser(snapshot.user)
+      setAuthGateDismissed(false)
+      clearAuthGateDismissed()
+      applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Back to local workspace')
+    } catch (error) {
+      console.warn('Unable to sign out.', error)
+      flashSaveFeedback('Sign out failed')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  const continueLocally = () => {
+    setAuthError(null)
+    setAuthGateDismissed(true)
+    persistAuthGateDismissed()
+  }
+
+  const openAuthScreen = () => {
+    setAuthError(null)
+    setAuthGateDismissed(false)
+    clearAuthGateDismissed()
+  }
+
   const closeQuickSwitcher = () => {
     setQuickSwitcherOpen(false)
   }
 
   const openQuickSwitcher = () => {
+    setEditorActionsOpen(false)
     setQuickSwitcherOpen(true)
     setQuickSwitcherQuery('')
     setQuickSwitcherActiveIndex(0)
@@ -1161,12 +1661,17 @@ function App() {
     setNoteHistoryOpen(false)
   }
 
+  const closeDialog = () => {
+    setDialogState(null)
+  }
+
   const toggleNoteHistory = () => {
     if (!activeNote || view !== 'editor') {
       return
     }
 
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
     setSlashMenuState(null)
     setLinkMenuState(null)
     setNoteHistoryOpen((currentValue) => !currentValue)
@@ -1175,6 +1680,7 @@ function App() {
   const openSearchView = () => {
     setZenMode(false)
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
     setActiveCollectionId(null)
     setActiveFolderId(null)
     setActiveTag(null)
@@ -1344,6 +1850,25 @@ function App() {
     markSaving()
   }
 
+  const requestRenameFolder = (folderId: string) => {
+    const folder = foldersById[folderId]
+
+    if (!folder) {
+      return
+    }
+
+    setDialogState({
+      type: 'prompt',
+      title: 'Rename Folder',
+      message: 'Give this branch a clearer name. Notes and nested folders will stay exactly where they are.',
+      label: 'Folder name',
+      initialValue: folder.name,
+      placeholder: 'Folder name',
+      confirmLabel: 'Save name',
+      onConfirm: (nextName) => renameFolder(folder.id, nextName),
+    })
+  }
+
   const moveFolder = (
     folderId: string,
     nextCollectionId: CollectionId,
@@ -1419,39 +1944,90 @@ function App() {
     }
 
     const parentId = folder.parentId
+    const branchNoteCount = notes.filter((note) => isNoteInFolderBranch(note.folderId, folderId, foldersById)).length
 
-    setFolders((currentFolders) =>
-      currentFolders
-        .filter((currentFolder) => currentFolder.id !== folderId)
-        .map((currentFolder) =>
-          currentFolder.parentId === folderId
-            ? {
-                ...currentFolder,
-                parentId,
-              }
-            : currentFolder,
-        ),
-    )
+    setDialogState({
+      type: 'confirm',
+      tone: 'danger',
+      title: `Delete "${folder.name}"?`,
+      message: `${formatCount(branchNoteCount, 'note')} will move to ${parentId ? 'the parent folder' : 'the collection root'}. Nested folders will be preserved.`,
+      confirmLabel: 'Delete folder',
+      onConfirm: () => {
+        setFolders((currentFolders) =>
+          currentFolders
+            .filter((currentFolder) => currentFolder.id !== folderId)
+            .map((currentFolder) =>
+              currentFolder.parentId === folderId
+                ? {
+                    ...currentFolder,
+                    parentId,
+                  }
+                : currentFolder,
+            ),
+        )
 
-    setNotes((currentNotes) =>
-      currentNotes.map((note) =>
-        note.folderId === folderId
-          ? {
-              ...note,
-              folderId: parentId,
-            }
-          : note,
-      ),
-    )
+        setNotes((currentNotes) =>
+          currentNotes.map((note) =>
+            note.folderId === folderId
+              ? {
+                  ...note,
+                  folderId: parentId,
+                }
+              : note,
+          ),
+        )
 
-    setExpandedFolderIds((currentIds) => currentIds.filter((id) => id !== folderId))
+        setExpandedFolderIds((currentIds) => currentIds.filter((id) => id !== folderId))
 
-    if (activeFolderId === folderId) {
-      setActiveFolderId(parentId)
-      setActiveCollectionId(parentId ? foldersById[parentId]?.collectionId ?? folder.collectionId : folder.collectionId)
+        if (activeFolderId === folderId) {
+          setActiveFolderId(parentId)
+          setActiveCollectionId(parentId ? foldersById[parentId]?.collectionId ?? folder.collectionId : folder.collectionId)
+        }
+
+        markSaving()
+      },
+    })
+  }
+
+  const deleteNote = (noteId: string) => {
+    const note = notes.find((candidate) => candidate.id === noteId)
+
+    if (!note) {
+      return
     }
 
-    markSaving()
+    setDialogState({
+      type: 'confirm',
+      tone: 'danger',
+      title: 'Delete this note?',
+      message: `"${note.title || 'Untitled Note'}" will be removed from this workspace after the next sync.`,
+      confirmLabel: 'Delete note',
+      onConfirm: () => {
+        const remainingNotes = notes.filter((candidate) => candidate.id !== noteId)
+        const nextActiveNote = remainingNotes.find((candidate) => !candidate.isArchived) ?? remainingNotes[0] ?? null
+
+        setNotes(remainingNotes)
+
+        if (activeNoteId === noteId) {
+          setActiveNoteId(nextActiveNote?.id ?? null)
+          setSelectedBlockId(null)
+          setBlockFocusRequest(null)
+          setSlashMenuState(null)
+          setLinkMenuState(null)
+          setNoteHistoryOpen(false)
+          setNoteHistoryEntries([])
+          setSelectedNoteRevisionId(null)
+
+          if (nextActiveNote) {
+            setNoteViewMode(getDefaultNoteViewMode(nextActiveNote))
+          } else if (view === 'editor') {
+            startTransition(() => setView(editorContext))
+          }
+        }
+
+        markSaving()
+      },
+    })
   }
 
   const openNote = (noteId: string) => {
@@ -1478,13 +2054,16 @@ function App() {
   const createNote = () => {
     const currentFolder = activeFolderId ? foldersById[activeFolderId] : null
     const collectionId = currentFolder?.collectionId ?? activeCollectionId ?? activeNote?.collectionId ?? 'ideas'
+    const blocks = [createEmptyBlock('paragraph')]
     const newNote: Note = {
       id: generateId('note'),
       title: 'Untitled Note',
       collectionId,
       folderId: currentFolder?.id ?? null,
       status: 'Draft',
-      blocks: [createEmptyBlock('paragraph')],
+      blocks,
+      editorDoc: noteBlocksToTiptapContent(blocks),
+      sources: [],
       tags: ['drafts'],
       previewDate: 'Just now',
       updatedAt: new Date().toISOString(),
@@ -1503,6 +2082,238 @@ function App() {
     setZenMode(false)
     setSaveMessage('Saved just now')
     startTransition(() => setView('editor'))
+  }
+
+  const generateAiDraft = async () => {
+    const topic = aiDraftTopic.trim()
+
+    if (topic.length < 3) {
+      setAiDraftError('Give Composer a topic with at least 3 characters.')
+      return
+    }
+
+    setAiGenerating(true)
+    setAiDraftError(null)
+
+    try {
+      const draft = await generateRemoteAiDraft({
+        category: aiDraftCategory,
+        topic,
+      })
+
+      setAiDraft(draft)
+      setComposerHistory((currentHistory) =>
+        addComposerHistoryEntry(
+          createDraftComposerHistoryEntry(draft, {
+            category: aiDraftCategory,
+            topic,
+          }),
+          currentHistory,
+        ),
+      )
+      flashSaveFeedback('Draft generated')
+    } catch (error) {
+      console.warn('Unable to generate AI draft.', error)
+      setAiDraftError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Composer could not create a draft. Check the server and Gemini key.',
+      )
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
+  const createNoteFromAiDraft = () => {
+    if (!aiDraft) {
+      return
+    }
+
+    const now = new Date().toISOString()
+    const newBlocks = aiDraft.blocks.map(convertAiDraftBlockToNoteBlock)
+    const safeBlocks = newBlocks.length > 0 ? newBlocks : [createEmptyBlock('paragraph')]
+    const newNote: Note = {
+      id: generateId('note'),
+      title: aiDraft.title || 'Untitled AI Draft',
+      collectionId: aiDraft.collectionId,
+      folderId: null,
+      status: aiDraft.status || aiDraftCategories.find((category) => category.value === aiDraftCategory)?.label || 'Draft',
+      blocks: safeBlocks,
+      editorDoc: noteBlocksToTiptapContent(safeBlocks),
+      sources: [],
+      tags: dedupeStrings(aiDraft.tags.length > 0 ? aiDraft.tags : ['ai-draft']),
+      previewDate: 'Just now',
+      updatedAt: now,
+      isFavorite: false,
+      isPinned: false,
+      layout: aiDraft.layout,
+      type: aiDraft.noteType,
+    }
+
+    setNotes((currentNotes) => [newNote, ...currentNotes])
+    setActiveCollectionId(newNote.collectionId)
+    setActiveFolderId(null)
+    setActiveTag(null)
+    setActiveNoteId(newNote.id)
+    setSelectedBlockId(newNote.blocks[0]?.id ?? null)
+    setNoteHistoryOpen(false)
+    setNoteHistoryEntries([])
+    setSelectedNoteRevisionId(null)
+    setNoteViewMode('edit')
+    setAiComposerOpen(false)
+    setAiDraft(null)
+    setAiDraftTopic('')
+    setEditorContext('library')
+    setZenMode(false)
+    markSaving()
+    startTransition(() => setView('editor'))
+  }
+
+  const generateAiAssist = async (actionOverride: AiAssistAction = aiAssistAction) => {
+    if (!activeNote) {
+      setAiAssistError('Open a note before using active-note Composer.')
+      return
+    }
+
+    const effectiveAction = actionOverride
+    const selectedText = noteViewMode === 'edit' ? selectedBlockText : ''
+    const noteText = getPlainTextFromBlocks(activeNote.blocks)
+
+    if (noteText.length < 3 && selectedText.length < 3) {
+      setAiAssistError('Write a little in this note first, then Composer can help.')
+      return
+    }
+
+    setAiAssisting(true)
+    setAiAssistError(null)
+
+    try {
+      const result = await generateRemoteAiAssist({
+        action: effectiveAction,
+        note: {
+          selectedText,
+          status: activeNote.status,
+          tags: activeNote.tags,
+          text: noteText,
+          title: activeNote.title,
+        },
+      })
+
+      setAiAssistResult(result)
+      setComposerHistory((currentHistory) =>
+        addComposerHistoryEntry(
+          createAssistComposerHistoryEntry(result, {
+            action: effectiveAction,
+            noteTitle: activeNote.title,
+            selectedText,
+          }),
+          currentHistory,
+        ),
+      )
+      flashSaveFeedback('Composer response ready')
+    } catch (error) {
+      console.warn('Unable to generate active-note assistance.', error)
+      setAiAssistError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Composer could not assist this note. Check the server and Gemini key.',
+      )
+    } finally {
+      setAiAssisting(false)
+    }
+  }
+
+  const appendAiAssistToActiveNote = () => {
+    if (!activeNote || !aiAssistResult) {
+      return
+    }
+
+    const nextBlocks = aiAssistResult.blocks.map(convertAiDraftBlockToNoteBlock)
+
+    if (nextBlocks.length === 0) {
+      return
+    }
+
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      blocks: [...note.blocks, ...nextBlocks],
+      editorDoc: appendBlocksToEditorDocument(note, nextBlocks),
+    }))
+    setSelectedBlockId(nextBlocks[0].id)
+    setNoteViewMode('edit')
+    queueBlockFocus(nextBlocks[0].id, 'start')
+    flashSaveFeedback('Inserted Composer blocks')
+  }
+
+  const replaceSelectedBlockWithAiAssist = () => {
+    if (!activeNote || !selectedBlockId || !aiAssistResult) {
+      return
+    }
+
+    const nextBlocks = aiAssistResult.blocks.map(convertAiDraftBlockToNoteBlock)
+
+    if (nextBlocks.length === 0) {
+      return
+    }
+
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      blocks: note.blocks.flatMap((block) => (block.id === selectedBlockId ? nextBlocks : [block])),
+      editorDoc: replaceBlockInEditorDocument(note, selectedBlockId, nextBlocks),
+    }))
+    setSelectedBlockId(nextBlocks[0].id)
+    setNoteViewMode('edit')
+    queueBlockFocus(nextBlocks[0].id, 'start')
+    flashSaveFeedback('Replaced selected block')
+  }
+
+  const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
+    setAiComposerOpen(true)
+    setAiComposerMode(entry.mode)
+    setAiDraftError(null)
+    setAiAssistError(null)
+
+    if (entry.mode === 'draft' && entry.draft) {
+      setAiDraftCategory(entry.draft.category)
+      setAiDraftTopic(entry.prompt)
+      setAiDraft({
+        blocks: entry.blocks,
+        collectionId: entry.draft.collectionId,
+        layout: entry.draft.layout,
+        noteType: entry.draft.noteType,
+        status: entry.draft.status,
+        summary: entry.summary,
+        tags: entry.draft.tags,
+        title: entry.title,
+      })
+      return
+    }
+
+    if (entry.mode === 'assist' && entry.assist) {
+      setAiAssistAction(entry.assist.action)
+      setAiAssistResult({
+        action: entry.assist.action,
+        actionLabel: entry.assist.actionLabel,
+        blocks: entry.blocks,
+        canReplaceSelection: false,
+        summary: entry.summary,
+        title: entry.title,
+      })
+    }
+  }
+
+  const clearComposerHistory = () => {
+    setDialogState({
+      type: 'confirm',
+      tone: 'danger',
+      title: 'Clear Composer history?',
+      message: 'Recent generated drafts and assist results will be removed. Notes already created or edited will stay untouched.',
+      confirmLabel: 'Clear history',
+      onConfirm: () => {
+        setComposerHistory([])
+        flashSaveFeedback('Composer history cleared')
+      },
+    })
   }
 
   const focusImportedNote = (note: Note, message: string) => {
@@ -1529,6 +2340,7 @@ function App() {
       JSON.stringify(
         {
           activeNoteId,
+          composerHistory,
           folders,
           notes,
         },
@@ -1563,6 +2375,9 @@ function App() {
 
     setFolders((currentFolders) => [...currentFolders, ...importedState.folders])
     setNotes((currentNotes) => [...importedState.notes, ...currentNotes])
+    setComposerHistory((currentHistory) =>
+      mergeComposerHistory(importedState.composerHistory, currentHistory),
+    )
     focusImportedNote(importedLeadNote, `Imported ${formatCount(importedState.notes.length, 'note')} from JSON`)
   }
 
@@ -1599,7 +2414,13 @@ function App() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The selected file could not be imported.'
-      window.alert(message)
+      setDialogState({
+        confirmLabel: 'Close',
+        message,
+        title: 'Import failed',
+        tone: 'danger',
+        type: 'alert',
+      })
     } finally {
       event.currentTarget.value = ''
     }
@@ -1607,15 +2428,90 @@ function App() {
 
   const switchNoteViewMode = (nextMode: NoteViewMode) => {
     setNoteViewMode(nextMode)
+  }
 
-    if (nextMode === 'read') {
-      setZenMode(false)
+  const toggleFocusMode = () => {
+    if (!activeNote || view !== 'editor') {
+      return
+    }
+
+    setZenMode((isFocused) => {
+      const nextIsFocused = !isFocused
+
+      if (nextIsFocused) {
+        setAiComposerOpen(false)
+        setEditorActionsOpen(false)
+        setQuickSwitcherOpen(false)
+        setNoteHistoryOpen(false)
+        setSlashMenuState(null)
+        setLinkMenuState(null)
+      }
+
+      return nextIsFocused
+    })
+  }
+
+  const updateReadingProgress = () => {
+    const editorScreen = editorScreenRef.current
+
+    if (!editorScreen) {
+      setReadingProgress(0)
+      return
+    }
+
+    const maxScrollTop = editorScreen.scrollHeight - editorScreen.clientHeight
+    const nextProgress = maxScrollTop <= 0 ? 1 : editorScreen.scrollTop / maxScrollTop
+    const boundedProgress = Math.min(1, Math.max(0, nextProgress))
+
+    setReadingProgress(boundedProgress)
+
+    if (boundedProgress < 0.9) {
+      setReaderExplorationAwake(false)
+    }
+  }
+
+  const handleEditorWheel = (event: ReactWheelEvent<HTMLElement>) => {
+    if (!activeNote || view !== 'editor' || noteViewMode !== 'read' || event.deltaY <= 8) {
+      return
+    }
+
+    const editorScreen = event.currentTarget
+    const distanceFromBottom = editorScreen.scrollHeight - editorScreen.scrollTop - editorScreen.clientHeight
+
+    if (distanceFromBottom <= 28) {
+      setReaderExplorationAwake(true)
+    }
+  }
+
+  const exploreReaderDepth = async (action: ReaderExplorationAction) => {
+    if (!activeNote) {
+      return
+    }
+
+    const assistAction = readerExplorationAssistActionByAction[action]
+
+    setReaderExplorationAwake(true)
+    setReaderExplorationPendingAction(action)
+    setAiComposerMode('assist')
+    setAiAssistAction(assistAction)
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
+    setSelectedBlockId(null)
+    setZenMode(false)
+    setAiComposerOpen(true)
+
+    try {
+      await generateAiAssist(assistAction)
+    } finally {
+      setReaderExplorationPendingAction(null)
     }
   }
 
   const navigate = (nextView: NavMode) => {
     setZenMode(false)
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
 
     startTransition(() => {
       setView(nextView)
@@ -1633,18 +2529,21 @@ function App() {
   const openCollection = (collectionId: CollectionId) => {
     setZenMode(false)
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
     focusCollectionFilter(collectionId)
   }
 
   const openFolder = (folderId: string) => {
     setZenMode(false)
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
     focusFolderFilter(folderId)
   }
 
   const openTag = (tagName: string) => {
     setZenMode(false)
     setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
     setActiveCollectionId(null)
     setActiveFolderId(null)
     setActiveTag(tagName)
@@ -1688,6 +2587,10 @@ function App() {
       const key = event.key.toLowerCase()
       const isModifierPressed = event.metaKey || event.ctrlKey
 
+      if (dialogState) {
+        return
+      }
+
       if (quickSwitcherOpen) {
         if (event.key === 'Escape' || (isModifierPressed && key === 'k')) {
           event.preventDefault()
@@ -1698,6 +2601,18 @@ function App() {
       }
 
       if (event.key === 'Escape') {
+        if (editorActionsOpen) {
+          event.preventDefault()
+          setEditorActionsOpen(false)
+          return
+        }
+
+        if (aiComposerOpen) {
+          event.preventDefault()
+          setAiComposerOpen(false)
+          return
+        }
+
         if (noteHistoryOpen) {
           event.preventDefault()
           closeNoteHistory()
@@ -1705,6 +2620,18 @@ function App() {
         }
 
         setZenMode(false)
+        return
+      }
+
+      if (
+        key === 'f' &&
+        view === 'editor' &&
+        activeNote &&
+        !isModifierPressed &&
+        !isEditableKeyboardTarget(event.target)
+      ) {
+        event.preventDefault()
+        toggleFocusMode()
         return
       }
 
@@ -1758,15 +2685,19 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyboardShortcuts)
   }, [
     activeNote,
+    aiComposerOpen,
     closeNoteHistory,
     closeQuickSwitcher,
     createNote,
+    dialogState,
+    editorActionsOpen,
     noteHistoryOpen,
     noteViewMode,
     openQuickSwitcher,
     openSearchView,
     quickSwitcherOpen,
     redo,
+    toggleFocusMode,
     undo,
     view,
   ])
@@ -1819,27 +2750,8 @@ function App() {
   }
 
   const queueBlockFocus = (blockId: string, placement: BlockFocusRequest['placement']) => {
+    void placement
     setSelectedBlockId(blockId)
-    setBlockFocusRequest({ blockId, placement })
-  }
-
-  const resolveSlashMenu = (blockId: string, blockType: BlockType, value: string) => {
-    const query = getSlashQuery(blockType, value)
-
-    if (query === null) {
-      setSlashMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-      return
-    }
-
-    setSlashMenuState((currentState) =>
-      currentState?.blockId === blockId && currentState.query === query
-        ? currentState
-        : {
-            blockId,
-            query,
-            activeIndex: 0,
-          },
-    )
   }
 
   const handleCollectionChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -1891,421 +2803,126 @@ function App() {
     }))
   }
 
-  const resolveLinkMenu = (
-    blockId: string,
-    blockType: BlockType,
-    value: string,
-    selectionStart: number | null,
-  ) => {
-    if (blockType === 'code') {
-      setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
+  const removeTagFromActiveNote = (tagName: string) => {
+    if (!activeNote || !activeNote.tags.includes(tagName)) {
       return
     }
 
-    const context = getActiveNoteLinkContext(value, selectionStart)
-
-    if (!context) {
-      setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-      return
-    }
-
-    setSlashMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    setLinkMenuState((currentState) =>
-      currentState?.blockId === blockId &&
-      currentState.query === context.query &&
-      currentState.replacementStart === context.replacementStart &&
-      currentState.replacementEnd === context.replacementEnd
-        ? currentState
-        : {
-            blockId,
-            query: context.query,
-            activeIndex: 0,
-            replacementStart: context.replacementStart,
-            replacementEnd: context.replacementEnd,
-          },
-    )
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      tags: note.tags.filter((tag) => tag !== tagName),
+    }))
   }
 
-  const handleBlockTextChange = (blockId: string, value: string, selectionStart: number | null) => {
+  const addSourceToActiveNote = () => {
     if (!activeNote) {
       return
     }
 
-    const currentBlock = activeNote.blocks.find((block) => block.id === blockId)
+    const nextSource = createEmptySourceCard()
 
-    if (!currentBlock) {
-      return
-    }
-
-    updateBlock(blockId, (block) => updateBlockValue(block, value))
-    resolveSlashMenu(blockId, currentBlock.type, value)
-    resolveLinkMenu(blockId, currentBlock.type, value, selectionStart)
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      sources: [...note.sources, nextSource],
+    }))
+    flashSaveFeedback('Source card added')
   }
 
-  const updateBlock = (blockId: string, updater: (block: NoteBlock) => NoteBlock) => {
+  const updateSourceOnActiveNote = (sourceId: string, changes: Partial<NoteSource>) => {
     if (!activeNote) {
       return
     }
 
     patchNote(activeNote.id, (note) => ({
       ...note,
-      blocks: note.blocks.map((block) => (block.id === blockId ? updater(block) : block)),
-    }))
-  }
-
-  const changeBlockType = (blockId: string, nextType: BlockType) => {
-    if (!activeNote) {
-      return
-    }
-
-    setSlashMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: note.blocks.map((block) =>
-        block.id === blockId ? convertBlockType(block, nextType) : block,
-      ),
-    }))
-  }
-
-  const insertBlockAfter = (
-    block: NoteBlock,
-    afterBlockId?: string | null,
-    focusPlacement: BlockFocusRequest['placement'] = 'start',
-  ) => {
-    if (!activeNote) {
-      return
-    }
-
-    setSlashMenuState(null)
-    setLinkMenuState(null)
-
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: insertBlock(note.blocks, block, afterBlockId),
-    }))
-
-    queueBlockFocus(block.id, focusPlacement)
-  }
-
-  const addBlock = (type: BlockType, afterBlockId?: string | null) => {
-    insertBlockAfter(createEmptyBlock(type), afterBlockId)
-  }
-
-  const removeBlock = (blockId: string, preferredFocus?: BlockFocusRequest | null) => {
-    if (!activeNote) {
-      return
-    }
-
-    const currentIndex = activeNote.blocks.findIndex((block) => block.id === blockId)
-    const nextBlock = currentIndex >= 0 ? activeNote.blocks[currentIndex + 1] ?? null : null
-    const previousBlock = currentIndex > 0 ? activeNote.blocks[currentIndex - 1] ?? null : null
-    const remainingBlocks = removeBlockFromList(activeNote.blocks, blockId)
-
-    setSlashMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: removeBlockFromList(note.blocks, blockId),
-    }))
-
-    if (preferredFocus) {
-      queueBlockFocus(preferredFocus.blockId, preferredFocus.placement)
-      return
-    }
-
-    if (nextBlock) {
-      queueBlockFocus(nextBlock.id, 'start')
-      return
-    }
-
-    if (previousBlock) {
-      queueBlockFocus(previousBlock.id, 'end')
-      return
-    }
-
-    setSelectedBlockId(remainingBlocks[0]?.id ?? null)
-    setBlockFocusRequest(null)
-  }
-
-  const moveBlock = (blockId: string, direction: 'up' | 'down') => {
-    if (!activeNote) {
-      return
-    }
-
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: moveBlockInList(note.blocks, blockId, direction),
-    }))
-
-    setSlashMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-    queueBlockFocus(blockId, 'end')
-  }
-
-  const applySlashCommand = (blockId: string, type: BlockType) => {
-    if (!activeNote) {
-      return
-    }
-
-    setSlashMenuState(null)
-    setLinkMenuState((currentState) => (currentState?.blockId === blockId ? null : currentState))
-
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: note.blocks.map((block) =>
-        block.id === blockId ? createEmptyBlock(type, block.id) : block,
-      ),
-    }))
-
-    queueBlockFocus(blockId, 'start')
-  }
-
-  const applyLinkSuggestion = (blockId: string, linkedNote: Note) => {
-    if (!activeNote || linkMenuState?.blockId !== blockId) {
-      return
-    }
-
-    const currentBlock = activeNote.blocks.find((block) => block.id === blockId)
-
-    if (!currentBlock) {
-      return
-    }
-
-    const currentValue = getBlockTextValue(currentBlock)
-    const insertedValue = replaceActiveNoteLinkQuery(currentValue, linkedNote.title, linkMenuState)
-    const nextCursorPosition = linkMenuState.replacementStart + `[[${linkedNote.title}]]`.length
-
-    setLinkMenuState(null)
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      blocks: note.blocks.map((block) =>
-        block.id === blockId ? updateBlockValue(block, insertedValue) : block,
-      ),
-    }))
-
-    queueBlockFocus(blockId, nextCursorPosition)
-  }
-
-  const handleBlockKeyDown = (block: NoteBlock, event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!activeNote) {
-      return
-    }
-
-    const currentIndex = activeNote.blocks.findIndex((candidate) => candidate.id === block.id)
-
-    if (currentIndex === -1) {
-      return
-    }
-
-    const previousBlock = currentIndex > 0 ? activeNote.blocks[currentIndex - 1] : null
-    const nextBlock = currentIndex < activeNote.blocks.length - 1 ? activeNote.blocks[currentIndex + 1] : null
-    const currentSlashMenuState = slashMenuState?.blockId === block.id ? slashMenuState : null
-    const matchingSlashItems = currentSlashMenuState ? getMatchingSlashMenuItems(currentSlashMenuState.query) : []
-    const currentLinkMenuState = linkMenuState?.blockId === block.id ? linkMenuState : null
-    const matchingLinkNotes = currentLinkMenuState
-      ? getMatchingLinkNotes(currentLinkMenuState.query, notes, activeNote.id)
-      : []
-    const textarea = event.currentTarget
-    const { selectionStart, selectionEnd, value } = textarea
-    const hasCollapsedSelection = selectionStart === selectionEnd
-
-    if (currentLinkMenuState) {
-      if (event.key === 'ArrowDown' && matchingLinkNotes.length > 0) {
-        event.preventDefault()
-        setLinkMenuState((currentState) =>
-          currentState && currentState.blockId === block.id
-            ? {
-                ...currentState,
-                activeIndex: (currentState.activeIndex + 1) % matchingLinkNotes.length,
-              }
-            : currentState,
-        )
-        return
-      }
-
-      if (event.key === 'ArrowUp' && matchingLinkNotes.length > 0) {
-        event.preventDefault()
-        setLinkMenuState((currentState) =>
-          currentState && currentState.blockId === block.id
-            ? {
-                ...currentState,
-                activeIndex:
-                  (currentState.activeIndex - 1 + matchingLinkNotes.length) % matchingLinkNotes.length,
-              }
-            : currentState,
-        )
-        return
-      }
-
-      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && matchingLinkNotes.length > 0) {
-        event.preventDefault()
-        const nextNote = matchingLinkNotes[currentLinkMenuState.activeIndex % matchingLinkNotes.length]
-        applyLinkSuggestion(block.id, nextNote)
-        return
-      }
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setLinkMenuState(null)
-        return
-      }
-    }
-
-    if (currentSlashMenuState) {
-      if (event.key === 'ArrowDown' && matchingSlashItems.length > 0) {
-        event.preventDefault()
-        setSlashMenuState((currentState) =>
-          currentState && currentState.blockId === block.id
-            ? {
-                ...currentState,
-                activeIndex: (currentState.activeIndex + 1) % matchingSlashItems.length,
-              }
-            : currentState,
-        )
-        return
-      }
-
-      if (event.key === 'ArrowUp' && matchingSlashItems.length > 0) {
-        event.preventDefault()
-        setSlashMenuState((currentState) =>
-          currentState && currentState.blockId === block.id
-            ? {
-                ...currentState,
-                activeIndex:
-                  (currentState.activeIndex - 1 + matchingSlashItems.length) % matchingSlashItems.length,
-              }
-            : currentState,
-        )
-        return
-      }
-
-      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
-        event.preventDefault()
-
-        if (matchingSlashItems.length > 0) {
-          const nextItem = matchingSlashItems[currentSlashMenuState.activeIndex % matchingSlashItems.length]
-          applySlashCommand(block.id, nextItem.type)
-        }
-
-        return
-      }
-
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setSlashMenuState(null)
-        return
-      }
-    }
-
-    if (event.key === 'ArrowUp' && hasCollapsedSelection && selectionStart === 0 && previousBlock) {
-      event.preventDefault()
-      queueBlockFocus(previousBlock.id, 'end')
-      return
-    }
-
-    if (event.key === 'ArrowDown' && hasCollapsedSelection && selectionStart === value.length && nextBlock) {
-      event.preventDefault()
-      queueBlockFocus(nextBlock.id, 'start')
-      return
-    }
-
-    if (
-      event.key === 'Backspace' &&
-      hasCollapsedSelection &&
-      selectionStart === 0 &&
-      isBlockEmpty(block) &&
-      activeNote.blocks.length > 1
-    ) {
-      event.preventDefault()
-      removeBlock(
-        block.id,
-        previousBlock
+      sources: note.sources.map((source) =>
+        source.id === sourceId
           ? {
-              blockId: previousBlock.id,
-              placement: 'end',
+              ...source,
+              ...changes,
             }
-          : nextBlock
-            ? {
-                blockId: nextBlock.id,
-                placement: 'start',
-              }
-            : null,
-      )
+          : source,
+      ),
+    }))
+  }
+
+  const deleteSourceFromActiveNote = (sourceId: string) => {
+    if (!activeNote) {
       return
     }
 
-    if (event.key !== 'Enter' || event.shiftKey || !hasCollapsedSelection) {
+    const source = activeNote.sources.find((candidate) => candidate.id === sourceId)
+
+    if (!source) {
       return
     }
 
-    if (block.type === 'code') {
-      return
-    }
-
-    if (block.type === 'bullet-list') {
-      const lineStart = value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1
-      const nextLineBreak = value.indexOf('\n', selectionStart)
-      const lineEnd = nextLineBreak === -1 ? value.length : nextLineBreak
-      const currentLine = value.slice(lineStart, lineEnd)
-
-      if (selectionStart === value.length && currentLine.trim() === '') {
-        event.preventDefault()
-
-        const nextParagraph = createEmptyBlock('paragraph')
-        const trimmedItems = trimTrailingEmptyItems(block.items ?? [])
-
-        if (trimmedItems.length === 0) {
-          patchNote(activeNote.id, (note) => ({
-            ...note,
-            blocks: note.blocks.map((candidate) =>
-              candidate.id === block.id ? createEmptyBlock('paragraph', block.id) : candidate,
-            ),
-          }))
-          queueBlockFocus(block.id, 'start')
-          return
-        }
-
+    setDialogState({
+      type: 'confirm',
+      tone: 'danger',
+      title: 'Delete source card?',
+      message: `"${source.title || 'Untitled source'}" will be removed from this note. The note body will stay unchanged.`,
+      confirmLabel: 'Delete source',
+      onConfirm: () => {
         patchNote(activeNote.id, (note) => ({
           ...note,
-          blocks: insertBlock(
-            note.blocks.map((candidate) =>
-              candidate.id === block.id
-                ? {
-                    id: block.id,
-                    type: 'bullet-list',
-                    items: trimmedItems,
-                  }
-                : candidate,
-            ),
-            nextParagraph,
-            block.id,
-          ),
+          sources: note.sources.filter((candidate) => candidate.id !== sourceId),
         }))
-        queueBlockFocus(nextParagraph.id, 'start')
-      }
+      },
+    })
+  }
 
+  const deleteTag = (tagName: string) => {
+    const affectedNotes = notes.filter((note) => note.tags.includes(tagName))
+
+    if (affectedNotes.length === 0) {
       return
     }
 
-    event.preventDefault()
+    setDialogState({
+      type: 'confirm',
+      tone: 'danger',
+      title: `Delete "${tagName}"?`,
+      message: `"${tagName}" will be removed from ${formatCount(affectedNotes.length, 'note')}. Notes themselves will not be deleted.`,
+      confirmLabel: 'Delete topic',
+      onConfirm: () => {
+        setNotes((currentNotes) =>
+          currentNotes.map((note) =>
+            note.tags.includes(tagName)
+              ? {
+                  ...note,
+                  previewDate: 'Just now',
+                  tags: note.tags.filter((tag) => tag !== tagName),
+                  updatedAt: new Date().toISOString(),
+                }
+              : note,
+          ),
+        )
 
-    const before = value.slice(0, selectionStart)
-    const after = value.slice(selectionEnd)
-    const nextParagraph = updateBlockValue(createEmptyBlock('paragraph'), after)
+        if (activeTag === tagName) {
+          setActiveTag(null)
+        }
 
+        markSaving()
+      },
+    })
+  }
+
+  const replaceActiveNoteBlocks = (nextBlocks: NoteBlock[], nextEditorDoc: JSONContent) => {
+    if (!activeNote) {
+      return
+    }
+
+    const safeBlocks = nextBlocks.length > 0 ? nextBlocks : [createEmptyBlock('paragraph')]
+
+    setSlashMenuState(null)
+    setLinkMenuState(null)
+    setSelectedBlockId(safeBlocks[0]?.id ?? null)
     patchNote(activeNote.id, (note) => ({
       ...note,
-      blocks: insertBlock(
-        note.blocks.map((candidate) =>
-          candidate.id === block.id ? updateBlockValue(candidate, before) : candidate,
-        ),
-        nextParagraph,
-        block.id,
-      ),
+      blocks: safeBlocks,
+      editorDoc: normalizeEditorDocument(nextEditorDoc, safeBlocks),
     }))
-
-    queueBlockFocus(nextParagraph.id, 'start')
   }
 
   const createFolder = (collectionId: CollectionId, parentId: string | null) => {
@@ -2345,9 +2962,41 @@ function App() {
         ? `#${activeTag}`
         : null
   const showEditorToolbar = view === 'editor' && Boolean(activeNote) && noteViewMode === 'edit'
+  const showAuthScreen = !remoteSyncReady || ((!currentUser || currentUser.isLocal) && !authGateDismissed)
+  const readingProgressPercent = Math.round(readingProgress * 100)
+
+  if (showAuthScreen) {
+    return (
+      <AuthScreen
+        disabled={authBusy || !remoteSyncReady}
+        email={authEmail}
+        error={authError}
+        isLoading={!remoteSyncReady}
+        mode={authViewMode}
+        onContinueLocally={continueLocally}
+        onEmailChange={(value) => {
+          setAuthEmail(value)
+          setAuthError(null)
+        }}
+        onModeChange={(mode) => {
+          setAuthViewMode(mode)
+          setAuthError(null)
+        }}
+        onSubmit={handleSignIn}
+      />
+    )
+  }
 
   return (
-    <div className={`app-shell ${zenMode ? 'is-zen' : ''}`}>
+    <div className={`app-shell app-shell--ambience-${ambienceMode} ${zenMode ? 'is-zen' : ''}`}>
+      <div className="cosmic-sky" aria-hidden="true">
+        <span className="cosmic-sky__meteor" />
+        <span className="cosmic-sky__meteor" />
+        <span className="cosmic-sky__meteor" />
+        <span className="cosmic-sky__meteor" />
+        <span className="cosmic-sky__meteor" />
+      </div>
+
       <input
         ref={importFileInputRef}
         type="file"
@@ -2359,7 +3008,7 @@ function App() {
       {!zenMode && (
         <aside className="rail">
           <div className="rail__brand" aria-label="Essence">
-            <EssenceMonogram framed compact />
+            <EssenceMark framed compact />
           </div>
 
           <div className="rail__composeGroup">
@@ -2376,6 +3025,16 @@ function App() {
           </div>
 
           <nav className="rail__nav" aria-label="Primary">
+            <RailButton
+              isActive={aiComposerOpen}
+              label="Composer"
+              onClick={() => {
+                setAiComposerOpen((isOpen) => !isOpen)
+                setQuickSwitcherOpen(false)
+              }}
+            >
+              <Icon name="spark" />
+            </RailButton>
             <RailButton isActive={view === 'library'} label="Library" onClick={() => navigate('library')}>
               <Icon name="library" />
             </RailButton>
@@ -2394,11 +3053,58 @@ function App() {
           </nav>
 
           <div className="rail__footer">
-            <button type="button" className="rail__settings" aria-label="Settings" title="Settings">
-              <Icon name="settings" />
-            </button>
+            <AmbienceControl mode={ambienceMode} onChange={setAmbienceMode} />
           </div>
         </aside>
+      )}
+
+      {!zenMode && aiComposerOpen && (
+        <AiComposerPanel
+          activeNoteTitle={activeNote?.title ?? null}
+          assistAction={aiAssistAction}
+          assistError={aiAssistError}
+          assistResult={aiAssistResult}
+          category={aiDraftCategory}
+          canReplaceSelection={
+            Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')
+          }
+          composerHistory={composerHistory}
+          draft={aiDraft}
+          error={aiDraftError}
+          isAssisting={aiAssisting}
+          isGenerating={aiGenerating}
+          isOpen={aiComposerOpen}
+          mode={aiComposerMode}
+          onAppendAssist={appendAiAssistToActiveNote}
+          onAssistActionChange={(action) => {
+            setAiAssistAction(action)
+            setAiAssistResult(null)
+            setAiAssistError(null)
+          }}
+          onCategoryChange={(category) => {
+            setAiDraftCategory(category)
+            setAiDraft(null)
+            setAiDraftError(null)
+          }}
+          onClearHistory={clearComposerHistory}
+          onClose={() => setAiComposerOpen(false)}
+          onCreateNote={createNoteFromAiDraft}
+          onGenerateAssist={generateAiAssist}
+          onGenerate={generateAiDraft}
+          onModeChange={(mode) => {
+            setAiComposerMode(mode)
+            setAiDraftError(null)
+            setAiAssistError(null)
+          }}
+          onReplaceSelection={replaceSelectedBlockWithAiAssist}
+          onRestoreHistory={restoreComposerHistoryEntry}
+          onTopicChange={(value) => {
+            setAiDraftTopic(value)
+            setAiDraftError(null)
+          }}
+          selectedBlockPreview={noteViewMode === 'edit' ? summarizeInlineText(selectedBlockText, 120) : ''}
+          topic={aiDraftTopic}
+        />
       )}
 
       <div className="workspace">
@@ -2412,19 +3118,8 @@ function App() {
                 </button>
 
                 {showEditorToolbar ? (
-                  <div className="editor-toolbar" role="toolbar" aria-label="Add block toolbar">
-                    {blockToolbarButtons.map((button) => (
-                      <button
-                        key={button.type}
-                        type="button"
-                        className="toolbar-button toolbar-button--text"
-                        aria-label={button.ariaLabel}
-                        onMouseDown={preventButtonFocus}
-                        onClick={() => addBlock(button.type, selectedBlockId)}
-                      >
-                        {button.label}
-                      </button>
-                    ))}
+                  <div className="topbar__context topbar__context--editorEmpty">
+                    Rich editor · type / or select text
                   </div>
                 ) : !activeNote ? (
                   <div className="topbar__context topbar__context--editorEmpty">No note selected yet.</div>
@@ -2437,6 +3132,16 @@ function App() {
                   <div className="topbar__actionGroup">
                     {activeNote ? (
                       <>
+                        <button
+                          type="button"
+                          className={`icon-button ${editorSidebarOpen ? 'icon-button--active' : ''}`}
+                          onClick={() => setEditorSidebarOpen((currentValue) => !currentValue)}
+                          aria-label={editorSidebarOpen ? 'Hide library panel' : 'Show library panel'}
+                          aria-pressed={editorSidebarOpen}
+                          title={editorSidebarOpen ? 'Hide library panel' : 'Show library panel'}
+                        >
+                          <Icon name="library" />
+                        </button>
                         <button
                           type="button"
                           className="icon-button"
@@ -2466,37 +3171,29 @@ function App() {
                           <Icon name="search" />
                           <span>Jump</span>
                         </button>
-                        <button type="button" className="utility-button" onClick={exportActiveNoteAsMarkdown}>
-                          <Icon name="download" />
-                          <span>Markdown</span>
-                        </button>
                         <button
                           type="button"
-                          className={`utility-button ${noteHistoryOpen ? 'utility-button--active' : ''}`}
-                          onClick={toggleNoteHistory}
-                          title="Open note history"
+                          className={`utility-button ${zenMode ? 'utility-button--active' : ''}`}
+                          onClick={toggleFocusMode}
+                          aria-pressed={zenMode}
+                          title="Toggle Focus Mode (F)"
                         >
-                          <Icon name="history" />
-                          <span>History</span>
+                          <Icon name="focus" />
+                          <span>Focus</span>
                         </button>
                         <ModeToggle mode={noteViewMode} onChange={switchNoteViewMode} />
-                        <button
-                          type="button"
-                          className={`icon-button ${activeNote.isPinned ? 'icon-button--active' : ''}`}
-                          onClick={togglePinned}
-                          aria-label="Toggle pinned note"
-                          title={activeNote.isPinned ? 'Unpin note' : 'Pin note'}
-                        >
-                          <Icon name="pin" />
-                        </button>
-                        <button
-                          type="button"
-                          className={`icon-button ${activeNote.isFavorite ? 'icon-button--active' : ''}`}
-                          onClick={toggleFavorite}
-                          aria-label="Toggle favorite"
-                        >
-                          <Icon name="star" />
-                        </button>
+                        <EditorActionsMenu
+                          isOpen={editorActionsOpen}
+                          note={activeNote}
+                          noteHistoryOpen={noteHistoryOpen}
+                          onClose={() => setEditorActionsOpen(false)}
+                          onDelete={() => deleteNote(activeNote.id)}
+                          onExportMarkdown={exportActiveNoteAsMarkdown}
+                          onToggleFavorite={toggleFavorite}
+                          onToggleHistory={toggleNoteHistory}
+                          onToggleOpen={() => setEditorActionsOpen((currentValue) => !currentValue)}
+                          onTogglePinned={togglePinned}
+                        />
                       </>
                     ) : (
                       <button type="button" className="ghost-button" onClick={createNote}>
@@ -2528,6 +3225,12 @@ function App() {
                       <span>Export JSON</span>
                     </button>
                   </div>
+                  <AccountControl
+                    disabled={authBusy}
+                    onOpenAuth={openAuthScreen}
+                    onSignOut={handleSignOut}
+                    user={currentUser}
+                  />
                 </div>
               </>
             )}
@@ -2535,6 +3238,16 @@ function App() {
         )}
 
         <main className={`main ${view === 'editor' ? 'main--editor' : ''}`}>
+          {zenMode && view === 'editor' && activeNote && (
+            <FocusModeBar
+              mode={noteViewMode}
+              onExit={toggleFocusMode}
+              onModeChange={switchNoteViewMode}
+              progress={readingProgressPercent}
+              wordCount={activeWordCount}
+            />
+          )}
+
           {(view === 'library' || view === 'search' || view === 'favorites' || view === 'archive') && (
             <LibraryScreen
               activeCollectionId={activeCollectionId}
@@ -2566,10 +3279,12 @@ function App() {
               notes={notes}
               onCreateFolder={createFolder}
               onDeleteFolder={deleteFolder}
+              onDeleteTag={deleteTag}
               onOpenCollection={openCollection}
               onOpenFolder={openFolder}
               onOpenTag={openTag}
               onRenameFolder={renameFolder}
+              onRequestRenameFolder={requestRenameFolder}
               onToggleFolderExpanded={toggleFolderExpanded}
               onMoveFolder={moveFolder}
               tags={tagSummaries}
@@ -2577,8 +3292,12 @@ function App() {
           )}
 
           {view === 'editor' && (
-            <section className="editor-workspace">
-              {!zenMode && (
+            <section
+              className={`editor-workspace ${
+                !zenMode && editorSidebarOpen ? '' : 'editor-workspace--sidebarCollapsed'
+              }`}
+            >
+              {!zenMode && editorSidebarOpen && (
                 <EditorSidebar
                   activeNoteId={activeNoteId}
                   caption={editorPaneCaption}
@@ -2590,136 +3309,82 @@ function App() {
                 />
               )}
 
-              <section className={`editor-screen ${noteHistoryOpen && activeNote ? 'editor-screen--history' : ''}`}>
+              {!zenMode && !editorSidebarOpen && (
+                <button
+                  type="button"
+                  className="editor-sidebar-restore"
+                  onClick={() => setEditorSidebarOpen(true)}
+                  aria-label="Show library panel"
+                  title="Show library panel"
+                >
+                  <Icon name="library" />
+                  <span>Notes</span>
+                </button>
+              )}
+
+              <section
+                ref={editorScreenRef}
+                className={`editor-screen ${noteHistoryOpen && activeNote ? 'editor-screen--history' : ''} ${
+                  zenMode ? 'editor-screen--focus' : ''
+                }`}
+                onScroll={updateReadingProgress}
+                onWheel={handleEditorWheel}
+                style={{ '--reading-progress': `${readingProgressPercent}%` } as CSSProperties}
+              >
                 {activeNote ? (
                   <div className={`editor-layout ${noteHistoryOpen ? 'editor-layout--history' : ''}`}>
                     <div className="editor-column">
-                      <Breadcrumbs
-                        collectionId={activeNote.collectionId}
-                        folderId={activeNote.folderId}
-                        foldersById={foldersById}
-                        onOpenCollection={(collectionId) => focusCollectionFilter(collectionId, true)}
-                        onOpenFolder={(folderId) => focusFolderFilter(folderId, true)}
-                      />
+                      {!zenMode && (
+                        <Breadcrumbs
+                          collectionId={activeNote.collectionId}
+                          folderId={activeNote.folderId}
+                          foldersById={foldersById}
+                          onOpenCollection={(collectionId) => focusCollectionFilter(collectionId, true)}
+                          onOpenFolder={(folderId) => focusFolderFilter(folderId, true)}
+                        />
+                      )}
 
                       {noteViewMode === 'edit' ? (
                         <>
-                          <div className="editor-utility">
-                            <div className="editor-note-meta">
-                              <span className="badge">{activeNote.status}</span>
-                              <span>{activeNote.previewDate}</span>
-                              {activeNote.isPinned && <span>Pinned</span>}
-                              {activeNote.isFavorite && <span>Favorited</span>}
-                            </div>
+                          {!zenMode && (
+                            <EditorContextPanel
+                              activeCollectionOptions={activeCollectionOptions}
+                              activeFolderOptions={activeFolderOptions}
+                              key={activeNote.id}
+                              note={activeNote}
+                              onAddSource={addSourceToActiveNote}
+                              onAddTag={addTagToActiveNote}
+                              onCollectionChange={handleCollectionChange}
+                              onDeleteSource={deleteSourceFromActiveNote}
+                              onFolderChange={handleFolderChange}
+                              onOpenTag={openTag}
+                              onRemoveTag={removeTagFromActiveNote}
+                              onUpdateSource={updateSourceOnActiveNote}
+                            />
+                          )}
 
-                            <div className="editor-meta">
-                              <label className="meta-field">
-                                <span>Collection</span>
-                                <select value={activeNote.collectionId} onChange={handleCollectionChange}>
-                                  {activeCollectionOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-
-                              <label className="meta-field">
-                                <span>Folder</span>
-                                <select value={activeNote.folderId ?? ''} onChange={handleFolderChange}>
-                                  <option value="">No folder</option>
-                                  {activeFolderOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            </div>
-
-                            <div className="editor-tags">
-                              {activeNote.tags.map((tag) => (
-                                <button key={tag} type="button" className="chip" onClick={() => openTag(tag)}>
-                                  {tag}
-                                </button>
-                              ))}
-                              <button type="button" className="tag-add" onClick={addTagToActiveNote} aria-label="Add tag">
-                                <Icon name="plus" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <input
-                            className="editor-title"
-                            value={activeNote.title}
-                            onChange={(event) => handleTitleChange(event.target.value)}
-                            aria-label="Note title"
+                          <ModernRichEditor
+                            blocks={activeNote.blocks}
+                            editorDoc={activeNote.editorDoc}
+                            key={activeNote.id}
+                            onChange={replaceActiveNoteBlocks}
+                            onFocus={() => setSelectedBlockId(activeNote.blocks[0]?.id ?? null)}
+                            onTitleChange={handleTitleChange}
+                            title={activeNote.title}
                           />
 
-                          <div className="editor-blocks">
-                            {activeNote.blocks.map((block) => (
-                              <BlockRow
-                                key={block.id}
-                                block={block}
-                                canMoveDown={activeNote.blocks[activeNote.blocks.length - 1]?.id !== block.id}
-                                canMoveUp={activeNote.blocks[0]?.id !== block.id}
-                                focusRequest={blockFocusRequest?.blockId === block.id ? blockFocusRequest : null}
-                                isActive={selectedBlockId === block.id}
-                                onAddBelow={() => addBlock('paragraph', block.id)}
-                                onFocusRequestHandled={() =>
-                                  setBlockFocusRequest((currentRequest) =>
-                                    currentRequest?.blockId === block.id ? null : currentRequest,
-                                  )
-                                }
-                                onChangeCitation={(value) =>
-                                  updateBlock(block.id, (currentBlock) => ({
-                                    ...currentBlock,
-                                    citation: value,
-                                  }))
-                                }
-                                onChangeText={(value, selectionStart) =>
-                                  handleBlockTextChange(block.id, value, selectionStart)
-                                }
-                                onChangeType={(nextType) => changeBlockType(block.id, nextType)}
-                                onFocus={() => setSelectedBlockId(block.id)}
-                                onKeyDown={(event) => handleBlockKeyDown(block, event)}
-                                onLinkSelect={(note) => applyLinkSuggestion(block.id, note)}
-                                onMoveDown={() => moveBlock(block.id, 'down')}
-                                onMoveUp={() => moveBlock(block.id, 'up')}
-                                onRemove={() => removeBlock(block.id)}
-                                linkMenu={
-                                  linkMenuState?.blockId === block.id
-                                    ? {
-                                        activeIndex: linkMenuState.activeIndex,
-                                        notes: activeLinkSuggestions,
-                                        query: linkMenuState.query,
-                                      }
-                                    : null
-                                }
-                                onSlashSelect={(type) => applySlashCommand(block.id, type)}
-                                slashMenu={
-                                  slashMenuState?.blockId === block.id
-                                    ? {
-                                        activeIndex: slashMenuState.activeIndex,
-                                        items: activeSlashItems,
-                                        query: slashMenuState.query,
-                                      }
-                                    : null
-                                }
-                              />
-                            ))}
-                          </div>
-
-                          <NoteConnections
-                            backlinks={activeBacklinks}
-                            linkedNotes={activeLinkedNotes}
-                            onOpenNote={openNote}
-                          />
+                          {!zenMode && (
+                            <NoteConnections
+                              backlinks={activeBacklinks}
+                              linkedNotes={activeLinkedNotes}
+                              onOpenNote={openNote}
+                            />
+                          )}
 
                           <footer className="editor-footer">
                             <span>{`${activeWordCount} words / ${activeNote.blocks.length} blocks`}</span>
-                            <button type="button" className="text-link" onClick={() => setZenMode((current) => !current)}>
-                              {zenMode ? 'Exit Zen' : 'Zen Mode'}
+                            <button type="button" className="text-link" onClick={toggleFocusMode}>
+                              {zenMode ? 'Exit Focus' : 'Focus Mode'}
                             </button>
                             {zenMode && <span>Press Esc to return</span>}
                           </footer>
@@ -2732,6 +3397,10 @@ function App() {
                           notesByNormalizedTitle={notesByNormalizedTitle}
                           onOpenTag={openTag}
                           onOpenNote={openNote}
+                          onExplore={exploreReaderDepth}
+                          explorationAwake={readerExplorationAwake || readingProgress > 0.96}
+                          pendingExplorationAction={readerExplorationPendingAction}
+                          isFocusMode={zenMode}
                           wordCount={activeWordCount}
                         />
                       )}
@@ -2779,8 +3448,943 @@ function App() {
         onSelect={selectQuickSwitcherItem}
         query={quickSwitcherQuery}
       />
+      <AppDialog dialog={dialogState} onClose={closeDialog} />
     </div>
   )
+}
+
+function AppDialog({ dialog, onClose }: { dialog: AppDialogState | null; onClose: () => void }) {
+  const [draftValue, setDraftValue] = useState('')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const primaryButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useEffect(() => {
+    if (!dialog) {
+      return
+    }
+
+    if (dialog.type === 'prompt') {
+      setDraftValue(dialog.initialValue)
+
+      const frameId = window.requestAnimationFrame(() => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      })
+
+      return () => window.cancelAnimationFrame(frameId)
+    }
+
+    if (dialog.type === 'alert') {
+      const frameId = window.requestAnimationFrame(() => {
+        primaryButtonRef.current?.focus()
+      })
+
+      return () => window.cancelAnimationFrame(frameId)
+    }
+  }, [dialog])
+
+  useEffect(() => {
+    if (!dialog) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [dialog, onClose])
+
+  if (!dialog) {
+    return null
+  }
+
+  const isDanger = 'tone' in dialog && dialog.tone === 'danger'
+  const dialogIconName = dialog.type === 'prompt' ? 'edit' : isDanger ? 'trash' : 'spark'
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (dialog.type === 'prompt') {
+      dialog.onConfirm(draftValue)
+    } else if (dialog.type === 'confirm') {
+      dialog.onConfirm()
+    }
+
+    onClose()
+  }
+
+  return (
+    <div className="app-dialog" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form
+        className="app-dialog__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="app-dialog-title"
+        aria-describedby="app-dialog-description"
+        onSubmit={handleSubmit}
+      >
+        <div className="app-dialog__header">
+          <span className={`app-dialog__mark ${isDanger ? 'app-dialog__mark--danger' : ''}`} aria-hidden="true">
+            <Icon name={dialogIconName} />
+          </span>
+          <div>
+            <h2 id="app-dialog-title">{dialog.title}</h2>
+            <p id="app-dialog-description">{dialog.message}</p>
+          </div>
+        </div>
+
+        {dialog.type === 'prompt' && (
+          <label className="app-dialog__field">
+            <span>{dialog.label}</span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={draftValue}
+              onChange={(event) => setDraftValue(event.target.value)}
+              placeholder={dialog.placeholder}
+            />
+          </label>
+        )}
+
+        <div className="app-dialog__actions">
+          {dialog.type !== 'alert' && (
+            <button type="button" className="ghost-button" onClick={onClose}>
+              Cancel
+            </button>
+          )}
+          <button ref={primaryButtonRef} type="submit" className={`primary-button ${isDanger ? 'primary-button--danger' : ''}`}>
+            {dialog.confirmLabel}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function ModernRichEditor({
+  blocks,
+  editorDoc,
+  onChange,
+  onFocus,
+  onTitleChange,
+  title,
+}: {
+  blocks: NoteBlock[]
+  editorDoc?: JSONContent | null
+  onChange: (blocks: NoteBlock[], editorDoc: JSONContent) => void
+  onFocus: () => void
+  onTitleChange: (title: string) => void
+  title: string
+}) {
+  const safeEditorDoc = useMemo(() => normalizeEditorDocument(editorDoc, blocks), [blocks, editorDoc])
+  const latestBlocksRef = useRef(blocks)
+  const latestEditorDocRef = useRef(safeEditorDoc)
+  const latestSignatureRef = useRef(getEditorStateSignature(blocks, safeEditorDoc))
+  const onChangeRef = useRef(onChange)
+  const onFocusRef = useRef(onFocus)
+
+  const editor = useEditor({
+    extensions: richEditorExtensions,
+    content: safeEditorDoc,
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: 'modern-editor__surface',
+        'aria-label': 'Note body',
+      },
+    },
+    onFocus: () => {
+      onFocusRef.current()
+    },
+    onUpdate: ({ editor: currentEditor }) => {
+      const nextEditorDoc = normalizeEditorDocument(currentEditor.getJSON(), latestBlocksRef.current)
+      const nextBlocks = tiptapDocToNoteBlocks(nextEditorDoc, latestBlocksRef.current)
+      const nextSignature = getEditorStateSignature(nextBlocks, nextEditorDoc)
+
+      if (nextSignature === latestSignatureRef.current) {
+        return
+      }
+
+      latestBlocksRef.current = nextBlocks
+      latestEditorDocRef.current = nextEditorDoc
+      latestSignatureRef.current = nextSignature
+      onChangeRef.current(nextBlocks, nextEditorDoc)
+    },
+  })
+
+  const externalSignature = getEditorStateSignature(blocks, safeEditorDoc)
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
+
+  useEffect(() => {
+    onFocusRef.current = onFocus
+  }, [onFocus])
+
+  useEffect(() => {
+    if (!editor) {
+      latestBlocksRef.current = blocks
+      latestEditorDocRef.current = safeEditorDoc
+      latestSignatureRef.current = externalSignature
+      return
+    }
+
+    if (externalSignature === latestSignatureRef.current) {
+      latestBlocksRef.current = blocks
+      latestEditorDocRef.current = safeEditorDoc
+      return
+    }
+
+    const currentEditorDoc = normalizeEditorDocument(editor.getJSON(), blocks)
+    const currentSignature = getEditorStateSignature(tiptapDocToNoteBlocks(currentEditorDoc, blocks), currentEditorDoc)
+
+    if (currentSignature !== externalSignature) {
+      editor.commands.setContent(safeEditorDoc, { emitUpdate: false })
+    }
+
+    latestBlocksRef.current = blocks
+    latestEditorDocRef.current = safeEditorDoc
+    latestSignatureRef.current = externalSignature
+  }, [blocks, editor, externalSignature, safeEditorDoc])
+
+  const applyExternalLink = () => {
+    if (!editor) {
+      return
+    }
+
+    const currentHref = typeof editor.getAttributes('link').href === 'string' ? editor.getAttributes('link').href : ''
+    const nextHref = window.prompt('Paste a URL for this text', currentHref)
+
+    if (nextHref === null) {
+      return
+    }
+
+    if (!nextHref.trim()) {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run()
+      return
+    }
+
+    editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeExternalHref(nextHref) }).run()
+  }
+
+  const clearFormatting = () => {
+    editor?.chain().focus().unsetAllMarks().clearNodes().run()
+  }
+
+  const insertDivider = () => {
+    editor?.chain().focus().setHorizontalRule().run()
+  }
+
+  const handleToolbarWheel = (event: ReactWheelEvent<HTMLElement>) => {
+    const toolbar = event.currentTarget
+
+    if (toolbar.scrollWidth <= toolbar.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      return
+    }
+
+    event.preventDefault()
+    toolbar.scrollLeft += event.deltaY
+  }
+
+  return (
+    <section className="modern-editor" aria-label="Rich note editor">
+      {editor && (
+        <BubbleMenu editor={editor} className="modern-editor__bubble">
+          <RichEditorButton
+            active={editor.isActive('bold')}
+            label="Bold"
+            onClick={() => editor.chain().focus().toggleBold().run()}
+          >
+            <strong>B</strong>
+          </RichEditorButton>
+          <RichEditorButton
+            active={editor.isActive('italic')}
+            label="Italic"
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+          >
+            <em>I</em>
+          </RichEditorButton>
+          <RichEditorButton
+            active={editor.isActive('underline')}
+            label="Underline"
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+          >
+            <span className="modern-editor__underline">U</span>
+          </RichEditorButton>
+          <RichEditorButton
+            active={editor.isActive('code')}
+            label="Inline code"
+            onClick={() => editor.chain().focus().toggleCode().run()}
+          >
+            <span>{'`'}</span>
+          </RichEditorButton>
+          <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
+            <Icon name="link" />
+          </RichEditorButton>
+        </BubbleMenu>
+      )}
+
+      {editor && (
+        <div className="modern-editor__toolbarFrame">
+          <header
+            className="modern-editor__toolbar"
+            role="toolbar"
+            aria-label="Editor formatting"
+            onWheel={handleToolbarWheel}
+          >
+            <div className="modern-editor__toolbarGroup">
+              <RichEditorButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
+                <Icon name="undo" />
+              </RichEditorButton>
+              <RichEditorButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
+                <Icon name="redo" />
+              </RichEditorButton>
+            </div>
+
+            <div className="modern-editor__toolbarGroup">
+              <RichEditorButton
+                active={editor.isActive('heading', { level: 2 })}
+                label="Heading"
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              >
+                H
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('bulletList')}
+                label="Bullet list"
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+              >
+                -
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('orderedList')}
+                label="Numbered list"
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              >
+                1.
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('blockquote')}
+                label="Quote"
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+              >
+                "
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('codeBlock')}
+                label="Code block"
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+              >
+                {'</>'}
+              </RichEditorButton>
+            </div>
+
+            <div className="modern-editor__toolbarGroup">
+              <RichEditorButton
+                active={editor.isActive('bold')}
+                label="Bold"
+                onClick={() => editor.chain().focus().toggleBold().run()}
+              >
+                <strong>B</strong>
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('italic')}
+                label="Italic"
+                onClick={() => editor.chain().focus().toggleItalic().run()}
+              >
+                <em>I</em>
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('strike')}
+                label="Strikethrough"
+                onClick={() => editor.chain().focus().toggleStrike().run()}
+              >
+                <span className="modern-editor__strike">S</span>
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('code')}
+                label="Inline code"
+                onClick={() => editor.chain().focus().toggleCode().run()}
+              >
+                {'`'}
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('underline')}
+                label="Underline"
+                onClick={() => editor.chain().focus().toggleUnderline().run()}
+              >
+                <span className="modern-editor__underline">U</span>
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('highlight')}
+                label="Highlight"
+                onClick={() => editor.chain().focus().toggleHighlight().run()}
+              >
+                <span className="modern-editor__highlightSwatch">A</span>
+              </RichEditorButton>
+              <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
+                <Icon name="link" />
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('superscript')}
+                label="Superscript"
+                onClick={() => editor.chain().focus().toggleSuperscript().run()}
+              >
+                x^2
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive('subscript')}
+                label="Subscript"
+                onClick={() => editor.chain().focus().toggleSubscript().run()}
+              >
+                x_2
+              </RichEditorButton>
+            </div>
+
+            <div className="modern-editor__toolbarGroup">
+              <RichEditorButton
+                active={editor.isActive({ textAlign: 'left' })}
+                label="Align left"
+                onClick={() => editor.chain().focus().setTextAlign('left').run()}
+              >
+                L
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive({ textAlign: 'center' })}
+                label="Align center"
+                onClick={() => editor.chain().focus().setTextAlign('center').run()}
+              >
+                C
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive({ textAlign: 'right' })}
+                label="Align right"
+                onClick={() => editor.chain().focus().setTextAlign('right').run()}
+              >
+                R
+              </RichEditorButton>
+              <RichEditorButton
+                active={editor.isActive({ textAlign: 'justify' })}
+                label="Justify"
+                onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+              >
+                J
+              </RichEditorButton>
+            </div>
+
+            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end">
+              <RichEditorButton label="Clear formatting" onClick={clearFormatting}>
+                Tx
+              </RichEditorButton>
+              <RichEditorButton label="Add divider" onClick={insertDivider}>
+                +
+              </RichEditorButton>
+            </div>
+          </header>
+        </div>
+      )}
+
+      <div className="modern-editor__body">
+        <input
+          className="modern-editor__title"
+          value={title}
+          onChange={(event) => onTitleChange(event.target.value)}
+          aria-label="Note title"
+        />
+        <EditorContent editor={editor} />
+      </div>
+      <p className="modern-editor__hint">Markdown shortcuts work: #, -, 1., &gt;, ```. Select text for inline formatting.</p>
+    </section>
+  )
+}
+
+function RichEditorButton({
+  active = false,
+  children,
+  disabled = false,
+  label,
+  onClick,
+}: {
+  active?: boolean
+  children: ReactNode
+  disabled?: boolean
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={`modern-editor__button ${active ? 'modern-editor__button--active' : ''}`}
+      disabled={disabled}
+      onMouseDown={preventButtonFocus}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
+  )
+}
+
+function AiComposerPanel({
+  activeNoteTitle,
+  assistAction,
+  assistError,
+  assistResult,
+  category,
+  canReplaceSelection,
+  composerHistory,
+  draft,
+  error,
+  isAssisting,
+  isGenerating,
+  isOpen,
+  mode,
+  onAppendAssist,
+  onAssistActionChange,
+  onCategoryChange,
+  onClearHistory,
+  onClose,
+  onCreateNote,
+  onGenerateAssist,
+  onGenerate,
+  onModeChange,
+  onReplaceSelection,
+  onRestoreHistory,
+  onTopicChange,
+  selectedBlockPreview,
+  topic,
+}: {
+  activeNoteTitle: string | null
+  assistAction: AiAssistAction
+  assistError: string | null
+  assistResult: AiAssistResult | null
+  category: AiDraftCategory
+  canReplaceSelection: boolean
+  composerHistory: ComposerHistoryEntry[]
+  draft: AiDraft | null
+  error: string | null
+  isAssisting: boolean
+  isGenerating: boolean
+  isOpen: boolean
+  mode: AiComposerMode
+  onAppendAssist: () => void
+  onAssistActionChange: (action: AiAssistAction) => void
+  onCategoryChange: (category: AiDraftCategory) => void
+  onClearHistory: () => void
+  onClose: () => void
+  onCreateNote: () => void
+  onGenerateAssist: () => void
+  onGenerate: () => void
+  onModeChange: (mode: AiComposerMode) => void
+  onReplaceSelection: () => void
+  onRestoreHistory: (entry: ComposerHistoryEntry) => void
+  onTopicChange: (value: string) => void
+  selectedBlockPreview: string
+  topic: string
+}) {
+  const activeCategory = aiDraftCategories.find((candidate) => candidate.value === category) ?? aiDraftCategories[0]
+  const previewBlocks = draft?.blocks.slice(0, 4) ?? []
+  const assistPreviewBlocks = assistResult?.blocks.slice(0, 4) ?? []
+  const activeAssistAction = aiAssistActions.find((action) => action.value === assistAction) ?? aiAssistActions[0]
+  const [outputMode, setOutputMode] = useState<AiComposerOutputMode>('preview')
+
+  useEffect(() => {
+    setOutputMode('preview')
+  }, [assistResult, draft, mode])
+
+  const handleDraftSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onGenerate()
+  }
+
+  const handleAssistSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onGenerateAssist()
+  }
+
+  return (
+    <aside className={`ai-composer ${isOpen ? 'ai-composer--open' : ''}`} aria-hidden={!isOpen}>
+      <div className="ai-composer__panel">
+        <div className="ai-composer__header">
+          <div>
+            <span className="ai-composer__eyebrow">Essence Composer</span>
+            <h2>{mode === 'draft' ? 'Draft with a topic.' : 'Work inside this note.'}</h2>
+            <p>
+              {mode === 'draft'
+                ? 'Generate a structured note, then refine it in the editor.'
+                : 'Continue, clarify, outline, or turn this note into study material.'}
+            </p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close Composer">
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="ai-composer__modeToggle" role="tablist" aria-label="Composer mode">
+          <button
+            type="button"
+            className={`ai-composer__modeButton ${mode === 'draft' ? 'ai-composer__modeButton--active' : ''}`}
+            onClick={() => onModeChange('draft')}
+            role="tab"
+            aria-selected={mode === 'draft'}
+          >
+            <strong>New draft</strong>
+            <span>Creates a note</span>
+          </button>
+          <button
+            type="button"
+            className={`ai-composer__modeButton ${mode === 'assist' ? 'ai-composer__modeButton--active' : ''}`}
+            onClick={() => onModeChange('assist')}
+            role="tab"
+            aria-selected={mode === 'assist'}
+          >
+            <strong>Assist note</strong>
+            <span>Writes here</span>
+          </button>
+        </div>
+
+        {mode === 'draft' ? (
+          <>
+            <form className="ai-composer__form" onSubmit={handleDraftSubmit} aria-busy={isGenerating}>
+              <div className="ai-composer__sectionLabel">
+                <Icon name="spark" />
+                <span>Prompt</span>
+              </div>
+
+              <label className="ai-composer__field">
+                <span>Topic</span>
+                <textarea
+                  value={topic}
+                  onChange={(event) => onTopicChange(event.target.value)}
+                  placeholder="Cliodynamics and the rise of empires"
+                  rows={3}
+                />
+              </label>
+
+              <label className="ai-composer__field">
+                <span>Type</span>
+                <select value={category} onChange={(event) => onCategoryChange(event.target.value as AiDraftCategory)}>
+                  {aiDraftCategories.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <p className="ai-composer__hint">{activeCategory.description}</p>
+
+              {error && <p className="ai-composer__error">{error}</p>}
+
+              <button type="submit" className="primary-button ai-composer__submit" disabled={isGenerating}>
+                <Icon name="spark" />
+                <span>{isGenerating ? 'Composing...' : 'Generate draft'}</span>
+              </button>
+            </form>
+
+            <div className="ai-composer__preview" aria-live="polite" aria-busy={isGenerating}>
+              {draft ? (
+                <>
+                  <AiOutputToolbar
+                    mode={outputMode}
+                    onChange={setOutputMode}
+                    summary={`${formatCount(draft.blocks.length, 'block')} ready`}
+                  />
+
+                  {outputMode === 'preview' ? (
+                    <>
+                      <div className="ai-composer__draftHeader">
+                        <span className="badge">{draft.status}</span>
+                        <h3>{draft.title}</h3>
+                        {draft.summary && <p>{draft.summary}</p>}
+                      </div>
+
+                      <div className="ai-composer__tags">
+                        {draft.tags.slice(0, 5).map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+
+                      <AiBlocksPreview blocks={previewBlocks} />
+                    </>
+                  ) : (
+                    <div className="ai-composer__insertPlan">
+                      <span>Insert plan</span>
+                      <h3>{`Create a ${collectionNameById[draft.collectionId]} note`}</h3>
+                      <p>
+                        Essence will create a new note named "{draft.title}" with {formatCount(draft.blocks.length, 'block')} and keep it editable in the block editor.
+                      </p>
+                      <button type="button" className="primary-button" onClick={onCreateNote}>
+                        <Icon name="compose" />
+                        <span>Create note</span>
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="ai-composer__empty">
+                  <Icon name="spark" />
+                  <strong>A quiet drafting sidecar.</strong>
+                  <span>Use it for first drafts, article skeletons, research framings, and quotes.</span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <form className="ai-composer__form" onSubmit={handleAssistSubmit} aria-busy={isAssisting}>
+              <div className="ai-composer__sectionLabel">
+                <Icon name="spark" />
+                <span>Assist action</span>
+              </div>
+
+              <div className="ai-composer__contextCard">
+                <span>Current note</span>
+                <strong>{activeNoteTitle ?? 'No note open'}</strong>
+                {selectedBlockPreview && <p>Selected block: {selectedBlockPreview}</p>}
+              </div>
+
+              <div className="ai-composer__actionGroups" role="radiogroup" aria-label="Assist note Composer action">
+                {aiAssistActionGroups.map((group) => (
+                  <section key={group} className="ai-composer__actionGroup" aria-label={group}>
+                    <span>{group}</span>
+                    <div className="ai-composer__actionGrid">
+                      {aiAssistActions
+                        .filter((action) => action.group === group)
+                        .map((action) => (
+                          <button
+                            key={action.value}
+                            type="button"
+                            className={`ai-composer__actionChoice ${assistAction === action.value ? 'ai-composer__actionChoice--active' : ''}`}
+                            onClick={() => onAssistActionChange(action.value)}
+                            role="radio"
+                            aria-checked={assistAction === action.value}
+                          >
+                            <strong>{action.label}</strong>
+                            <span>{action.description}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+
+              <p className="ai-composer__hint">{activeAssistAction.description}</p>
+
+              {assistError && <p className="ai-composer__error">{assistError}</p>}
+
+              <button
+                type="submit"
+                className="primary-button ai-composer__submit"
+                disabled={isAssisting || !activeNoteTitle}
+              >
+                <Icon name="spark" />
+                <span>{isAssisting ? 'Thinking...' : 'Assist this note'}</span>
+              </button>
+            </form>
+
+            <div className="ai-composer__preview" aria-live="polite" aria-busy={isAssisting}>
+              {assistResult ? (
+                <>
+                  <AiOutputToolbar
+                    mode={outputMode}
+                    onChange={setOutputMode}
+                    summary={`${formatCount(assistResult.blocks.length, 'block')} ready`}
+                  />
+
+                  {outputMode === 'preview' ? (
+                    <>
+                      <div className="ai-composer__draftHeader">
+                        <span className="badge">{assistResult.actionLabel}</span>
+                        <h3>{assistResult.title}</h3>
+                        {assistResult.summary && <p>{assistResult.summary}</p>}
+                      </div>
+
+                      <AiBlocksPreview blocks={assistPreviewBlocks} />
+                    </>
+                  ) : (
+                    <div className="ai-composer__insertPlan">
+                      <span>Insert plan</span>
+                      <h3>Write into the current note</h3>
+                      <p>
+                        Append {formatCount(assistResult.blocks.length, 'block')} to "{activeNoteTitle}". Clarify can also replace the selected block when a block is selected.
+                      </p>
+                      <div className="ai-composer__buttonRow">
+                        {canReplaceSelection && (
+                          <button type="button" className="ghost-button" onClick={onReplaceSelection}>
+                            <Icon name="edit" />
+                            <span>Replace block</span>
+                          </button>
+                        )}
+                        <button type="button" className="primary-button" onClick={onAppendAssist}>
+                          <Icon name="plus" />
+                          <span>Append</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="ai-composer__empty">
+                  <Icon name="spark" />
+                  <strong>Context-aware help.</strong>
+                  <span>Open a note, choose a focused action, and insert the result as editable blocks.</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <ComposerHistoryList
+          entries={composerHistory}
+          onClear={onClearHistory}
+          onRestore={onRestoreHistory}
+        />
+
+        <p className="ai-composer__footnote">Generated drafts can be useful starting points. Verify facts and sources before treating them as research.</p>
+      </div>
+    </aside>
+  )
+}
+
+function ComposerHistoryList({
+  entries,
+  onClear,
+  onRestore,
+}: {
+  entries: ComposerHistoryEntry[]
+  onClear: () => void
+  onRestore: (entry: ComposerHistoryEntry) => void
+}) {
+  if (entries.length === 0) {
+    return (
+      <section className="ai-composer__history ai-composer__history--empty">
+        <div className="ai-composer__historyHeader">
+          <div>
+            <span>History</span>
+            <h3>Composer history</h3>
+          </div>
+        </div>
+        <p>Generated drafts and note assists will appear here for quick reuse.</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="ai-composer__history">
+      <div className="ai-composer__historyHeader">
+        <div>
+          <span>History</span>
+          <h3>Composer history</h3>
+        </div>
+        <button type="button" className="text-link" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+
+      <div className="ai-composer__historyList">
+        {entries.slice(0, 6).map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            className="ai-composer__historyItem"
+            onClick={() => onRestore(entry)}
+          >
+            <span className="ai-composer__historyMeta">
+              <span>{entry.mode === 'draft' ? 'New draft' : entry.assist?.actionLabel ?? 'Assist note'}</span>
+              <span>{formatComposerHistoryTimestamp(entry.createdAt)}</span>
+            </span>
+            <strong>{entry.title}</strong>
+            <span className="ai-composer__historySource">{entry.sourceTitle}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function AiOutputToolbar({
+  mode,
+  onChange,
+  summary,
+}: {
+  mode: AiComposerOutputMode
+  onChange: (mode: AiComposerOutputMode) => void
+  summary: string
+}) {
+  return (
+    <div className="ai-composer__outputToolbar">
+      <span>{summary}</span>
+      <div className="ai-composer__outputTabs" role="tablist" aria-label="Composer output">
+        <button
+          type="button"
+          className={mode === 'preview' ? 'ai-composer__outputTab--active' : ''}
+          onClick={() => onChange('preview')}
+          role="tab"
+          aria-selected={mode === 'preview'}
+        >
+          Preview
+        </button>
+        <button
+          type="button"
+          className={mode === 'insert' ? 'ai-composer__outputTab--active' : ''}
+          onClick={() => onChange('insert')}
+          role="tab"
+          aria-selected={mode === 'insert'}
+        >
+          Insert
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function AiBlocksPreview({ blocks }: { blocks: AiDraftBlock[] }) {
+  return (
+    <div className="ai-composer__blocks">
+      {blocks.map((block, index) => (
+        <AiDraftPreviewBlock key={`${block.type}-${index}`} block={block} />
+      ))}
+    </div>
+  )
+}
+
+function AiDraftPreviewBlock({ block }: { block: AiDraftBlock }) {
+  if (block.type === 'heading') {
+    return <h4>{block.text}</h4>
+  }
+
+  if (block.type === 'quote') {
+    return (
+      <blockquote>
+        <p>{block.text}</p>
+        {block.citation && <cite>{block.citation}</cite>}
+      </blockquote>
+    )
+  }
+
+  if (block.type === 'bullet-list') {
+    return (
+      <ul>
+        {(block.items ?? []).slice(0, 5).map((item, index) => (
+          <li key={`${item}-${index}`}>{item}</li>
+        ))}
+      </ul>
+    )
+  }
+
+  if (block.type === 'code') {
+    return <pre>{block.text}</pre>
+  }
+
+  return <p>{block.text}</p>
 }
 
 function LibraryScreen({
@@ -2816,6 +4420,7 @@ function LibraryScreen({
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const isHomeView = viewMode === 'library' && searchQuery.trim().length === 0 && !activeFilterLabel
   const homeSections = useMemo(() => buildLibraryHomeSections(cards), [cards])
+  const emptyState = getLibraryEmptyState(viewMode, searchQuery, activeFilterLabel)
 
   useEffect(() => {
     if (focusSearchSignal <= 0) {
@@ -2868,8 +4473,8 @@ function LibraryScreen({
 
       {cards.length === 0 ? (
         <div className="empty-state">
-          <h2>Nothing here yet</h2>
-          <p>Adjust the filters, or start a fresh note from the rail.</p>
+          <h2>{emptyState.title}</h2>
+          <p>{emptyState.description}</p>
         </div>
       ) : isHomeView ? (
         <div className="library-home">
@@ -2909,6 +4514,52 @@ function LibraryScreen({
       </footer>
     </section>
   )
+}
+
+function getLibraryEmptyState(
+  viewMode: NavMode,
+  searchQuery: string,
+  activeFilterLabel: string | null,
+): { description: string; title: string } {
+  if (searchQuery.trim()) {
+    return {
+      title: 'No matching notes',
+      description: 'Try a softer keyword, or jump back to the full library when the thread is ready.',
+    }
+  }
+
+  if (activeFilterLabel) {
+    return {
+      title: 'This view is quiet',
+      description: 'No notes match the current filter yet. Clear it, or create a note for this space.',
+    }
+  }
+
+  if (viewMode === 'favorites') {
+    return {
+      title: 'No favorites yet',
+      description: 'Star the notes you return to often and they will gather here.',
+    }
+  }
+
+  if (viewMode === 'archive') {
+    return {
+      title: 'Archive is empty',
+      description: 'Archived notes will live here when you want them out of the main flow.',
+    }
+  }
+
+  if (viewMode === 'search') {
+    return {
+      title: 'Search is ready',
+      description: 'Start typing above to find notes by title, block text, folder, or tag.',
+    }
+  }
+
+  return {
+    title: 'Start with one clear note',
+    description: 'Create a note from the rail, import Markdown, or ask Composer for a first draft.',
+  }
 }
 
 function NoteCard({
@@ -3217,10 +4868,12 @@ function CollectionsScreen({
   notes,
   onCreateFolder,
   onDeleteFolder,
+  onDeleteTag,
   onOpenCollection,
   onOpenFolder,
   onOpenTag,
   onRenameFolder,
+  onRequestRenameFolder,
   onToggleFolderExpanded,
   onMoveFolder,
   tags,
@@ -3236,10 +4889,12 @@ function CollectionsScreen({
   notes: Note[]
   onCreateFolder: (collectionId: CollectionId, parentId: string | null) => void
   onDeleteFolder: (folderId: string) => void
+  onDeleteTag: (tagName: string) => void
   onOpenCollection: (collectionId: CollectionId) => void
   onOpenFolder: (folderId: string) => void
   onOpenTag: (tagName: string) => void
   onRenameFolder: (folderId: string, nextName: string) => void
+  onRequestRenameFolder: (folderId: string) => void
   onToggleFolderExpanded: (folderId: string) => void
   onMoveFolder: (folderId: string, nextCollectionId: CollectionId, nextParentId: string | null) => void
   tags: Array<{ name: string; count: number }>
@@ -3299,8 +4954,11 @@ function CollectionsScreen({
               foldersById={foldersById}
               notes={notes}
               onCreateFolder={onCreateFolder}
+              onDeleteFolder={onDeleteFolder}
               onOpenCollection={onOpenCollection}
               onOpenFolder={onOpenFolder}
+              onRenameFolder={onRenameFolder}
+              onRequestRenameFolder={onRequestRenameFolder}
               onToggleFolderExpanded={onToggleFolderExpanded}
             />
           ))}
@@ -3329,13 +4987,24 @@ function CollectionsScreen({
 
           <div className="tag-list">
             {tags.map((tag) => (
-              <button key={tag.name} type="button" className="tag-row" onClick={() => onOpenTag(tag.name)}>
-                <span className="tag-row__name">
-                  <Icon name="hash" />
-                  <span>{tag.name}</span>
-                </span>
-                <span className="tag-row__count">{tag.count}</span>
-              </button>
+              <div key={tag.name} className="tag-row">
+                <button type="button" className="tag-row__main" onClick={() => onOpenTag(tag.name)}>
+                  <span className="tag-row__name">
+                    <Icon name="hash" />
+                    <span>{tag.name}</span>
+                  </span>
+                  <span className="tag-row__count">{tag.count}</span>
+                </button>
+                <button
+                  type="button"
+                  className="tag-row__delete"
+                  onClick={() => onDeleteTag(tag.name)}
+                  aria-label={`Delete topic ${tag.name}`}
+                  title="Delete topic"
+                >
+                  <Icon name="trash" />
+                </button>
+              </div>
             ))}
           </div>
         </section>
@@ -3352,8 +5021,11 @@ function FolderSection({
   foldersById,
   notes,
   onCreateFolder,
+  onDeleteFolder,
   onOpenCollection,
   onOpenFolder,
+  onRenameFolder,
+  onRequestRenameFolder,
   onToggleFolderExpanded,
 }: {
   activeFolderId: string | null
@@ -3363,8 +5035,11 @@ function FolderSection({
   foldersById: Record<string, Folder>
   notes: Note[]
   onCreateFolder: (collectionId: CollectionId, parentId: string | null) => void
+  onDeleteFolder: (folderId: string) => void
   onOpenCollection: (collectionId: CollectionId) => void
   onOpenFolder: (folderId: string) => void
+  onRenameFolder: (folderId: string, nextName: string) => void
+  onRequestRenameFolder: (folderId: string) => void
   onToggleFolderExpanded: (folderId: string) => void
 }) {
   const rootFolders = folders.filter(
@@ -3400,7 +5075,10 @@ function FolderSection({
             foldersById={foldersById}
             notes={notes}
             onCreateFolder={onCreateFolder}
+            onDeleteFolder={onDeleteFolder}
             onOpenFolder={onOpenFolder}
+            onRenameFolder={onRenameFolder}
+            onRequestRenameFolder={onRequestRenameFolder}
             onToggleFolderExpanded={onToggleFolderExpanded}
           />
         ))}
@@ -3418,7 +5096,10 @@ function FolderBranch({
   foldersById,
   notes,
   onCreateFolder,
+  onDeleteFolder,
   onOpenFolder,
+  onRenameFolder,
+  onRequestRenameFolder,
   onToggleFolderExpanded,
 }: {
   activeFolderId: string | null
@@ -3429,7 +5110,10 @@ function FolderBranch({
   foldersById: Record<string, Folder>
   notes: Note[]
   onCreateFolder: (collectionId: CollectionId, parentId: string | null) => void
+  onDeleteFolder: (folderId: string) => void
   onOpenFolder: (folderId: string) => void
+  onRenameFolder: (folderId: string, nextName: string) => void
+  onRequestRenameFolder: (folderId: string) => void
   onToggleFolderExpanded: (folderId: string) => void
 }) {
   const children = folders.filter((candidate) => candidate.parentId === folder.id)
@@ -3469,6 +5153,26 @@ function FolderBranch({
         >
           <Icon name="plus" />
         </button>
+
+        <button
+          type="button"
+          className="folder-row__rename"
+          onClick={() => onRequestRenameFolder(folder.id)}
+          aria-label={`Rename folder ${folder.name}`}
+          title="Rename folder"
+        >
+          <Icon name="edit" />
+        </button>
+
+        <button
+          type="button"
+          className="folder-row__delete"
+          onClick={() => onDeleteFolder(folder.id)}
+          aria-label={`Delete folder ${folder.name}`}
+          title="Delete folder"
+        >
+          <Icon name="trash" />
+        </button>
       </div>
 
       {children.length > 0 && isExpanded && (
@@ -3484,7 +5188,10 @@ function FolderBranch({
               foldersById={foldersById}
               notes={notes}
               onCreateFolder={onCreateFolder}
+              onDeleteFolder={onDeleteFolder}
               onOpenFolder={onOpenFolder}
+              onRenameFolder={onRenameFolder}
+              onRequestRenameFolder={onRequestRenameFolder}
               onToggleFolderExpanded={onToggleFolderExpanded}
             />
           ))}
@@ -3537,6 +5244,7 @@ function BlockRow({
 }) {
   const blockValue = getBlockTextValue(block)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [selectionRange, setSelectionRange] = useState<TextSelectionRange | null>(null)
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -3571,6 +5279,42 @@ function BlockRow({
     onFocus()
     onFocusRequestHandled()
   }, [block.id, focusRequest, onFocus, onFocusRequestHandled])
+
+  const updateSelectionRange = () => {
+    const textarea = textareaRef.current
+
+    if (!textarea || document.activeElement !== textarea) {
+      setSelectionRange(null)
+      return
+    }
+
+    const nextRange = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+    }
+
+    setSelectionRange(nextRange.end > nextRange.start ? nextRange : null)
+  }
+
+  const applyInlineFormat = (format: InlineFormat) => {
+    const textarea = textareaRef.current
+    const range = selectionRange
+
+    if (!textarea || !range || range.end <= range.start) {
+      return
+    }
+
+    const nextValue = applyInlineFormatToText(textarea.value, range, format)
+    onChangeText(nextValue.value, nextValue.selectionStart)
+
+    window.requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(nextValue.selectionStart, nextValue.selectionEnd)
+      updateSelectionRange()
+    })
+  }
+
+  const showInlineToolbar = Boolean(selectionRange && block.type !== 'code')
 
   return (
     <div className={`block-row block-row--${block.type} ${isActive ? 'block-row--active' : ''}`}>
@@ -3629,13 +5373,23 @@ function BlockRow({
       </div>
 
       <div className="block-row__content">
+        {showInlineToolbar && (
+          <InlineFormatToolbar onApplyFormat={applyInlineFormat} />
+        )}
+
         <textarea
           ref={textareaRef}
           className={`block-input block-input--${block.type}`}
           value={blockValue}
           onChange={(event) => onChangeText(event.target.value, event.target.selectionStart)}
-          onFocus={onFocus}
+          onFocus={() => {
+            onFocus()
+            updateSelectionRange()
+          }}
           onKeyDown={onKeyDown}
+          onKeyUp={updateSelectionRange}
+          onMouseUp={updateSelectionRange}
+          onSelect={updateSelectionRange}
           placeholder={getBlockPlaceholder(block.type)}
           rows={getBlockRows(block)}
         />
@@ -3706,43 +5460,461 @@ function BlockRow({
   )
 }
 
-function ReadModeNote({
-  backlinks,
-  linkedNotes,
+function InlineFormatToolbar({ onApplyFormat }: { onApplyFormat: (format: InlineFormat) => void }) {
+  return (
+    <div className="inline-format-toolbar" role="toolbar" aria-label="Inline formatting">
+      <button type="button" onMouseDown={preventButtonFocus} onClick={() => onApplyFormat('bold')} aria-label="Bold">
+        <strong>B</strong>
+      </button>
+      <button type="button" onMouseDown={preventButtonFocus} onClick={() => onApplyFormat('italic')} aria-label="Italic">
+        <em>I</em>
+      </button>
+      <button type="button" onMouseDown={preventButtonFocus} onClick={() => onApplyFormat('underline')} aria-label="Underline">
+        <span className="inline-format-toolbar__underline">U</span>
+      </button>
+      <button type="button" onMouseDown={preventButtonFocus} onClick={() => onApplyFormat('code')} aria-label="Inline code">
+        <span>{'`'}</span>
+      </button>
+      <button type="button" onMouseDown={preventButtonFocus} onClick={() => onApplyFormat('link')} aria-label="Link">
+        <Icon name="link" />
+      </button>
+    </div>
+  )
+}
+
+function EditorContextPanel({
+  activeCollectionOptions,
+  activeFolderOptions,
   note,
-  notesByNormalizedTitle,
+  onAddSource,
+  onAddTag,
+  onCollectionChange,
+  onDeleteSource,
+  onFolderChange,
   onOpenTag,
-  onOpenNote,
+  onRemoveTag,
+  onUpdateSource,
+}: {
+  activeCollectionOptions: Array<{ label: string; value: CollectionId }>
+  activeFolderOptions: Array<{ label: string; value: string }>
+  note: Note
+  onAddSource: () => void
+  onAddTag: () => void
+  onCollectionChange: (event: ChangeEvent<HTMLSelectElement>) => void
+  onDeleteSource: (sourceId: string) => void
+  onFolderChange: (event: ChangeEvent<HTMLSelectElement>) => void
+  onOpenTag: (tag: string) => void
+  onRemoveTag: (tag: string) => void
+  onUpdateSource: (sourceId: string, changes: Partial<NoteSource>) => void
+}) {
+  const [openSections, setOpenSections] = useState<Record<EditorContextSectionId, boolean>>({
+    details: true,
+    sources: false,
+    topics: false,
+  })
+  const collectionLabel = collectionNameById[note.collectionId]
+  const folderLabel = activeFolderOptions.find((option) => option.value === note.folderId)?.label ?? 'No folder'
+  const hasSources = note.sources.length > 0
+  const topicSummary = note.tags.length > 0 ? formatCount(note.tags.length, 'topic') : 'No topics'
+  const sourceSummary = hasSources ? formatCount(note.sources.length, 'source') : 'No sources'
+
+  const toggleSection = (sectionId: EditorContextSectionId) => {
+    setOpenSections((currentSections) => ({
+      ...currentSections,
+      [sectionId]: !currentSections[sectionId],
+    }))
+  }
+
+  return (
+    <section className="editor-context" aria-label="Note context">
+      <div className="editor-context__summary">
+        <span className="badge">{note.status}</span>
+        <span>{note.previewDate}</span>
+        {note.isPinned && <span>Pinned</span>}
+        {note.isFavorite && <span>Favorited</span>}
+        <span>{topicSummary}</span>
+        <span>{sourceSummary}</span>
+      </div>
+
+      <div className="editor-context__sections">
+        <section className="editor-context__section" data-open={openSections.details}>
+          <button
+            type="button"
+            className="editor-context__sectionToggle"
+            onClick={() => toggleSection('details')}
+            aria-expanded={openSections.details}
+          >
+            <span>Details</span>
+            <small>{`${collectionLabel} / ${folderLabel}`}</small>
+          </button>
+          {openSections.details && (
+            <div className="editor-context__body editor-context__body--fields">
+              <div className="editor-meta">
+                <label className="meta-field">
+                  <span>Collection</span>
+                  <select value={note.collectionId} onChange={onCollectionChange}>
+                    {activeCollectionOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="meta-field">
+                  <span>Folder</span>
+                  <select value={note.folderId ?? ''} onChange={onFolderChange}>
+                    <option value="">No folder</option>
+                    {activeFolderOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="editor-context__section" data-open={openSections.topics}>
+          <button
+            type="button"
+            className="editor-context__sectionToggle"
+            onClick={() => toggleSection('topics')}
+            aria-expanded={openSections.topics}
+          >
+            <span>Topics</span>
+            <small>{topicSummary}</small>
+          </button>
+          {openSections.topics && (
+            <div className="editor-context__body">
+              <div className="editor-tags">
+                {note.tags.map((tag) => (
+                  <span key={tag} className="chip chip--editable">
+                    <button type="button" className="chip__label" onClick={() => onOpenTag(tag)}>
+                      {tag}
+                    </button>
+                    <button
+                      type="button"
+                      className="chip__remove"
+                      onClick={() => onRemoveTag(tag)}
+                      aria-label={`Remove ${tag} from this note`}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </span>
+                ))}
+                <button type="button" className="tag-add" onClick={onAddTag} aria-label="Add tag">
+                  <Icon name="plus" />
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="editor-context__section" data-open={openSections.sources}>
+          <button
+            type="button"
+            className="editor-context__sectionToggle"
+            onClick={() => toggleSection('sources')}
+            aria-expanded={openSections.sources}
+          >
+            <span>Sources</span>
+            <small>{sourceSummary}</small>
+          </button>
+          {openSections.sources && (
+            <div className="editor-context__body">
+              <SourceCardsEditor
+                showHeader={false}
+                sources={note.sources}
+                onAddSource={onAddSource}
+                onDeleteSource={onDeleteSource}
+                onUpdateSource={onUpdateSource}
+              />
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  )
+}
+
+function SourceCardsEditor({
+  showHeader = true,
+  sources,
+  onAddSource,
+  onDeleteSource,
+  onUpdateSource,
+}: {
+  showHeader?: boolean
+  sources: NoteSource[]
+  onAddSource: () => void
+  onDeleteSource: (sourceId: string) => void
+  onUpdateSource: (sourceId: string, changes: Partial<NoteSource>) => void
+}) {
+  return (
+    <section className="source-cards source-cards--editor" aria-label="Research source cards">
+      {showHeader ? (
+        <div className="source-cards__header">
+          <div>
+            <span>Sources</span>
+            <strong>{sources.length > 0 ? formatCount(sources.length, 'reference') : 'No sources yet'}</strong>
+          </div>
+          <button type="button" className="utility-button" onClick={onAddSource}>
+            <Icon name="plus" />
+            <span>Add source</span>
+          </button>
+        </div>
+      ) : (
+        <div className="source-cards__compactActions">
+          <button type="button" className="utility-button" onClick={onAddSource}>
+            <Icon name="plus" />
+            <span>Add source</span>
+          </button>
+        </div>
+      )}
+
+      {sources.length > 0 ? (
+        <div className="source-cards__grid">
+          {sources.map((source) => (
+            <article key={source.id} className="source-card source-card--editable">
+              <div className="source-card__top">
+                <label className="source-field source-field--type">
+                  <span>Type</span>
+                  <select
+                    value={source.sourceType}
+                    onChange={(event) =>
+                      onUpdateSource(source.id, {
+                        sourceType: event.target.value as NoteSourceKind,
+                      })
+                    }
+                  >
+                    {sourceTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  className="icon-button icon-button--danger"
+                  onClick={() => onDeleteSource(source.id)}
+                  aria-label={`Delete source ${source.title || 'Untitled source'}`}
+                  title="Delete source"
+                >
+                  <Icon name="trash" />
+                </button>
+              </div>
+
+              <label className="source-field source-field--wide">
+                <span>Title</span>
+                <input
+                  value={source.title}
+                  onChange={(event) => onUpdateSource(source.id, { title: event.target.value })}
+                  placeholder="Paper, article, book, dataset..."
+                />
+              </label>
+
+              <div className="source-card__columns">
+                <label className="source-field">
+                  <span>Author</span>
+                  <input
+                    value={source.author}
+                    onChange={(event) => onUpdateSource(source.id, { author: event.target.value })}
+                    placeholder="Author"
+                  />
+                </label>
+                <label className="source-field">
+                  <span>Year</span>
+                  <input
+                    value={source.year}
+                    onChange={(event) => onUpdateSource(source.id, { year: event.target.value })}
+                    placeholder="2026"
+                  />
+                </label>
+              </div>
+
+              <label className="source-field source-field--wide">
+                <span>Publication / Journal</span>
+                <input
+                  value={source.publisher}
+                  onChange={(event) => onUpdateSource(source.id, { publisher: event.target.value })}
+                  placeholder="Journal, publisher, archive, course..."
+                />
+              </label>
+
+              <label className="source-field source-field--wide">
+                <span>URL / DOI</span>
+                <input
+                  value={source.url}
+                  onChange={(event) => onUpdateSource(source.id, { url: event.target.value })}
+                  placeholder="https:// or doi:"
+                />
+              </label>
+
+              <label className="source-field source-field--wide">
+                <span>Research note</span>
+                <textarea
+                  value={source.note}
+                  onChange={(event) => onUpdateSource(source.id, { note: event.target.value })}
+                  placeholder="Why this source matters, caveats, useful pages..."
+                  rows={2}
+                />
+              </label>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="source-cards__empty">
+          Add books, papers, URLs, datasets, or interviews that support this note.
+        </p>
+      )}
+    </section>
+  )
+}
+
+function SourceReferences({ sources }: { sources: NoteSource[] }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const visibleSources = sources.filter((source) => hasSourceContent(source))
+
+  if (visibleSources.length === 0) {
+    return null
+  }
+
+  return (
+    <section className={`source-cards source-cards--reader ${isExpanded ? 'source-cards--readerExpanded' : ''}`} aria-label="Research sources">
+      <button
+        type="button"
+        className="source-cards__readerToggle"
+        onClick={() => setIsExpanded((currentValue) => !currentValue)}
+        aria-expanded={isExpanded}
+      >
+        <div>
+          <span>Sources</span>
+          <strong>{formatCount(visibleSources.length, 'reference')}</strong>
+        </div>
+        <span className="source-cards__readerHint">
+          {isExpanded ? 'Hide' : 'View'}
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="source-cards__grid">
+          {visibleSources.map((source) => (
+            <article key={source.id} className="source-card source-card--compact">
+              <div className="source-card__readerTop">
+                <span className="badge badge--soft">{formatSourceTypeLabel(source.sourceType)}</span>
+                {source.year && <span>{source.year}</span>}
+              </div>
+              <h3>{source.title || 'Untitled source'}</h3>
+              <p className="source-card__byline">{formatSourceByline(source)}</p>
+              <div className="source-card__compactBottom">
+                {source.note ? <p className="source-card__note">{source.note}</p> : <span />}
+                {source.url && (
+                  <a className="source-card__link source-card__link--icon" href={source.url} target="_blank" rel="noreferrer" aria-label={`Open source ${source.title || 'Untitled source'}`}>
+                    <Icon name="link" />
+                  </a>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function FocusModeBar({
+  mode,
+  onExit,
+  onModeChange,
+  progress,
   wordCount,
 }: {
-  backlinks: Note[]
-  linkedNotes: Note[]
-  note: Note
-  notesByNormalizedTitle: Record<string, Note>
-  onOpenTag: (tagName: string) => void
-  onOpenNote: (noteId: string) => void
+  mode: NoteViewMode
+  onExit: () => void
+  onModeChange: (mode: NoteViewMode) => void
+  progress: number
   wordCount: number
 }) {
   return (
-    <div className="reader-column">
-      <div className="reader-utility">
-        <div className="editor-note-meta">
-          <span className="badge">{note.status}</span>
-          <span>{note.previewDate}</span>
-          {note.isPinned && <span>Pinned</span>}
-          {note.isFavorite && <span>Favorited</span>}
-        </div>
-
-        {note.tags.length > 0 && (
-          <div className="reader-tags">
-            {note.tags.map((tag) => (
-              <button key={tag} type="button" className="chip" onClick={() => onOpenTag(tag)}>
-                {tag}
-              </button>
-            ))}
-          </div>
-        )}
+    <div
+      className="focus-mode-bar"
+      style={{ '--reading-progress': `${progress}%` } as CSSProperties}
+      aria-label="Focus mode controls"
+    >
+      <div className="focus-mode-bar__progress" aria-hidden="true">
+        <span />
       </div>
+
+      <div className="focus-mode-bar__state">
+        <Icon name="focus" />
+        <span>Focus Mode</span>
+        <strong>{mode === 'read' ? 'Reading view' : 'Writing view'}</strong>
+      </div>
+
+      <div className="focus-mode-bar__actions">
+        <span className="focus-mode-bar__meta">{`${progress}% read / ${wordCount} words`}</span>
+        <ModeToggle mode={mode} onChange={onModeChange} />
+        <button type="button" className="utility-button" onClick={onExit} title="Exit Focus Mode (Esc)">
+          <Icon name="close" />
+          <span>Exit</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ReadModeNote({
+  backlinks,
+  explorationAwake,
+  isFocusMode,
+  linkedNotes,
+  note,
+  notesByNormalizedTitle,
+  onExplore,
+  onOpenTag,
+  onOpenNote,
+  pendingExplorationAction,
+  wordCount,
+}: {
+  backlinks: Note[]
+  explorationAwake: boolean
+  isFocusMode: boolean
+  linkedNotes: Note[]
+  note: Note
+  notesByNormalizedTitle: Record<string, Note>
+  onExplore: (action: ReaderExplorationAction) => void
+  onOpenTag: (tagName: string) => void
+  onOpenNote: (noteId: string) => void
+  pendingExplorationAction: ReaderExplorationAction | null
+  wordCount: number
+}) {
+  return (
+    <div className={`reader-column ${isFocusMode ? 'reader-column--focus' : ''}`}>
+      {!isFocusMode && (
+        <div className="reader-utility">
+          <div className="editor-note-meta">
+            <span className="badge">{note.status}</span>
+            <span>{note.previewDate}</span>
+            {note.isPinned && <span>Pinned</span>}
+            {note.isFavorite && <span>Favorited</span>}
+          </div>
+
+          {note.tags.length > 0 && (
+            <div className="reader-tags">
+              {note.tags.map((tag) => (
+                <button key={tag} type="button" className="chip" onClick={() => onOpenTag(tag)}>
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <header className="reader-header">
         <h1 className="reader-title">{note.title}</h1>
@@ -3754,12 +5926,64 @@ function ReadModeNote({
         ))}
       </article>
 
-      <NoteConnections backlinks={backlinks} linkedNotes={linkedNotes} onOpenNote={onOpenNote} />
+      <SourceReferences sources={note.sources} />
+
+      {!isFocusMode && <NoteConnections backlinks={backlinks} linkedNotes={linkedNotes} onOpenNote={onOpenNote} />}
+
+      <ReaderExplorationPanel
+        isAwake={explorationAwake}
+        onExplore={onExplore}
+        pendingAction={pendingExplorationAction}
+      />
 
       <footer className="reader-footer">
         <span>{`${wordCount} words / ${note.blocks.length} blocks`}</span>
       </footer>
     </div>
+  )
+}
+
+function ReaderExplorationPanel({
+  isAwake,
+  onExplore,
+  pendingAction,
+}: {
+  isAwake: boolean
+  onExplore: (action: ReaderExplorationAction) => void
+  pendingAction: ReaderExplorationAction | null
+}) {
+  return (
+    <section className={`reader-depth ${isAwake ? 'reader-depth--awake' : ''}`} aria-label="Continue exploring">
+      <div className="reader-depth__threshold" aria-hidden="true">
+        <span />
+      </div>
+      <div className="reader-depth__copy">
+        <span className="reader-depth__eyebrow">You have reached the edge of this thought.</span>
+        <h2>Continue deeper?</h2>
+        <p>
+          Ask Essence Composer to extend the argument, test it, or turn the ending into a research path.
+        </p>
+      </div>
+
+      <div className="reader-depth__actions">
+        {readerExplorationActions.map((action) => {
+          const isPending = pendingAction === action.action
+
+          return (
+            <button
+              key={action.action}
+              type="button"
+              className="reader-depth__action"
+              onClick={() => onExplore(action.action)}
+              disabled={pendingAction !== null}
+            >
+              <span>{isPending ? 'Thinking...' : action.label}</span>
+              <small>{action.description}</small>
+            </button>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -3845,38 +6069,63 @@ function LinkedText({
 }) {
   const lines = text.split('\n')
   const nodes: ReactNode[] = []
+  const inlinePattern = /(\[\[([^[\]]+)\]\]|\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|<u>([\s\S]+?)<\/u>|\*\*([^*]+)\*\*|\*([^*]+)\*)/g
 
   lines.forEach((line, lineIndex) => {
     let lastIndex = 0
 
-    for (const match of line.matchAll(/\[\[([^[\]]+)\]\]/g)) {
+    for (const match of line.matchAll(inlinePattern)) {
       const matchedText = match[0]
-      const linkedTitle = match[1]?.trim() ?? ''
       const startIndex = match.index ?? 0
 
       if (startIndex > lastIndex) {
         nodes.push(<span key={`text-${lineIndex}-${lastIndex}`}>{line.slice(lastIndex, startIndex)}</span>)
       }
 
-      const linkedNote = notesByNormalizedTitle[normalizeNoteLinkTitle(linkedTitle)]
+      if (match[2]) {
+        const linkedTitle = match[2].trim()
+        const linkedNote = notesByNormalizedTitle[normalizeNoteLinkTitle(linkedTitle)]
 
-      if (linkedNote) {
+        if (linkedNote) {
+          nodes.push(
+            <button
+              key={`note-link-${lineIndex}-${startIndex}`}
+              type="button"
+              className="note-link"
+              onClick={() => onOpenNote(linkedNote.id)}
+            >
+              {linkedNote.title}
+            </button>,
+          )
+        } else {
+          nodes.push(
+            <span key={`missing-${lineIndex}-${startIndex}`} className="note-link note-link--missing">
+              {matchedText}
+            </span>,
+          )
+        }
+      } else if (match[3] && match[4]) {
         nodes.push(
-          <button
-            key={`link-${lineIndex}-${startIndex}`}
-            type="button"
-            className="note-link"
-            onClick={() => onOpenNote(linkedNote.id)}
+          <a
+            key={`external-link-${lineIndex}-${startIndex}`}
+            className="reader-inline-link"
+            href={normalizeExternalHref(match[4])}
+            target="_blank"
+            rel="noreferrer"
           >
-            {linkedNote.title}
-          </button>,
+            {match[3]}
+          </a>,
         )
+      } else if (match[5]) {
+        nodes.push(<code key={`code-${lineIndex}-${startIndex}`} className="reader-inline-code">{match[5]}</code>)
+      } else if (match[6]) {
+        nodes.push(<u key={`underline-${lineIndex}-${startIndex}`}>{match[6]}</u>)
+      } else if (match[7]) {
+        nodes.push(<strong key={`bold-${lineIndex}-${startIndex}`}>{match[7]}</strong>)
+      } else if (match[8]) {
+        nodes.push(<em key={`italic-${lineIndex}-${startIndex}`}>{match[8]}</em>)
       } else {
-        nodes.push(
-          <span key={`missing-${lineIndex}-${startIndex}`} className="note-link note-link--missing">
-            {matchedText}
-          </span>,
-        )
+        nodes.push(<span key={`raw-${lineIndex}-${startIndex}`}>{matchedText}</span>)
       }
 
       lastIndex = startIndex + matchedText.length
@@ -4074,6 +6323,266 @@ function ModeToggle({
   )
 }
 
+function EditorActionsMenu({
+  isOpen,
+  note,
+  noteHistoryOpen,
+  onClose,
+  onDelete,
+  onExportMarkdown,
+  onToggleFavorite,
+  onToggleHistory,
+  onToggleOpen,
+  onTogglePinned,
+}: {
+  isOpen: boolean
+  note: Note
+  noteHistoryOpen: boolean
+  onClose: () => void
+  onDelete: () => void
+  onExportMarkdown: () => void
+  onToggleFavorite: () => void
+  onToggleHistory: () => void
+  onToggleOpen: () => void
+  onTogglePinned: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        onClose()
+      }
+    }
+
+    window.addEventListener('mousedown', handlePointerDown)
+    return () => window.removeEventListener('mousedown', handlePointerDown)
+  }, [isOpen, onClose])
+
+  const runAction = (action: () => void) => {
+    action()
+    onClose()
+  }
+
+  return (
+    <div className="editor-more" ref={menuRef}>
+      <button
+        type="button"
+        className={`icon-button ${isOpen ? 'icon-button--active' : ''}`}
+        onClick={onToggleOpen}
+        aria-label="Open note actions"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        title="More note actions"
+      >
+        <Icon name="more" />
+      </button>
+
+      {isOpen && (
+        <div className="editor-more__menu" role="menu" aria-label="Note actions">
+          <div className="editor-more__summary">
+            <span>Note actions</span>
+            <strong>{note.title}</strong>
+          </div>
+
+          <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onExportMarkdown)}>
+            <Icon name="download" />
+            <span>
+              <strong>Export Markdown</strong>
+              <small>Save this note as a portable .md file</small>
+            </span>
+          </button>
+
+          <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onToggleHistory)}>
+            <Icon name="history" />
+            <span>
+              <strong>{noteHistoryOpen ? 'Close history' : 'Open history'}</strong>
+              <small>Review saved versions of this note</small>
+            </span>
+          </button>
+
+          <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onTogglePinned)}>
+            <Icon name="pin" />
+            <span>
+              <strong>{note.isPinned ? 'Unpin note' : 'Pin note'}</strong>
+              <small>{note.isPinned ? 'Remove it from priority placement' : 'Keep it near the top of the library'}</small>
+            </span>
+          </button>
+
+          <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onToggleFavorite)}>
+            <Icon name="star" />
+            <span>
+              <strong>{note.isFavorite ? 'Remove favorite' : 'Add favorite'}</strong>
+              <small>{note.isFavorite ? 'Take it out of favorites' : 'Mark it for quick return'}</small>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="menuitem"
+            className="editor-more__item editor-more__item--danger"
+            onClick={() => runAction(onDelete)}
+          >
+            <Icon name="trash" />
+            <span>
+              <strong>Delete note</strong>
+              <small>Move carefully. This asks for confirmation.</small>
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AuthScreen({
+  disabled,
+  email,
+  error,
+  isLoading,
+  mode,
+  onContinueLocally,
+  onEmailChange,
+  onModeChange,
+  onSubmit,
+}: {
+  disabled: boolean
+  email: string
+  error: string | null
+  isLoading: boolean
+  mode: AuthViewMode
+  onContinueLocally: () => void
+  onEmailChange: (email: string) => void
+  onModeChange: (mode: AuthViewMode) => void
+  onSubmit: () => void
+}) {
+  const isSignup = mode === 'signup'
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onSubmit()
+  }
+
+  return (
+    <main className="auth-screen">
+      <section className="auth-main" aria-label="Essence account access">
+        <header className="auth-brandbar">
+          <EssenceMark compact />
+          <strong>Essence</strong>
+          <span className="auth-brandbar__divider" aria-hidden="true" />
+          <p>A lucid space for thought.</p>
+        </header>
+
+        <div className="auth-main__content">
+          <div className="auth-hero">
+            <h1>{isSignup ? 'Begin with a quiet room for your notes.' : 'Return to your thinking space.'}</h1>
+          </div>
+
+          <section className="auth-panel">
+            <span className="auth-panel__eyebrow">{isSignup ? 'Create workspace' : 'Welcome back'}</span>
+
+            <div className="auth-toggle" role="tablist" aria-label="Account mode">
+              <button
+                type="button"
+                className={`auth-toggle__button ${mode === 'signin' ? 'auth-toggle__button--active' : ''}`}
+                onClick={() => onModeChange('signin')}
+                role="tab"
+                aria-selected={mode === 'signin'}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                className={`auth-toggle__button ${mode === 'signup' ? 'auth-toggle__button--active' : ''}`}
+                onClick={() => onModeChange('signup')}
+                role="tab"
+                aria-selected={mode === 'signup'}
+              >
+                Sign up
+              </button>
+            </div>
+
+            <form className="auth-form" onSubmit={handleSubmit}>
+              <label className="auth-field">
+                <span>Email</span>
+                <input
+                  autoComplete="email"
+                  autoFocus
+                  disabled={disabled}
+                  inputMode="email"
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  placeholder="you@example.com"
+                  type="email"
+                  value={email}
+                />
+              </label>
+
+              {error && <div className="auth-error">{error}</div>}
+
+              <button type="submit" className="auth-primary" disabled={disabled}>
+                {isLoading ? 'Preparing workspace...' : isSignup ? 'Create workspace' : 'Sign in'}
+              </button>
+            </form>
+
+            <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
+              Continue locally
+            </button>
+          </section>
+        </div>
+      </section>
+
+      <aside className="auth-poem" aria-label="Product promise">
+        <p>
+          <strong>Capture</strong> the thought.
+          <br />
+          <strong>Shape</strong> the structure.
+          <br />
+          <strong>Return when</strong> the mind is ready.
+        </p>
+      </aside>
+    </main>
+  )
+}
+
+function AccountControl({
+  disabled,
+  onOpenAuth,
+  onSignOut,
+  user,
+}: {
+  disabled: boolean
+  onOpenAuth: () => void
+  onSignOut: () => void
+  user: AuthUser | null
+}) {
+  const isLocal = !user || user.isLocal
+
+  if (!isLocal) {
+    return (
+      <div className="account-control account-control--signedIn" title={`Signed in as ${user.email}`}>
+        <span className="account-control__avatar" aria-hidden="true">
+          {getAccountInitials(user.displayName || user.email)}
+        </span>
+        <span className="account-control__identity">{user.displayName}</span>
+        <button type="button" className="account-control__button" onClick={onSignOut} disabled={disabled}>
+          Sign out
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <button type="button" className="account-control account-control--button" onClick={onOpenAuth} disabled={disabled}>
+      <Icon name="user" />
+      <span>Sign in</span>
+    </button>
+  )
+}
+
 function QuickSwitcher({
   activeIndex,
   isOpen,
@@ -4241,7 +6750,39 @@ function RailButton({
   )
 }
 
-function EssenceMonogram({
+function AmbienceControl({
+  mode,
+  onChange,
+}: {
+  mode: AmbienceMode
+  onChange: (mode: AmbienceMode) => void
+}) {
+  return (
+    <div className="rail__ambience" aria-label="Background ambience">
+      <span className="rail__ambienceLabel">Ambience</span>
+      <div className="rail__ambienceToggle" role="radiogroup" aria-label="Background ambience">
+        {ambienceOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`rail__ambienceButton ${
+              mode === option.value ? 'rail__ambienceButton--active' : ''
+            } rail__ambienceButton--${option.value}`}
+            onClick={() => onChange(option.value)}
+            role="radio"
+            aria-checked={mode === option.value}
+            aria-label={option.label}
+            title={`${option.label}: ${option.description}`}
+          >
+            <span className="rail__ambienceDot" aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EssenceMark({
   compact = false,
   framed = false,
 }: {
@@ -4250,40 +6791,20 @@ function EssenceMonogram({
 }) {
   return (
     <span
-      className={`essence-monogram ${compact ? 'essence-monogram--compact' : ''} ${framed ? 'essence-monogram--framed' : ''}`}
+      className={`essence-mark ${compact ? 'essence-mark--compact' : ''} ${framed ? 'essence-mark--framed' : ''}`}
       aria-hidden="true"
     >
       <svg
-        className="essence-monogram__svg"
+        className="essence-mark__svg"
         viewBox="0 0 64 64"
         role="presentation"
         focusable="false"
       >
-        {framed ? <rect className="essence-monogram__frame" x="6" y="6" width="52" height="52" rx="16" /> : null}
-        <text
-          className="essence-monogram__letter"
-          x="11.5"
-          y="8"
-          dominantBaseline="hanging"
-          fontFamily="Newsreader, Georgia, serif"
-          fontSize="37"
-          fontWeight="500"
-          letterSpacing="-2.2"
-        >
-          E
-        </text>
-        <text
-          className="essence-monogram__letter"
-          x="31"
-          y="24.5"
-          dominantBaseline="hanging"
-          fontFamily="Newsreader, Georgia, serif"
-          fontSize="35"
-          fontWeight="500"
-          letterSpacing="-2.1"
-        >
-          S
-        </text>
+        {framed ? <rect className="essence-mark__frame" x="5" y="5" width="54" height="54" rx="18" /> : null}
+        <path
+          className="essence-mark__glyph"
+          d="M45.8 12H25.7C16.2 12 10 17.7 10 25.3c0 4.9 2.5 8.6 6.8 10.5C12.4 37.8 10 41.5 10 46.3 10 53.8 16.3 59 25.8 59h20c3.7 0 6.4-2.6 6.4-5.9s-2.7-5.8-6.4-5.8H27.2c-2.5 0-4.1-1.2-4.1-3s1.6-3 4.1-3h15.6c3.4 0 5.9-2.4 5.9-5.5s-2.5-5.5-5.9-5.5H27.2c-2.4 0-4.1-1.2-4.1-3s1.7-3 4.1-3h18.6c3.7 0 6.4-2.5 6.4-5.8S49.5 12 45.8 12Z"
+        />
       </svg>
     </span>
   )
@@ -4367,6 +6888,16 @@ function Icon({ name }: { name: string }) {
           <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h4l1.4 2H20l-2 8.5A1.5 1.5 0 0 1 16.5 19h-12A1.5 1.5 0 0 1 3 17.5Z" />
         </Glyph>
       )
+    case 'focus':
+      return (
+        <Glyph>
+          <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+          <path d="M15 4h4a1 1 0 0 1 1 1v4" />
+          <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+          <path d="M9 20H5a1 1 0 0 1-1-1v-4" />
+          <circle cx="12" cy="12" r="2.4" />
+        </Glyph>
+      )
     case 'grid':
       return (
         <Glyph>
@@ -4399,6 +6930,14 @@ function Icon({ name }: { name: string }) {
           <path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 0-2 2Z" />
           <path d="M7 4v18" />
           <path d="M18 6h1a2 2 0 0 1 2 2v12H9" />
+        </Glyph>
+      )
+    case 'link':
+      return (
+        <Glyph>
+          <path d="M9.5 14.5 14.5 9.5" />
+          <path d="M11 6.5 12.6 5A4.2 4.2 0 0 1 18.5 11l-1.5 1.5" />
+          <path d="M13 17.5 11.4 19A4.2 4.2 0 0 1 5.5 13l1.5-1.5" />
         </Glyph>
       )
     case 'more':
@@ -4456,6 +6995,19 @@ function Icon({ name }: { name: string }) {
           <path d="m8 12 8 6" />
         </Glyph>
       )
+    case 'spark':
+      return (
+        <Glyph>
+          <path d="M12 3v5" />
+          <path d="M12 16v5" />
+          <path d="M3 12h5" />
+          <path d="M16 12h5" />
+          <path d="m5.6 5.6 3.1 3.1" />
+          <path d="m15.3 15.3 3.1 3.1" />
+          <path d="m18.4 5.6-3.1 3.1" />
+          <path d="m8.7 15.3-3.1 3.1" />
+        </Glyph>
+      )
     case 'star':
       return (
         <Glyph>
@@ -4485,6 +7037,13 @@ function Icon({ name }: { name: string }) {
           <path d="M12 20V10" />
           <path d="m8 14 4-4 4 4" />
           <path d="M5 5.5h14" />
+        </Glyph>
+      )
+    case 'user':
+      return (
+        <Glyph>
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5 20a7 7 0 0 1 14 0" />
         </Glyph>
       )
     case 'redo':
@@ -4557,6 +7116,48 @@ function loadStoredActiveNoteId() {
   return loadStoredCacheState().activeNoteId
 }
 
+function loadStoredComposerHistory() {
+  return loadStoredCacheState().composerHistory
+}
+
+function loadStoredAmbienceMode(): AmbienceMode {
+  if (typeof window === 'undefined') {
+    return 'subtle'
+  }
+
+  const raw = window.localStorage.getItem(ambienceStorageKey)
+
+  return isAmbienceMode(raw) ? raw : 'subtle'
+}
+
+function isAmbienceMode(value: unknown): value is AmbienceMode {
+  return value === 'still' || value === 'subtle' || value === 'cosmic'
+}
+
+function loadAuthGateDismissed() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  return window.localStorage.getItem(authGateStorageKey) === 'true'
+}
+
+function persistAuthGateDismissed() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(authGateStorageKey, 'true')
+}
+
+function clearAuthGateDismissed() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(authGateStorageKey)
+}
+
 function loadStoredCacheState(): PersistedAppState {
   if (typeof window === 'undefined') {
     return createEmptyPersistedState()
@@ -4575,24 +7176,27 @@ function loadStoredCacheState(): PersistedAppState {
   }
 }
 
-async function fetchRemoteAppState(): Promise<PersistedAppState | null> {
-  const response = await fetch('/api/state')
+async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
+  const response = await fetch('/api/state', {
+    credentials: 'same-origin',
+  })
 
   if (!response.ok) {
     throw new Error(`Failed to load remote state: ${response.status}`)
   }
 
-  const payload = (await response.json()) as { state?: unknown | null }
+  const payload = (await response.json()) as { state?: unknown | null; user?: unknown | null }
 
-  if (!payload.state) {
-    return null
+  return {
+    state: payload.state ? normalizePersistedAppState(payload.state) : null,
+    user: normalizeAuthUser(payload.user),
   }
-
-  return normalizePersistedAppState(payload.state)
 }
 
 async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<NoteRevision[]> {
-  const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}/revisions?limit=${limit}`)
+  const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}/revisions?limit=${limit}`, {
+    credentials: 'same-origin',
+  })
 
   if (!response.ok) {
     throw new Error(`Failed to load note history: ${response.status}`)
@@ -4608,7 +7212,9 @@ async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<Not
 }
 
 async function fetchRemoteSearchResults(query: string, limit = 24): Promise<SearchResult[]> {
-  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
+    credentials: 'same-origin',
+  })
 
   if (!response.ok) {
     throw new Error(`Failed to search notes: ${response.status}`)
@@ -4623,9 +7229,60 @@ async function fetchRemoteSearchResults(query: string, limit = 24): Promise<Sear
     : []
 }
 
+async function generateRemoteAiDraft(request: {
+  category: AiDraftCategory
+  topic: string
+}): Promise<AiDraft> {
+  const response = await fetch('/api/ai/draft', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  const payload = await response.json().catch(() => ({})) as { draft?: unknown; error?: unknown }
+
+  if (!response.ok) {
+    throw new Error(typeof payload.error === 'string' ? payload.error : `Composer failed with status ${response.status}.`)
+  }
+
+  return normalizeRemoteAiDraft(payload.draft)
+}
+
+async function generateRemoteAiAssist(request: {
+  action: AiAssistAction
+  note: {
+    selectedText: string
+    status: string
+    tags: string[]
+    text: string
+    title: string
+  }
+}): Promise<AiAssistResult> {
+  const response = await fetch('/api/ai/assist', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
+
+  if (!response.ok) {
+    throw new Error(typeof payload.error === 'string' ? payload.error : `Composer failed with status ${response.status}.`)
+  }
+
+  return normalizeRemoteAiAssistResult(payload.result, request.action)
+}
+
 async function persistRemoteAppState(state: PersistedAppState, revisionEvents: PendingRevisionEvent[] = []) {
   const response = await fetch('/api/state', {
     method: 'PUT',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -4634,6 +7291,255 @@ async function persistRemoteAppState(state: PersistedAppState, revisionEvents: P
 
   if (!response.ok) {
     throw new Error(`Failed to persist remote state: ${response.status}`)
+  }
+}
+
+function normalizeRemoteAiAssistResult(rawResult: unknown, fallbackAction: AiAssistAction): AiAssistResult {
+  const candidate = (rawResult ?? {}) as Partial<AiAssistResult> & { blocks?: unknown[] }
+  const action = isAiAssistAction(candidate.action) ? candidate.action : fallbackAction
+  const actionLabel =
+    typeof candidate.actionLabel === 'string' && candidate.actionLabel.trim()
+      ? candidate.actionLabel.trim()
+      : aiAssistActions.find((option) => option.value === action)?.label ?? 'Composer'
+  const blocks = Array.isArray(candidate.blocks)
+    ? candidate.blocks.map(normalizeRemoteAiDraftBlock).filter((block): block is AiDraftBlock => block !== null)
+    : []
+
+  return {
+    action,
+    actionLabel,
+    blocks: blocks.length > 0 ? blocks : [{ type: 'paragraph', text: '' }],
+    canReplaceSelection: Boolean(candidate.canReplaceSelection),
+    summary: typeof candidate.summary === 'string' ? candidate.summary.trim() : '',
+    title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : actionLabel,
+  }
+}
+
+function normalizeRemoteAiDraft(rawDraft: unknown): AiDraft {
+  const candidate = (rawDraft ?? {}) as Partial<AiDraft> & { blocks?: unknown[] }
+  const collectionId = isCollectionId(candidate.collectionId) ? candidate.collectionId : 'research'
+  const layout =
+    candidate.layout === 'feature' || candidate.layout === 'quote' || candidate.layout === 'standard'
+      ? candidate.layout
+      : 'standard'
+  const blocks = Array.isArray(candidate.blocks)
+    ? candidate.blocks.map(normalizeRemoteAiDraftBlock).filter((block): block is AiDraftBlock => block !== null)
+    : []
+
+  return {
+    blocks: blocks.length > 0 ? blocks : [{ type: 'paragraph', text: '' }],
+    collectionId,
+    layout,
+    noteType: candidate.noteType === 'quote' ? 'quote' : undefined,
+    status: typeof candidate.status === 'string' && candidate.status.trim() ? candidate.status.trim() : 'Draft',
+    summary: typeof candidate.summary === 'string' ? candidate.summary.trim() : '',
+    tags: Array.isArray(candidate.tags)
+      ? dedupeStrings(candidate.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0))
+      : ['ai-draft'],
+    title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Untitled AI Draft',
+  }
+}
+
+function normalizeRemoteAiDraftBlock(rawBlock: unknown): AiDraftBlock | null {
+  if (!rawBlock || typeof rawBlock !== 'object') {
+    return null
+  }
+
+  const candidate = rawBlock as Partial<AiDraftBlock>
+  const type = isBlockType(candidate.type) ? candidate.type : 'paragraph'
+
+  if (type === 'bullet-list') {
+    const items = Array.isArray(candidate.items)
+      ? candidate.items.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : []
+
+    return {
+      type,
+      items: items.length > 0 ? items : [''],
+    }
+  }
+
+  return {
+    type,
+    text: typeof candidate.text === 'string' ? candidate.text : '',
+    citation: type === 'quote' && typeof candidate.citation === 'string' ? candidate.citation : undefined,
+  }
+}
+
+function convertAiDraftBlockToNoteBlock(block: AiDraftBlock): NoteBlock {
+  const id = generateId('block')
+
+  if (block.type === 'bullet-list') {
+    return {
+      id,
+      type: 'bullet-list',
+      items: block.items && block.items.length > 0 ? block.items : [''],
+    }
+  }
+
+  if (block.type === 'quote') {
+    return {
+      id,
+      type: 'quote',
+      text: block.text ?? '',
+      citation: block.citation ?? '',
+    }
+  }
+
+  if (block.type === 'heading') {
+    return {
+      id,
+      type: 'heading',
+      text: block.text ?? '',
+    }
+  }
+
+  if (block.type === 'code') {
+    return {
+      id,
+      type: 'code',
+      text: block.text ?? '',
+    }
+  }
+
+  return {
+    id,
+    type: 'paragraph',
+    text: block.text ?? '',
+  }
+}
+
+function createDraftComposerHistoryEntry(
+  draft: AiDraft,
+  context: { category: AiDraftCategory; topic: string },
+): ComposerHistoryEntry {
+  return {
+    id: generateId('composer'),
+    mode: 'draft',
+    createdAt: new Date().toISOString(),
+    prompt: context.topic,
+    sourceTitle: aiDraftCategories.find((category) => category.value === context.category)?.label ?? 'Draft',
+    title: draft.title,
+    summary: draft.summary,
+    blocks: cloneAiDraftBlocks(draft.blocks),
+    draft: {
+      category: context.category,
+      collectionId: draft.collectionId,
+      layout: draft.layout,
+      noteType: draft.noteType,
+      status: draft.status,
+      tags: [...draft.tags],
+    },
+  }
+}
+
+function createAssistComposerHistoryEntry(
+  result: AiAssistResult,
+  context: { action: AiAssistAction; noteTitle: string; selectedText: string },
+): ComposerHistoryEntry {
+  return {
+    id: generateId('composer'),
+    mode: 'assist',
+    createdAt: new Date().toISOString(),
+    prompt: context.selectedText || context.noteTitle,
+    sourceTitle: context.noteTitle,
+    title: result.title,
+    summary: result.summary,
+    blocks: cloneAiDraftBlocks(result.blocks),
+    assist: {
+      action: context.action,
+      actionLabel: result.actionLabel,
+    },
+  }
+}
+
+function addComposerHistoryEntry(entry: ComposerHistoryEntry, history: ComposerHistoryEntry[]) {
+  return mergeComposerHistory([entry], history)
+}
+
+function mergeComposerHistory(
+  incomingHistory: ComposerHistoryEntry[],
+  existingHistory: ComposerHistoryEntry[],
+) {
+  const byId = new Map<string, ComposerHistoryEntry>()
+
+  for (const entry of [...incomingHistory, ...existingHistory]) {
+    if (!byId.has(entry.id)) {
+      byId.set(entry.id, entry)
+    }
+  }
+
+  return [...byId.values()]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, composerHistoryLimit)
+}
+
+function cloneAiDraftBlocks(blocks: AiDraftBlock[]) {
+  return blocks.map((block) => ({
+    type: block.type,
+    text: block.text,
+    items: block.items ? [...block.items] : undefined,
+    citation: block.citation,
+  }))
+}
+
+async function signInRemote(email: string, state: PersistedAppState): Promise<RemoteAppSnapshot> {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, state }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to sign in: ${response.status}`)
+  }
+
+  return normalizeRemoteAppSnapshot(await response.json())
+}
+
+async function signOutRemote(): Promise<RemoteAppSnapshot> {
+  const response = await fetch('/api/auth/logout', {
+    method: 'POST',
+    credentials: 'same-origin',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to sign out: ${response.status}`)
+  }
+
+  return normalizeRemoteAppSnapshot(await response.json())
+}
+
+function normalizeRemoteAppSnapshot(payload: unknown): RemoteAppSnapshot {
+  const candidate = (payload ?? {}) as { state?: unknown | null; user?: unknown | null }
+
+  return {
+    state: candidate.state ? normalizePersistedAppState(candidate.state) : null,
+    user: normalizeAuthUser(candidate.user),
+  }
+}
+
+function normalizeAuthUser(rawUser: unknown): AuthUser | null {
+  if (!rawUser || typeof rawUser !== 'object') {
+    return null
+  }
+
+  const candidate = rawUser as Partial<AuthUser>
+  const id = typeof candidate.id === 'string' ? candidate.id : null
+  const email = typeof candidate.email === 'string' ? candidate.email : null
+
+  if (!id || !email) {
+    return null
+  }
+
+  return {
+    id,
+    email,
+    displayName: typeof candidate.displayName === 'string' ? candidate.displayName : email,
+    isLocal: Boolean(candidate.isLocal),
   }
 }
 
@@ -4688,11 +7594,18 @@ function normalizeRemoteSearchResult(rawResult: unknown): SearchResult | null {
 function normalizePersistedAppState(rawState: unknown): PersistedAppState {
   const candidate = (rawState ?? {}) as Partial<PersistedAppState> & {
     activeNoteId?: unknown
+    composerHistory?: unknown[]
     folders?: unknown[]
     notes?: unknown[]
   }
   const folders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeStoredFolder) : []
   const notes = Array.isArray(candidate.notes) ? candidate.notes.map(normalizeStoredNote) : []
+  const composerHistory = Array.isArray(candidate.composerHistory)
+    ? candidate.composerHistory
+        .map(normalizeStoredComposerHistoryEntry)
+        .filter((entry): entry is ComposerHistoryEntry => entry !== null)
+        .slice(0, composerHistoryLimit)
+    : []
   const activeNoteId =
     typeof candidate.activeNoteId === 'string' && notes.some((note) => note.id === candidate.activeNoteId)
       ? candidate.activeNoteId
@@ -4700,6 +7613,7 @@ function normalizePersistedAppState(rawState: unknown): PersistedAppState {
 
   return {
     activeNoteId,
+    composerHistory,
     folders,
     notes,
   }
@@ -4718,11 +7632,20 @@ function normalizeStoredFolder(rawFolder: unknown): Folder {
 }
 
 function normalizeStoredNote(rawNote: unknown): Note {
-  const candidate = (rawNote ?? {}) as Partial<Note> & { content?: string; blocks?: unknown[] }
+  const candidate = (rawNote ?? {}) as Partial<Note> & {
+    content?: string
+    blocks?: unknown[]
+    editorDoc?: unknown
+    sources?: unknown[]
+  }
   const collectionId = isCollectionId(candidate.collectionId) ? candidate.collectionId : 'ideas'
   const blocks = Array.isArray(candidate.blocks)
     ? candidate.blocks.map(normalizeStoredBlock)
     : createBlocksFromHtml(typeof candidate.content === 'string' ? candidate.content : '<p></p>')
+  const safeBlocks = blocks.length > 0 ? blocks : [createEmptyBlock('paragraph')]
+  const sources = Array.isArray(candidate.sources)
+    ? candidate.sources.map(normalizeStoredSource).filter((source): source is NoteSource => source !== null)
+    : []
 
   return {
     id: typeof candidate.id === 'string' ? candidate.id : generateId('note'),
@@ -4730,7 +7653,9 @@ function normalizeStoredNote(rawNote: unknown): Note {
     collectionId,
     folderId: typeof candidate.folderId === 'string' ? candidate.folderId : null,
     status: typeof candidate.status === 'string' ? candidate.status : 'Draft',
-    blocks: blocks.length > 0 ? blocks : [createEmptyBlock('paragraph')],
+    blocks: safeBlocks,
+    editorDoc: normalizeEditorDocument(candidate.editorDoc, safeBlocks),
+    sources,
     tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : [],
     previewDate: typeof candidate.previewDate === 'string' ? candidate.previewDate : 'Just now',
     updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : new Date().toISOString(),
@@ -4742,6 +7667,30 @@ function normalizeStoredNote(rawNote: unknown): Note {
       candidate.layout === 'feature' || candidate.layout === 'quote' || candidate.layout === 'standard'
         ? candidate.layout
         : 'standard',
+  }
+}
+
+function normalizeStoredSource(rawSource: unknown): NoteSource | null {
+  if (!rawSource || typeof rawSource !== 'object') {
+    return null
+  }
+
+  const candidate = rawSource as Partial<NoteSource> & { type?: unknown }
+  const sourceType = isNoteSourceKind(candidate.sourceType)
+    ? candidate.sourceType
+    : isNoteSourceKind(candidate.type)
+      ? candidate.type
+      : 'other'
+
+  return {
+    id: typeof candidate.id === 'string' ? candidate.id : generateId('source'),
+    sourceType,
+    title: typeof candidate.title === 'string' ? candidate.title : '',
+    author: typeof candidate.author === 'string' ? candidate.author : '',
+    year: typeof candidate.year === 'string' ? candidate.year : '',
+    publisher: typeof candidate.publisher === 'string' ? candidate.publisher : '',
+    url: typeof candidate.url === 'string' ? candidate.url : '',
+    note: typeof candidate.note === 'string' ? candidate.note : '',
   }
 }
 
@@ -4759,6 +7708,78 @@ function normalizeStoredBlock(rawBlock: unknown): NoteBlock {
         ? ['']
         : undefined,
     citation: typeof candidate.citation === 'string' ? candidate.citation : '',
+  }
+}
+
+function normalizeStoredComposerHistoryEntry(rawEntry: unknown): ComposerHistoryEntry | null {
+  if (!rawEntry || typeof rawEntry !== 'object') {
+    return null
+  }
+
+  const candidate = rawEntry as Partial<ComposerHistoryEntry> & {
+    assist?: Partial<ComposerHistoryEntry['assist']>
+    blocks?: unknown[]
+    draft?: Partial<ComposerHistoryEntry['draft']>
+  }
+  const mode = candidate.mode === 'assist' || candidate.mode === 'draft' ? candidate.mode : null
+
+  if (!mode) {
+    return null
+  }
+
+  const blocks = Array.isArray(candidate.blocks)
+    ? candidate.blocks.map(normalizeRemoteAiDraftBlock).filter((block): block is AiDraftBlock => block !== null)
+    : []
+
+  if (blocks.length === 0) {
+    return null
+  }
+
+  const createdAt =
+    typeof candidate.createdAt === 'string' && !Number.isNaN(Date.parse(candidate.createdAt))
+      ? candidate.createdAt
+      : new Date().toISOString()
+  const baseEntry = {
+    blocks,
+    createdAt,
+    id: typeof candidate.id === 'string' ? candidate.id : generateId('composer'),
+    mode,
+    prompt: typeof candidate.prompt === 'string' ? candidate.prompt : '',
+    sourceTitle: typeof candidate.sourceTitle === 'string' ? candidate.sourceTitle : mode === 'draft' ? 'New draft' : 'Assist note',
+    summary: typeof candidate.summary === 'string' ? candidate.summary : '',
+    title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title : 'Composer result',
+  }
+
+  if (mode === 'draft') {
+    const category = isAiDraftCategory(candidate.draft?.category) ? candidate.draft.category : 'essay'
+
+    return {
+      ...baseEntry,
+      draft: {
+        category,
+        collectionId: isCollectionId(candidate.draft?.collectionId) ? candidate.draft.collectionId : 'research',
+        layout:
+          candidate.draft?.layout === 'feature' || candidate.draft?.layout === 'quote' || candidate.draft?.layout === 'standard'
+            ? candidate.draft.layout
+            : 'standard',
+        noteType: candidate.draft?.noteType === 'quote' ? 'quote' : undefined,
+        status: typeof candidate.draft?.status === 'string' ? candidate.draft.status : 'Draft',
+        tags: Array.isArray(candidate.draft?.tags)
+          ? candidate.draft.tags.filter((tag): tag is string => typeof tag === 'string')
+          : ['ai-draft'],
+      },
+    }
+  }
+
+  return {
+    ...baseEntry,
+    assist: {
+      action: isAiAssistAction(candidate.assist?.action) ? candidate.assist.action : 'continue-writing',
+      actionLabel:
+        typeof candidate.assist?.actionLabel === 'string' && candidate.assist.actionLabel.trim()
+          ? candidate.assist.actionLabel
+          : 'Assist note',
+    },
   }
 }
 
@@ -4862,6 +7883,397 @@ function createEmptyBlock(type: BlockType, id = generateId('block')): NoteBlock 
       return { id, type, text: '' }
     default:
       return { id, type: 'paragraph', text: '' }
+  }
+}
+
+function createEmptySourceCard(): NoteSource {
+  return {
+    id: generateId('source'),
+    sourceType: 'paper',
+    title: '',
+    author: '',
+    year: '',
+    publisher: '',
+    url: '',
+    note: '',
+  }
+}
+
+function noteBlocksToTiptapContent(blocks: NoteBlock[]): JSONContent {
+  const content = blocks
+    .map((block) => noteBlockToTiptapNode(block))
+    .filter((node): node is JSONContent => Boolean(node))
+
+  return {
+    type: 'doc',
+    content: content.length > 0 ? content : [{ type: 'paragraph' }],
+  }
+}
+
+function appendBlocksToEditorDocument(note: Note, appendedBlocks: NoteBlock[]): JSONContent {
+  const currentDoc = normalizeEditorDocument(note.editorDoc, note.blocks)
+  const appendedDoc = noteBlocksToTiptapContent(appendedBlocks)
+
+  return {
+    type: 'doc',
+    content: [...(currentDoc.content ?? []), ...(appendedDoc.content ?? [])],
+  }
+}
+
+function replaceBlockInEditorDocument(note: Note, blockId: string, replacementBlocks: NoteBlock[]): JSONContent {
+  const blockIndex = note.blocks.findIndex((block) => block.id === blockId)
+
+  if (blockIndex === -1) {
+    return noteBlocksToTiptapContent(note.blocks)
+  }
+
+  const currentDoc = normalizeEditorDocument(note.editorDoc, note.blocks)
+  const replacementDoc = noteBlocksToTiptapContent(replacementBlocks)
+  const currentContent = currentDoc.content ?? []
+
+  if (blockIndex >= currentContent.length) {
+    return noteBlocksToTiptapContent(note.blocks.flatMap((block) => (block.id === blockId ? replacementBlocks : [block])))
+  }
+
+  return {
+    type: 'doc',
+    content: [
+      ...currentContent.slice(0, blockIndex),
+      ...(replacementDoc.content ?? []),
+      ...currentContent.slice(blockIndex + 1),
+    ],
+  }
+}
+
+function noteBlockToTiptapNode(block: NoteBlock): JSONContent | null {
+  if (block.type === 'heading') {
+    return {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: createTiptapInlineContentFromText(block.text ?? ''),
+    }
+  }
+
+  if (block.type === 'quote') {
+    return {
+      type: 'blockquote',
+      content: [
+        {
+          type: 'paragraph',
+          content: createTiptapInlineContentFromText(block.text ?? ''),
+        },
+      ],
+    }
+  }
+
+  if (block.type === 'bullet-list') {
+    return {
+      type: 'bulletList',
+      content: (block.items && block.items.length > 0 ? block.items : ['']).map((item) => ({
+        type: 'listItem',
+        content: [
+          {
+            type: 'paragraph',
+            content: createTiptapInlineContentFromText(item),
+          },
+        ],
+      })),
+    }
+  }
+
+  if (block.type === 'code') {
+    return {
+      type: 'codeBlock',
+      content: block.text ? [{ type: 'text', text: block.text }] : undefined,
+    }
+  }
+
+  return {
+    type: 'paragraph',
+    content: createTiptapInlineContentFromText(block.text ?? ''),
+  }
+}
+
+function createTiptapInlineContentFromText(value: string): JSONContent[] | undefined {
+  if (!value) {
+    return undefined
+  }
+
+  const content: JSONContent[] = []
+  const inlinePattern = /(\[\[([^[\]]+)\]\]|\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|<u>([\s\S]+?)<\/u>|\*\*([^*]+)\*\*|\*([^*]+)\*)/g
+
+  value.split('\n').forEach((line, lineIndex, lines) => {
+    let lastIndex = 0
+
+    for (const match of line.matchAll(inlinePattern)) {
+      const matchedText = match[0]
+      const startIndex = match.index ?? 0
+
+      if (startIndex > lastIndex) {
+        content.push({ type: 'text', text: line.slice(lastIndex, startIndex) })
+      }
+
+      if (match[2]) {
+        content.push({ type: 'text', text: matchedText })
+      } else if (match[3] && match[4]) {
+        content.push({
+          type: 'text',
+          text: match[3],
+          marks: [{ type: 'link', attrs: { href: normalizeExternalHref(match[4]) } }],
+        })
+      } else if (match[5]) {
+        content.push({ type: 'text', text: match[5], marks: [{ type: 'code' }] })
+      } else if (match[6]) {
+        content.push({ type: 'text', text: match[6], marks: [{ type: 'underline' }] })
+      } else if (match[7]) {
+        content.push({ type: 'text', text: match[7], marks: [{ type: 'bold' }] })
+      } else if (match[8]) {
+        content.push({ type: 'text', text: match[8], marks: [{ type: 'italic' }] })
+      } else {
+        content.push({ type: 'text', text: matchedText })
+      }
+
+      lastIndex = startIndex + matchedText.length
+    }
+
+    if (lastIndex < line.length) {
+      content.push({ type: 'text', text: line.slice(lastIndex) })
+    }
+
+    if (lineIndex < lines.length - 1) {
+      content.push({ type: 'hardBreak' })
+    }
+  })
+
+  return content.length > 0 ? content : undefined
+}
+
+function normalizeEditorDocument(value: unknown, fallbackBlocks: NoteBlock[]): JSONContent {
+  if (isEditorDocument(value)) {
+    return {
+      ...value,
+      content: Array.isArray(value.content) ? value.content : [],
+    }
+  }
+
+  return noteBlocksToTiptapContent(fallbackBlocks)
+}
+
+function isEditorDocument(value: unknown): value is JSONContent {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as JSONContent
+  return candidate.type === 'doc' && (candidate.content === undefined || Array.isArray(candidate.content))
+}
+
+function tiptapDocToNoteBlocks(doc: JSONContent, previousBlocks: NoteBlock[] = []): NoteBlock[] {
+  const blocks = (doc.content ?? [])
+    .map((node, index) => tiptapNodeToNoteBlock(node, previousBlocks[index]))
+    .filter((block): block is NoteBlock => Boolean(block))
+
+  return blocks.length > 0 ? blocks : [createEmptyBlock('paragraph')]
+}
+
+function tiptapNodeToNoteBlock(node: JSONContent, previousBlock?: NoteBlock): NoteBlock | null {
+  const id = previousBlock?.id ?? generateId('block')
+
+  if (node.type === 'heading') {
+    return {
+      id,
+      type: 'heading',
+      text: serializeTiptapInlineContent(node.content),
+    }
+  }
+
+  if (node.type === 'blockquote') {
+    return {
+      id,
+      type: 'quote',
+      text: serializeTiptapBlockText(node).trim(),
+      citation: previousBlock?.type === 'quote' ? previousBlock.citation ?? '' : '',
+    }
+  }
+
+  if (node.type === 'bulletList' || node.type === 'orderedList') {
+    const items = (node.content ?? [])
+      .filter((child) => child.type === 'listItem')
+      .map((child) => serializeTiptapBlockText(child).trim())
+
+    return {
+      id,
+      type: 'bullet-list',
+      items: items.length > 0 ? items : [''],
+    }
+  }
+
+  if (node.type === 'codeBlock') {
+    return {
+      id,
+      type: 'code',
+      text: serializeTiptapBlockText(node),
+    }
+  }
+
+  if (node.type === 'paragraph') {
+    return {
+      id,
+      type: 'paragraph',
+      text: serializeTiptapInlineContent(node.content),
+    }
+  }
+
+  return null
+}
+
+function serializeTiptapBlockText(node: JSONContent): string {
+  if (node.type === 'text') {
+    return serializeTiptapTextNode(node)
+  }
+
+  if (node.type === 'hardBreak') {
+    return '\n'
+  }
+
+  if (node.type === 'paragraph' || node.type === 'heading') {
+    return serializeTiptapInlineContent(node.content)
+  }
+
+  if (node.type === 'listItem') {
+    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
+  }
+
+  if (node.type === 'bulletList' || node.type === 'orderedList') {
+    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
+  }
+
+  if (node.type === 'blockquote') {
+    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
+  }
+
+  if (node.type === 'codeBlock') {
+    return (node.content ?? []).map((child) => child.text ?? '').join('')
+  }
+
+  return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
+}
+
+function serializeTiptapInlineContent(content: JSONContent[] | undefined) {
+  return (content ?? []).map((node) => {
+    if (node.type === 'text') {
+      return serializeTiptapTextNode(node)
+    }
+
+    if (node.type === 'hardBreak') {
+      return '\n'
+    }
+
+    return serializeTiptapBlockText(node)
+  }).join('')
+}
+
+function serializeTiptapTextNode(node: JSONContent) {
+  let text = node.text ?? ''
+
+  if (!text) {
+    return ''
+  }
+
+  const marks = node.marks ?? []
+  const linkMark = marks.find((mark) => mark.type === 'link')
+
+  if (linkMark) {
+    const href = typeof linkMark.attrs?.href === 'string' ? linkMark.attrs.href : ''
+    return href ? `[${text}](${href})` : text
+  }
+
+  if (marks.some((mark) => mark.type === 'code')) {
+    return `\`${text}\``
+  }
+
+  if (marks.some((mark) => mark.type === 'underline')) {
+    text = `<u>${text}</u>`
+  }
+
+  if (marks.some((mark) => mark.type === 'bold')) {
+    text = `**${text}**`
+  }
+
+  if (marks.some((mark) => mark.type === 'italic')) {
+    text = `*${text}*`
+  }
+
+  return text
+}
+
+function getEditorStateSignature(blocks: NoteBlock[], editorDoc: JSONContent) {
+  return JSON.stringify({
+    blocks: blocks.map((block) => ({
+      citation: block.citation ?? '',
+      items: block.items ?? [],
+      text: block.text ?? '',
+      type: block.type,
+    })),
+    editorDoc,
+  })
+}
+
+function applyInlineFormatToText(value: string, range: TextSelectionRange, format: InlineFormat) {
+  const selectedText = value.slice(range.start, range.end)
+  const before = value.slice(0, range.start)
+  const after = value.slice(range.end)
+  const wrappedText =
+    format === 'bold'
+      ? `**${selectedText}**`
+      : format === 'italic'
+        ? `*${selectedText}*`
+        : format === 'underline'
+          ? `<u>${selectedText}</u>`
+          : format === 'code'
+            ? `\`${selectedText}\``
+            : `[${selectedText}](https://)`
+  const linkUrlOffset = format === 'link' ? wrappedText.length - 'https://)'.length : null
+
+  return {
+    value: `${before}${wrappedText}${after}`,
+    selectionStart: linkUrlOffset === null ? before.length : before.length + linkUrlOffset,
+    selectionEnd:
+      linkUrlOffset === null
+        ? before.length + wrappedText.length
+        : before.length + wrappedText.length - 1,
+  }
+}
+
+function getMarkdownBlockShortcut(
+  value: string,
+  selectionStart: number,
+): { selectionStart: number; type: BlockType; value: string } | null {
+  const beforeCursor = value.slice(0, selectionStart)
+  const afterCursor = value.slice(selectionStart)
+
+  if (beforeCursor.includes('\n') || afterCursor.trim().length > 0) {
+    return null
+  }
+
+  const shortcuts: Array<{ marker: string; type: BlockType }> = [
+    { marker: '# ', type: 'heading' },
+    { marker: '## ', type: 'heading' },
+    { marker: '> ', type: 'quote' },
+    { marker: '- ', type: 'bullet-list' },
+    { marker: '* ', type: 'bullet-list' },
+    { marker: '```', type: 'code' },
+  ]
+  const matchedShortcut = shortcuts.find((shortcut) => beforeCursor === shortcut.marker)
+
+  if (!matchedShortcut) {
+    return null
+  }
+
+  return {
+    type: matchedShortcut.type,
+    value: '',
+    selectionStart: 0,
   }
 }
 
@@ -5048,8 +8460,28 @@ function isContinuableNote(note: Note) {
 
 function noteMatchesLocalSearchQuery(note: Note, query: string, foldersById: Record<string, Folder>) {
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
-  const haystack = `${note.title} ${getPlainTextFromBlocks(note.blocks)} ${note.tags.join(' ')} ${folderPath}`.toLowerCase()
+  const haystack = `${note.title} ${getPlainTextFromBlocks(note.blocks)} ${getPlainTextFromSources(note.sources)} ${note.tags.join(' ')} ${folderPath}`.toLowerCase()
   return haystack.includes(query)
+}
+
+function getPlainTextFromSources(sources: NoteSource[]) {
+  return sources
+    .map((source) =>
+      [
+        source.title,
+        source.author,
+        source.year,
+        source.publisher,
+        source.url,
+        source.note,
+        formatSourceTypeLabel(source.sourceType),
+      ]
+        .filter(Boolean)
+        .join(' '),
+    )
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function getPlainTextFromBlocks(blocks: NoteBlock[]) {
@@ -5063,6 +8495,11 @@ function getPlainTextFromBlocks(blocks: NoteBlock[]) {
     })
     .join(' ')
     .replace(/\[\[([^[\]]+)\]\]/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/<u>([\s\S]+?)<\/u>/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -5491,28 +8928,46 @@ function cloneImportedStateWithFreshIds(state: PersistedAppState): PersistedAppS
   const notes = state.notes.map((note) => {
     const nextId = generateId('note')
     noteIdMap.set(note.id, nextId)
+    const blocks = note.blocks.map((block) => ({
+      id: generateId('block'),
+      type: block.type,
+      text: typeof block.text === 'string' ? block.text : '',
+      items: Array.isArray(block.items)
+        ? [...block.items]
+        : block.type === 'bullet-list'
+          ? ['']
+          : undefined,
+      citation: typeof block.citation === 'string' ? block.citation : '',
+    }))
 
     return {
       ...note,
       id: nextId,
       folderId: note.folderId ? folderIdMap.get(note.folderId) ?? null : null,
       tags: [...note.tags],
-      blocks: note.blocks.map((block) => ({
-        id: generateId('block'),
-        type: block.type,
-        text: typeof block.text === 'string' ? block.text : '',
-        items: Array.isArray(block.items)
-          ? [...block.items]
-          : block.type === 'bullet-list'
-            ? ['']
-            : undefined,
-        citation: typeof block.citation === 'string' ? block.citation : '',
+      sources: note.sources.map((source) => ({
+        ...source,
+        id: generateId('source'),
       })),
+      blocks,
+      editorDoc: normalizeEditorDocument(note.editorDoc, blocks),
     }
   })
 
   return {
     activeNoteId: state.activeNoteId ? noteIdMap.get(state.activeNoteId) ?? notes[0]?.id ?? null : notes[0]?.id ?? null,
+    composerHistory: state.composerHistory.map((entry) => ({
+      ...entry,
+      id: generateId('composer'),
+      blocks: cloneAiDraftBlocks(entry.blocks),
+      draft: entry.draft
+        ? {
+            ...entry.draft,
+            tags: [...entry.draft.tags],
+          }
+        : undefined,
+      assist: entry.assist ? { ...entry.assist } : undefined,
+    })),
     folders: normalizedFolders,
     notes,
   }
@@ -5527,6 +8982,7 @@ function serializeNoteToMarkdown(note: Note, foldersById: Record<string, Folder>
     ...(folderPath ? [`folder: ${formatMarkdownFrontmatterValue(folderPath)}`] : []),
     `status: ${formatMarkdownFrontmatterValue(note.status)}`,
     `tags: [${note.tags.map((tag) => formatMarkdownFrontmatterValue(tag)).join(', ')}]`,
+    ...(note.sources.length > 0 ? [`sources: ${JSON.stringify(note.sources)}`] : []),
     `favorite: ${note.isFavorite ? 'true' : 'false'}`,
     `pinned: ${note.isPinned ? 'true' : 'false'}`,
     `archived: ${note.isArchived ? 'true' : 'false'}`,
@@ -5589,6 +9045,8 @@ function parseMarkdownNote(markdown: string, fileName: string): ImportedMarkdown
     folderId: null,
     status: metadata.status ?? inferImportedStatus(blocks, inferredType),
     blocks,
+    editorDoc: noteBlocksToTiptapContent(blocks),
+    sources: metadata.sources ?? [],
     tags: dedupeStrings(metadata.tags ?? []),
     previewDate: 'Just now',
     updatedAt: metadata.updatedAt ?? new Date().toISOString(),
@@ -5622,6 +9080,7 @@ function extractMarkdownFrontmatter(markdown: string) {
         collection?: string
         folder?: string
         status?: string
+        sources?: NoteSource[]
         tags?: string[]
         favorite?: boolean
         pinned?: boolean
@@ -5646,6 +9105,7 @@ function parseMarkdownFrontmatterBlock(rawFrontmatter: string) {
     collection?: string
     folder?: string
     status?: string
+    sources?: NoteSource[]
     tags?: string[]
     favorite?: boolean
     pinned?: boolean
@@ -5697,7 +9157,7 @@ function parseMarkdownFrontmatterBlock(rawFrontmatter: string) {
         break
       case 'tags':
         if (Array.isArray(parsedValue)) {
-          metadata.tags = parsedValue
+          metadata.tags = parsedValue.filter((value): value is string => typeof value === 'string')
         } else if (typeof parsedValue === 'string' && parsedValue.length > 0) {
           metadata.tags = parsedValue
             .split(',')
@@ -5706,6 +9166,13 @@ function parseMarkdownFrontmatterBlock(rawFrontmatter: string) {
         } else {
           metadata.tags = []
           activeListKey = 'tags'
+        }
+        break
+      case 'sources':
+        if (Array.isArray(parsedValue)) {
+          metadata.sources = parsedValue
+            .map(normalizeStoredSource)
+            .filter((source): source is NoteSource => source !== null)
         }
         break
       case 'favorite':
@@ -5747,7 +9214,7 @@ function parseMarkdownFrontmatterBlock(rawFrontmatter: string) {
   return metadata
 }
 
-function parseMarkdownFrontmatterValue(value: string): string | boolean | string[] {
+function parseMarkdownFrontmatterValue(value: string): unknown {
   if (!value) {
     return ''
   }
@@ -5761,6 +9228,14 @@ function parseMarkdownFrontmatterValue(value: string): string | boolean | string
   }
 
   if (value.startsWith('[') && value.endsWith(']')) {
+    if (value.includes('{')) {
+      try {
+        return JSON.parse(value)
+      } catch {
+        return []
+      }
+    }
+
     return value
       .slice(1, -1)
       .split(',')
@@ -6036,6 +9511,8 @@ function cloneHistorySnapshot(snapshot: HistorySnapshot): HistorySnapshot {
     noteViewMode: snapshot.noteViewMode,
     notes: snapshot.notes.map((note) => ({
       ...note,
+      editorDoc: note.editorDoc ? structuredClone(note.editorDoc) : null,
+      sources: note.sources.map((source) => ({ ...source })),
       tags: [...note.tags],
       blocks: note.blocks.map((block) => ({
         id: block.id,
@@ -6105,8 +9582,90 @@ function formatRevisionTimestamp(value: string) {
   }).format(date)
 }
 
+function formatSourceTypeLabel(sourceType: NoteSourceKind) {
+  return sourceTypeOptions.find((option) => option.value === sourceType)?.label ?? 'Source'
+}
+
+function formatSourceByline(source: NoteSource) {
+  const pieces = [source.author, source.publisher].filter((piece) => piece.trim().length > 0)
+
+  if (pieces.length === 0) {
+    return 'Reference source'
+  }
+
+  return pieces.join(' · ')
+}
+
+function hasSourceContent(source: NoteSource) {
+  return [source.title, source.author, source.year, source.publisher, source.url, source.note].some(
+    (value) => value.trim().length > 0,
+  )
+}
+
+function normalizeExternalHref(value: string) {
+  const trimmedValue = value.trim()
+
+  if (/^(https?:|mailto:|doi:)/i.test(trimmedValue)) {
+    return trimmedValue
+  }
+
+  return `https://${trimmedValue}`
+}
+
+function formatComposerHistoryTimestamp(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown'
+  }
+
+  const elapsedMs = Date.now() - date.getTime()
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+
+  if (elapsedMs < minuteMs) {
+    return 'Just now'
+  }
+
+  if (elapsedMs < hourMs) {
+    return `${Math.floor(elapsedMs / minuteMs)}m ago`
+  }
+
+  if (elapsedMs < dayMs) {
+    return `${Math.floor(elapsedMs / hourMs)}h ago`
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(date)
+}
+
 function formatCount(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+function summarizeInlineText(value: string, maxLength: number) {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim()
+
+  if (normalizedValue.length <= maxLength) {
+    return normalizedValue
+  }
+
+  return `${normalizedValue.slice(0, maxLength - 3).trimEnd()}...`
+}
+
+function getAccountInitials(value: string) {
+  const initials = value
+    .split(/[\s@._-]+/)
+    .map((part) => part.trim()[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
+  return initials || 'E'
 }
 
 function generateId(prefix: string) {
@@ -6115,6 +9674,20 @@ function generateId(prefix: string) {
 
 function preventButtonFocus(event: MouseEvent<HTMLButtonElement>) {
   event.preventDefault()
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return (
+    target.isContentEditable ||
+    Boolean(target.closest('[contenteditable="true"]')) ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  )
 }
 
 function isBlockType(value: unknown): value is BlockType {
@@ -6130,5 +9703,47 @@ function isBlockType(value: unknown): value is BlockType {
 function isCollectionId(value: unknown): value is CollectionId {
   return value === 'work' || value === 'personal' || value === 'research' || value === 'ideas'
 }
+
+function isAiDraftCategory(value: unknown): value is AiDraftCategory {
+  return value === 'essay' || value === 'article' || value === 'research-topic' || value === 'quote'
+}
+
+function isAiAssistAction(value: unknown): value is AiAssistAction {
+  return (
+    value === 'continue-writing' ||
+    value === 'improve-clarity' ||
+    value === 'create-outline' ||
+    value === 'study-questions' ||
+    value === 'counterarguments' ||
+    value === 'reading-list'
+  )
+}
+
+function isNoteSourceKind(value: unknown): value is NoteSourceKind {
+  return (
+    value === 'book' ||
+    value === 'paper' ||
+    value === 'article' ||
+    value === 'web' ||
+    value === 'dataset' ||
+    value === 'other'
+  )
+}
+
+// Keep the previous block editor path rollback-safe while the Tiptap surface is validated.
+void BlockRow
+void getMarkdownBlockShortcut
+void getMatchingLinkNotes
+void getActiveNoteLinkContext
+void replaceActiveNoteLinkQuery
+void updateBlockValue
+void convertBlockType
+void insertBlock
+void removeBlockFromList
+void moveBlockInList
+void isBlockEmpty
+void trimTrailingEmptyItems
+void getSlashQuery
+void getMatchingSlashMenuItems
 
 export default App

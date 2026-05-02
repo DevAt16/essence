@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import pg from 'pg'
@@ -6,7 +6,8 @@ import pg from 'pg'
 const { Pool } = pg
 
 const schemaPath = new URL('./schema.sql', import.meta.url)
-const stateRowId = 'default'
+const legacyStateRowId = 'default'
+export const localUserId = 'local'
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required to run the PostgreSQL API.')
@@ -23,11 +24,11 @@ export async function ensureSchema() {
   await migrateLegacySnapshotIfNeeded()
 }
 
-export async function getAppState() {
+export async function getAppState(userId = localUserId) {
   const client = await pool.connect()
 
   try {
-    return await readNormalizedState(client)
+    return await readNormalizedState(client, userId)
   } finally {
     client.release()
   }
@@ -35,11 +36,13 @@ export async function getAppState() {
 
 export async function saveAppState(state, options = {}) {
   const client = await pool.connect()
+  const userId = typeof options.userId === 'string' && options.userId ? options.userId : localUserId
 
   try {
     await client.query('begin')
     await replaceNormalizedState(client, state, {
-      recordRevisions: true,
+      userId,
+      recordRevisions: options.recordRevisions ?? true,
       revisionEvents: Array.isArray(options.revisionEvents) ? options.revisionEvents : [],
       updateLegacySnapshot: true,
     })
@@ -52,7 +55,111 @@ export async function saveAppState(state, options = {}) {
   }
 }
 
-export async function getNoteRevisions(noteId, limit = 20) {
+export async function getLocalUser() {
+  return getUserById(localUserId)
+}
+
+export async function getUserById(userId) {
+  const result = await pool.query(
+    `
+      select
+        id,
+        email,
+        display_name as "displayName",
+        is_local as "isLocal",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      from users
+      where id = $1
+      limit 1
+    `,
+    [userId],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function getOrCreateUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return null
+  }
+
+  const displayName = createDisplayName(normalizedEmail)
+  const userId = `user_${randomBytes(12).toString('hex')}`
+  const result = await pool.query(
+    `
+      insert into users (id, email, display_name, is_local, updated_at)
+      values ($1, $2, $3, false, now())
+      on conflict (email)
+      do update set updated_at = now()
+      returning
+        id,
+        email,
+        display_name as "displayName",
+        is_local as "isLocal",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `,
+    [userId, normalizedEmail, displayName],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function createUserSession(userId) {
+  const token = randomBytes(32).toString('hex')
+  const tokenHash = createSessionTokenHash(token)
+  const expiresAt = new Date(Date.now() + getSessionDurationMs())
+
+  await pool.query(
+    `
+      insert into user_sessions (token_hash, user_id, expires_at)
+      values ($1, $2, $3)
+    `,
+    [tokenHash, userId, expiresAt.toISOString()],
+  )
+
+  return { expiresAt, token }
+}
+
+export async function getUserBySessionToken(token) {
+  if (!token) {
+    return null
+  }
+
+  await pool.query('delete from user_sessions where expires_at <= now()')
+
+  const result = await pool.query(
+    `
+      select
+        users.id,
+        users.email,
+        users.display_name as "displayName",
+        users.is_local as "isLocal",
+        users.created_at as "createdAt",
+        users.updated_at as "updatedAt"
+      from user_sessions
+      join users on users.id = user_sessions.user_id
+      where user_sessions.token_hash = $1 and user_sessions.expires_at > now()
+      limit 1
+    `,
+    [createSessionTokenHash(token)],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function deleteUserSession(token) {
+  if (!token) {
+    return
+  }
+
+  await pool.query('delete from user_sessions where token_hash = $1', [createSessionTokenHash(token)])
+}
+
+export async function getNoteRevisions(noteId, limit = 20, userId = localUserId) {
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 50) : 20
   const result = await pool.query(
     `
@@ -64,17 +171,17 @@ export async function getNoteRevisions(noteId, limit = 20) {
         created_at as "createdAt",
         snapshot
       from note_revisions
-      where note_id = $1
+      where note_id = $1 and user_id = $3
       order by created_at desc, id desc
       limit $2
     `,
-    [noteId, safeLimit],
+    [noteId, safeLimit, userId],
   )
 
   return result.rows
 }
 
-export async function searchNotes(query, limit = 24) {
+export async function searchNotes(query, limit = 24, userId = localUserId) {
   const trimmedQuery = String(query ?? '').trim().toLowerCase()
 
   if (!trimmedQuery) {
@@ -91,7 +198,7 @@ export async function searchNotes(query, limit = 24) {
           parent_id,
           lower(name) as path_text
         from folders
-        where parent_id is null
+        where parent_id is null and user_id = $3
 
         union all
 
@@ -101,10 +208,11 @@ export async function searchNotes(query, limit = 24) {
           folder_paths.path_text || ' / ' || lower(child.name) as path_text
         from folders child
         join folder_paths on folder_paths.id = child.parent_id
+        where child.user_id = $3
       ),
       block_search as (
         select
-          note_id,
+          note_blocks.note_id,
           lower(
             string_agg(
               trim(
@@ -126,21 +234,51 @@ export async function searchNotes(query, limit = 24) {
             )
           ) as block_text
         from note_blocks
-        group by note_id
+        join notes on notes.id = note_blocks.note_id
+        where notes.user_id = $3
+        group by note_blocks.note_id
       ),
       tag_search as (
         select
-          note_id,
+          note_tags.note_id,
           lower(string_agg(tag, ' ' order by position)) as tag_text
         from note_tags
-        group by note_id
+        join notes on notes.id = note_tags.note_id
+        where notes.user_id = $3
+        group by note_tags.note_id
+      ),
+      source_search as (
+        select
+          note_sources.note_id,
+          lower(
+            string_agg(
+              concat_ws(
+                ' ',
+                source_type,
+                title,
+                author,
+                year,
+                publisher,
+                url,
+                note
+              ),
+              ' '
+              order by position
+            )
+          ) as source_text
+        from note_sources
+        join notes on notes.id = note_sources.note_id
+        where notes.user_id = $3
+        group by note_sources.note_id
       ),
       link_search as (
         select
           note_links.source_note_id as note_id,
           lower(string_agg(target_notes.title, ' ' order by target_notes.title)) as link_text
         from note_links
+        join notes as source_notes on source_notes.id = note_links.source_note_id
         join notes as target_notes on target_notes.id = note_links.target_note_id
+        where source_notes.user_id = $3 and target_notes.user_id = $3
         group by note_links.source_note_id
       ),
       prepared as (
@@ -149,6 +287,7 @@ export async function searchNotes(query, limit = 24) {
           notes.updated_at as "updatedAt",
           lower(notes.title) as title_text,
           coalesce(block_search.block_text, '') as block_text,
+          coalesce(source_search.source_text, '') as source_text,
           coalesce(tag_search.tag_text, '') as tag_text,
           coalesce(folder_paths.path_text, '') as folder_text,
           coalesce(link_search.link_text, '') as link_text,
@@ -156,9 +295,11 @@ export async function searchNotes(query, limit = 24) {
           notes.is_pinned as "isPinned"
         from notes
         left join block_search on block_search.note_id = notes.id
+        left join source_search on source_search.note_id = notes.id
         left join tag_search on tag_search.note_id = notes.id
         left join folder_paths on folder_paths.id = notes.folder_id
         left join link_search on link_search.note_id = notes.id
+        where notes.user_id = $3
       ),
       scored as (
         select
@@ -170,6 +311,7 @@ export async function searchNotes(query, limit = 24) {
             case when tag_text like $2 then 320 else 0 end +
             case when folder_text like $2 then 220 else 0 end +
             case when link_text like $2 then 180 else 0 end +
+            case when source_text like $2 then 160 else 0 end +
             case when block_text like $2 then 120 else 0 end +
             case when "isPinned" then 24 else 0 end +
             case when "isFavorite" then 8 else 0 end
@@ -181,6 +323,7 @@ export async function searchNotes(query, limit = 24) {
               case when tag_text like $2 then 'tag' end,
               case when folder_text like $2 then 'folder' end,
               case when link_text like $2 then 'link' end,
+              case when source_text like $2 then 'source' end,
               case when block_text like $2 then 'body' end
             ],
             null
@@ -189,6 +332,7 @@ export async function searchNotes(query, limit = 24) {
         where
           title_text like $2 or
           block_text like $2 or
+          source_text like $2 or
           tag_text like $2 or
           folder_text like $2 or
           link_text like $2
@@ -199,9 +343,9 @@ export async function searchNotes(query, limit = 24) {
         "matchedFields"
       from scored
       order by score desc, "updatedAt" desc, "noteId" asc
-      limit $3
+      limit $4
     `,
-    [trimmedQuery, likePattern, safeLimit],
+    [trimmedQuery, likePattern, userId, safeLimit],
   )
 
   return result.rows
@@ -226,11 +370,15 @@ async function migrateLegacySnapshotIfNeeded() {
       return
     }
 
-    const legacyResult = await client.query('select payload from app_state where id = $1 limit 1', [stateRowId])
+    const legacyResult = await client.query('select payload from app_state where id = $1 limit 1', [legacyStateRowId])
     const legacyState = legacyResult.rows[0]?.payload ?? null
 
     if (isPersistedAppState(legacyState)) {
-      await replaceNormalizedState(client, legacyState, { recordRevisions: false, updateLegacySnapshot: false })
+      await replaceNormalizedState(client, legacyState, {
+        userId: localUserId,
+        recordRevisions: false,
+        updateLegacySnapshot: false,
+      })
     }
 
     await client.query('commit')
@@ -242,70 +390,103 @@ async function migrateLegacySnapshotIfNeeded() {
   }
 }
 
-async function readNormalizedState(client) {
-  const [workspaceResult, folderResult, noteResult, blockResult, tagResult] = await Promise.all([
-    client.query(
-      `
-        select active_note_id as "activeNoteId"
-        from workspace_state
-        where id = $1
-        limit 1
-      `,
-      [stateRowId],
-    ),
-    client.query(
-      `
-        select
-          id,
-          name,
-          parent_id as "parentId",
-          collection_id as "collectionId"
-        from folders
-        order by sort_order asc, id asc
-      `,
-    ),
-    client.query(
-      `
-        select
-          id,
-          title,
-          collection_id as "collectionId",
-          folder_id as "folderId",
-          status,
-          preview_date as "previewDate",
-          is_favorite as "isFavorite",
-          is_pinned as "isPinned",
-          is_archived as "isArchived",
-          type,
-          layout,
-          updated_at as "updatedAt"
-        from notes
-        order by sort_order asc, id asc
-      `,
-    ),
-    client.query(
-      `
-        select
-          id,
-          note_id as "noteId",
-          type,
-          text_content as "text",
-          items,
-          citation
-        from note_blocks
-        order by note_id asc, position asc
-      `,
-    ),
-    client.query(
-      `
-        select
-          note_id as "noteId",
-          tag
-        from note_tags
-        order by note_id asc, position asc
-      `,
-    ),
-  ])
+async function readNormalizedState(client, userId = localUserId) {
+  const workspaceIds = userId === localUserId ? [userId, legacyStateRowId] : [userId]
+
+  const workspaceResult = await client.query(
+    `
+      select
+        active_note_id as "activeNoteId",
+        composer_history as "composerHistory"
+      from workspace_state
+      where id = any($1::text[])
+      order by case when id = $2 then 0 else 1 end
+      limit 1
+    `,
+    [workspaceIds, userId],
+  )
+  const folderResult = await client.query(
+    `
+      select
+        id,
+        name,
+        parent_id as "parentId",
+        collection_id as "collectionId"
+      from folders
+      where user_id = $1
+      order by sort_order asc, id asc
+    `,
+    [userId],
+  )
+  const noteResult = await client.query(
+    `
+      select
+        id,
+        title,
+        collection_id as "collectionId",
+        folder_id as "folderId",
+        status,
+        preview_date as "previewDate",
+        is_favorite as "isFavorite",
+        is_pinned as "isPinned",
+        is_archived as "isArchived",
+        type,
+        layout,
+        editor_doc as "editorDoc",
+        updated_at as "updatedAt"
+      from notes
+      where user_id = $1
+      order by sort_order asc, id asc
+    `,
+    [userId],
+  )
+  const blockResult = await client.query(
+    `
+      select
+        note_blocks.id,
+        note_blocks.note_id as "noteId",
+        note_blocks.type,
+        note_blocks.text_content as "text",
+        note_blocks.items,
+        note_blocks.citation
+      from note_blocks
+      join notes on notes.id = note_blocks.note_id
+      where notes.user_id = $1
+      order by note_blocks.note_id asc, note_blocks.position asc
+    `,
+    [userId],
+  )
+  const sourceResult = await client.query(
+    `
+      select
+        note_sources.id,
+        note_sources.note_id as "noteId",
+        note_sources.source_type as "sourceType",
+        note_sources.title,
+        note_sources.author,
+        note_sources.year,
+        note_sources.publisher,
+        note_sources.url,
+        note_sources.note
+      from note_sources
+      join notes on notes.id = note_sources.note_id
+      where notes.user_id = $1
+      order by note_sources.note_id asc, note_sources.position asc
+    `,
+    [userId],
+  )
+  const tagResult = await client.query(
+    `
+      select
+        note_tags.note_id as "noteId",
+        note_tags.tag
+      from note_tags
+      join notes on notes.id = note_tags.note_id
+      where notes.user_id = $1
+      order by note_tags.note_id asc, note_tags.position asc
+    `,
+    [userId],
+  )
 
   if (workspaceResult.rowCount === 0 && folderResult.rowCount === 0 && noteResult.rowCount === 0) {
     return null
@@ -333,6 +514,23 @@ async function readNormalizedState(client) {
     tagsByNoteId.set(row.noteId, tags)
   }
 
+  const sourcesByNoteId = new Map()
+
+  for (const row of sourceResult.rows) {
+    const sources = sourcesByNoteId.get(row.noteId) ?? []
+    sources.push({
+      id: row.id,
+      sourceType: row.sourceType ?? 'other',
+      title: row.title ?? '',
+      author: row.author ?? '',
+      year: row.year ?? '',
+      publisher: row.publisher ?? '',
+      url: row.url ?? '',
+      note: row.note ?? '',
+    })
+    sourcesByNoteId.set(row.noteId, sources)
+  }
+
   const notes = noteResult.rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -340,6 +538,8 @@ async function readNormalizedState(client) {
     folderId: row.folderId,
     status: row.status,
     blocks: blocksByNoteId.get(row.id) ?? [],
+    editorDoc: row.editorDoc ?? null,
+    sources: sourcesByNoteId.get(row.id) ?? [],
     tags: tagsByNoteId.get(row.id) ?? [],
     previewDate: row.previewDate,
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt ?? new Date().toISOString()),
@@ -352,24 +552,56 @@ async function readNormalizedState(client) {
 
   return {
     activeNoteId: workspaceResult.rows[0]?.activeNoteId ?? notes[0]?.id ?? null,
+    composerHistory: Array.isArray(workspaceResult.rows[0]?.composerHistory)
+      ? workspaceResult.rows[0].composerHistory
+      : [],
     folders: folderResult.rows,
     notes,
   }
 }
 
 async function replaceNormalizedState(client, rawState, options) {
-  const { recordRevisions = true, revisionEvents = [], updateLegacySnapshot = true } = options ?? {}
+  const { userId = localUserId, recordRevisions = true, revisionEvents = [], updateLegacySnapshot = true } = options ?? {}
   const state = normalizePersistedAppState(rawState)
 
   if (recordRevisions) {
-    await captureNoteRevisions(client, state.notes, revisionEvents)
+    await captureNoteRevisions(client, state.notes, revisionEvents, userId)
   }
 
-  await client.query('delete from note_links')
-  await client.query('delete from note_tags')
-  await client.query('delete from note_blocks')
-  await client.query('delete from notes')
-  await client.query('delete from folders')
+  await client.query(
+    `
+      delete from note_links
+      using notes
+      where note_links.source_note_id = notes.id and notes.user_id = $1
+    `,
+    [userId],
+  )
+  await client.query(
+    `
+      delete from note_tags
+      using notes
+      where note_tags.note_id = notes.id and notes.user_id = $1
+    `,
+    [userId],
+  )
+  await client.query(
+    `
+      delete from note_blocks
+      using notes
+      where note_blocks.note_id = notes.id and notes.user_id = $1
+    `,
+    [userId],
+  )
+  await client.query(
+    `
+      delete from note_sources
+      using notes
+      where note_sources.note_id = notes.id and notes.user_id = $1
+    `,
+    [userId],
+  )
+  await client.query('delete from notes where user_id = $1', [userId])
+  await client.query('delete from folders where user_id = $1', [userId])
 
   const validFolderIds = new Set(state.folders.map((folder) => folder.id))
   const sortedFolders = sortFoldersForPersistence(state.folders)
@@ -377,11 +609,12 @@ async function replaceNormalizedState(client, rawState, options) {
   for (const [index, folder] of sortedFolders.entries()) {
     await client.query(
       `
-        insert into folders (id, name, parent_id, collection_id, sort_order, updated_at)
-        values ($1, $2, $3, $4, $5, now())
+        insert into folders (id, user_id, name, parent_id, collection_id, sort_order, updated_at)
+        values ($1, $2, $3, $4, $5, $6, now())
       `,
       [
         folder.id,
+        userId,
         folder.name,
         folder.parentId && validFolderIds.has(folder.parentId) ? folder.parentId : null,
         folder.collectionId,
@@ -395,6 +628,7 @@ async function replaceNormalizedState(client, rawState, options) {
       `
         insert into notes (
           id,
+          user_id,
           title,
           collection_id,
           folder_id,
@@ -405,23 +639,26 @@ async function replaceNormalizedState(client, rawState, options) {
           is_archived,
           type,
           layout,
+          editor_doc,
           sort_order,
           updated_at
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
       `,
       [
         note.id,
+        userId,
         note.title,
         note.collectionId,
         note.folderId && validFolderIds.has(note.folderId) ? note.folderId : null,
         note.status,
         note.previewDate,
-        note.isFavorite,
+        Boolean(note.isFavorite),
         Boolean(note.isPinned),
         Boolean(note.isArchived),
         note.type ?? null,
         note.layout,
+        note.editorDoc ? JSON.stringify(note.editorDoc) : null,
         noteIndex,
         note.updatedAt ?? new Date().toISOString(),
       ],
@@ -441,6 +678,38 @@ async function replaceNormalizedState(client, rawState, options) {
           block.text ?? '',
           Array.isArray(block.items) ? JSON.stringify(block.items) : null,
           block.citation ?? '',
+        ],
+      )
+    }
+
+    for (const [sourceIndex, source] of (note.sources ?? []).entries()) {
+      await client.query(
+        `
+          insert into note_sources (
+            id,
+            note_id,
+            position,
+            source_type,
+            title,
+            author,
+            year,
+            publisher,
+            url,
+            note
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
+        [
+          source.id,
+          note.id,
+          sourceIndex,
+          source.sourceType ?? 'other',
+          source.title ?? '',
+          source.author ?? '',
+          source.year ?? '',
+          source.publisher ?? '',
+          source.url ?? '',
+          source.note ?? '',
         ],
       )
     }
@@ -480,21 +749,24 @@ async function replaceNormalizedState(client, rawState, options) {
 
   await client.query(
     `
-      insert into workspace_state (id, active_note_id, updated_at)
-      values ($1, $2, now())
+      insert into workspace_state (id, active_note_id, composer_history, updated_at)
+      values ($1, $2, $3::jsonb, now())
       on conflict (id)
-      do update set active_note_id = excluded.active_note_id, updated_at = now()
+      do update set
+        active_note_id = excluded.active_note_id,
+        composer_history = excluded.composer_history,
+        updated_at = now()
     `,
-    [stateRowId, state.activeNoteId],
+    [userId, state.activeNoteId, JSON.stringify(state.composerHistory ?? [])],
   )
 
   if (updateLegacySnapshot) {
-    await upsertLegacySnapshot(client, state)
+    await upsertLegacySnapshot(client, state, userId)
   }
 }
 
-async function captureNoteRevisions(client, nextNotes, revisionEvents = []) {
-  const persistedNotesById = await readPersistedNotesById(client)
+async function captureNoteRevisions(client, nextNotes, revisionEvents = [], userId = localUserId) {
+  const persistedNotesById = await readPersistedNotesById(client, userId)
   const revisionKindsByNoteId = new Map(
     revisionEvents
       .filter((event) => typeof event?.noteId === 'string' && typeof event?.revisionKind === 'string')
@@ -524,6 +796,7 @@ async function captureNoteRevisions(client, nextNotes, revisionEvents = []) {
     if (!persistedEntry || persistedEntry.snapshotHash !== nextEntry.snapshotHash) {
       await insertNoteRevision(
         client,
+        userId,
         note.id,
         note.title,
         revisionKindsByNoteId.get(note.id) ?? (persistedEntry ? 'snapshot' : 'created'),
@@ -540,6 +813,7 @@ async function captureNoteRevisions(client, nextNotes, revisionEvents = []) {
 
     await insertNoteRevision(
       client,
+      userId,
       noteId,
       persistedEntry.snapshot.title ?? 'Untitled Note',
       'deleted',
@@ -549,8 +823,8 @@ async function captureNoteRevisions(client, nextNotes, revisionEvents = []) {
   }
 }
 
-async function readPersistedNotesById(client) {
-  const state = await readNormalizedState(client)
+async function readPersistedNotesById(client, userId = localUserId) {
+  const state = await readNormalizedState(client, userId)
   const notesById = new Map()
 
   for (const note of state?.notes ?? []) {
@@ -564,23 +838,24 @@ async function readPersistedNotesById(client) {
   return notesById
 }
 
-async function insertNoteRevision(client, noteId, noteTitle, revisionKind, snapshot, snapshotHash) {
+async function insertNoteRevision(client, userId, noteId, noteTitle, revisionKind, snapshot, snapshotHash) {
   await client.query(
     `
       insert into note_revisions (
+        user_id,
         note_id,
         note_title,
         snapshot,
         snapshot_hash,
         revision_kind
       )
-      values ($1, $2, $3::jsonb, $4, $5)
+      values ($1, $2, $3, $4::jsonb, $5, $6)
     `,
-    [noteId, noteTitle, JSON.stringify(snapshot), snapshotHash, revisionKind],
+    [userId, noteId, noteTitle, JSON.stringify(snapshot), snapshotHash, revisionKind],
   )
 }
 
-async function upsertLegacySnapshot(client, state) {
+async function upsertLegacySnapshot(client, state, userId = localUserId) {
   await client.query(
     `
       insert into app_state (id, payload, updated_at)
@@ -588,16 +863,51 @@ async function upsertLegacySnapshot(client, state) {
       on conflict (id)
       do update set payload = excluded.payload, updated_at = now()
     `,
-    [stateRowId, JSON.stringify(state)],
+    [userId, JSON.stringify(state)],
   )
 }
 
 function normalizePersistedAppState(value) {
   return {
     activeNoteId: typeof value?.activeNoteId === 'string' || value?.activeNoteId === null ? value.activeNoteId : null,
+    composerHistory: Array.isArray(value?.composerHistory) ? value.composerHistory : [],
     folders: Array.isArray(value?.folders) ? value.folders : [],
     notes: Array.isArray(value?.notes) ? value.notes : [],
   }
+}
+
+function normalizeEmail(value) {
+  const normalized = String(value ?? '').trim().toLowerCase()
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    return null
+  }
+
+  return normalized
+}
+
+function createDisplayName(email) {
+  const [namePart] = email.split('@')
+  const normalizedName = String(namePart ?? '')
+    .replace(/[._-]+/g, ' ')
+    .trim()
+
+  if (!normalizedName) {
+    return 'Essence User'
+  }
+
+  return normalizedName.replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function createSessionTokenHash(token) {
+  return createHash('sha256').update(String(token)).digest('hex')
+}
+
+function getSessionDurationMs() {
+  const configuredDays = Number(process.env.AUTH_SESSION_DAYS ?? 30)
+  const safeDays = Number.isFinite(configuredDays) ? Math.min(Math.max(configuredDays, 1), 365) : 30
+
+  return safeDays * 24 * 60 * 60 * 1000
 }
 
 function isPersistedAppState(value) {
@@ -722,6 +1032,17 @@ function createRevisionSnapshot(note) {
       text: block.text ?? '',
       items: Array.isArray(block.items) ? [...block.items] : undefined,
       citation: block.citation ?? '',
+    })),
+    editorDoc: note.editorDoc ?? null,
+    sources: (note.sources ?? []).map((source) => ({
+      id: source.id,
+      sourceType: source.sourceType ?? 'other',
+      title: source.title ?? '',
+      author: source.author ?? '',
+      year: source.year ?? '',
+      publisher: source.publisher ?? '',
+      url: source.url ?? '',
+      note: source.note ?? '',
     })),
     tags: Array.isArray(note.tags) ? [...note.tags] : [],
     previewDate: note.previewDate,

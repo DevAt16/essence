@@ -1,0 +1,603 @@
+{
+  "activeNoteId": "consciousness-hard-problem-narrative-self",
+  "composerHistory": [],
+  "folders": [
+    {
+      "id": "research-philosophy",
+      "name": "Philosophy",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-philosophy-ethics",
+      "name": "Ethics & Meaning",
+      "parentId": "research-philosophy",
+      "collectionId": "research"
+    },
+    {
+      "id": "research-consciousness",
+      "name": "Consciousness",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-consciousness-methods",
+      "name": "Methods",
+      "parentId": "research-consciousness",
+      "collectionId": "research"
+    },
+    {
+      "id": "research-eastern-philosophy",
+      "name": "Eastern Philosophy",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-sanatan-dharma",
+      "name": "Sanatan Dharma",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-biology",
+      "name": "Biology",
+      "parentId": null,
+      "collectionId": "research"
+    },
+    {
+      "id": "research-biology-systems",
+      "name": "Systems & Life",
+      "parentId": "research-biology",
+      "collectionId": "research"
+    },
+    {
+      "id": "ideas-cross-disciplinary",
+      "name": "Cross-Disciplinary Questions",
+      "parentId": null,
+      "collectionId": "ideas"
+    },
+    {
+      "id": "ideas-quotes",
+      "name": "Seed Quotes",
+      "parentId": null,
+      "collectionId": "ideas"
+    }
+  ],
+  "notes": [
+    {
+      "id": "philosophy-discipline-of-better-questions",
+      "title": "Philosophy as the Discipline of Better Questions",
+      "collectionId": "research",
+      "folderId": "research-philosophy",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-philosophy-questions-1",
+          "type": "paragraph",
+          "text": "Philosophy is often introduced as a search for answers, but its quieter power lies in changing the quality of the questions. A philosophical question slows down what culture treats as obvious. It asks what must already be assumed before a claim can feel natural."
+        },
+        {
+          "id": "block-philosophy-questions-2",
+          "type": "paragraph",
+          "text": "This makes philosophy useful for students and researchers because it creates conceptual hygiene. Before collecting data, arguing policy, or building a theory, it asks whether the central words are doing too much work: mind, person, life, truth, value, nature, freedom."
+        },
+        {
+          "id": "block-philosophy-questions-3",
+          "type": "heading",
+          "text": "Working distinction"
+        },
+        {
+          "id": "block-philosophy-questions-4",
+          "type": "bullet-list",
+          "items": [
+            "An empirical question asks what is happening.",
+            "A conceptual question asks what would count as happening.",
+            "An ethical question asks what should matter once we understand the difference."
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-philosophy-questions-1",
+          "sourceType": "book",
+          "title": "The Problems of Philosophy",
+          "author": "Bertrand Russell",
+          "year": "1912",
+          "publisher": "Williams and Norgate",
+          "url": "",
+          "note": "Useful for introducing philosophy as a disciplined way of clarifying uncertainty."
+        }
+      ],
+      "tags": ["philosophy", "conceptual-analysis", "research-methods"],
+      "previewDate": "Apr 30, 2026",
+      "updatedAt": "2026-04-30T09:00:00.000Z",
+      "isFavorite": true,
+      "isPinned": true,
+      "isArchived": false,
+      "layout": "feature"
+    },
+    {
+      "id": "philosophy-ethics-after-abstraction",
+      "title": "Research Topic: Ethics After Abstraction",
+      "collectionId": "research",
+      "folderId": "research-philosophy-ethics",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-ethics-abstraction-1",
+          "type": "paragraph",
+          "text": "Research angle: study what happens when moral reasoning becomes too abstract to remain answerable to lived experience. The question is not whether abstraction is bad, but when it stops being accountable."
+        },
+        {
+          "id": "block-ethics-abstraction-2",
+          "type": "bullet-list",
+          "items": [
+            "Compare rule-based ethics, virtue ethics, and care ethics through the lens of attention.",
+            "Ask how institutions convert ethical language into checklists.",
+            "Track where moral injury appears when systems satisfy rules but fail persons."
+          ]
+        },
+        {
+          "id": "block-ethics-abstraction-3",
+          "type": "paragraph",
+          "text": "A useful paper could argue that ethics begins again whenever a general principle has to face a particular person."
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-ethics-abstraction-1",
+          "sourceType": "book",
+          "title": "The Sovereignty of Good",
+          "author": "Iris Murdoch",
+          "year": "1970",
+          "publisher": "Routledge",
+          "url": "",
+          "note": "Relevant for thinking about attention as an ethical act."
+        }
+      ],
+      "tags": ["ethics", "attention", "research-topic"],
+      "previewDate": "Apr 30, 2026",
+      "updatedAt": "2026-04-30T09:05:00.000Z",
+      "isFavorite": false,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "consciousness-hard-problem-narrative-self",
+      "title": "The Hard Problem and the Narrative Self",
+      "collectionId": "research",
+      "folderId": "research-consciousness",
+      "status": "Academic Essay",
+      "blocks": [
+        {
+          "id": "block-consciousness-hard-1",
+          "type": "paragraph",
+          "text": "The study of human consciousness remains difficult because it asks two kinds of questions at once. Neuroscience can map mechanisms of perception, attention, memory, and action. The harder question asks why any of this processing is accompanied by felt experience at all."
+        },
+        {
+          "id": "block-consciousness-hard-2",
+          "type": "paragraph",
+          "text": "The narrative self adds another layer. We do not merely experience sensations; we weave them into a story of continuity. The self is partly biological regulation, partly memory, partly social recognition, and partly the ongoing narration that says: this is happening to me."
+        },
+        {
+          "id": "block-consciousness-hard-3",
+          "type": "heading",
+          "text": "Research tension"
+        },
+        {
+          "id": "block-consciousness-hard-4",
+          "type": "paragraph",
+          "text": "If consciousness is only a report generated by the brain, why does the report appear from the inside? If the self is only a story, why does the story possess such organizing force over attention, suffering, and responsibility?"
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-consciousness-hard-1",
+          "sourceType": "paper",
+          "title": "What Is It Like to Be a Bat?",
+          "author": "Thomas Nagel",
+          "year": "1974",
+          "publisher": "The Philosophical Review",
+          "url": "",
+          "note": "Classic framing of subjective experience as resistant to purely external description."
+        },
+        {
+          "id": "source-consciousness-hard-2",
+          "sourceType": "paper",
+          "title": "Facing Up to the Problem of Consciousness",
+          "author": "David Chalmers",
+          "year": "1995",
+          "publisher": "Journal of Consciousness Studies",
+          "url": "",
+          "note": "Introduces the hard problem distinction used in contemporary consciousness studies."
+        }
+      ],
+      "tags": ["consciousness", "selfhood", "philosophy-of-mind"],
+      "previewDate": "Apr 30, 2026",
+      "updatedAt": "2026-04-30T09:10:00.000Z",
+      "isFavorite": true,
+      "isPinned": true,
+      "isArchived": false,
+      "layout": "feature"
+    },
+    {
+      "id": "consciousness-attention-qualia",
+      "title": "Field Notes on Attention and Qualia",
+      "collectionId": "research",
+      "folderId": "research-consciousness-methods",
+      "status": "Article",
+      "blocks": [
+        {
+          "id": "block-attention-qualia-1",
+          "type": "paragraph",
+          "text": "Attention is the hinge between consciousness as a theoretical problem and consciousness as a lived practice. What we attend to becomes brighter, more structured, and more available to memory. What we fail to attend to may still affect us, but it does not enter the same field of articulation."
+        },
+        {
+          "id": "block-attention-qualia-2",
+          "type": "paragraph",
+          "text": "Qualia are usually discussed as private qualities of experience, such as the redness of red or the bitterness of coffee. But for research, the question can be widened: how do language, training, culture, and contemplative practice refine what a person can notice?"
+        },
+        {
+          "id": "block-attention-qualia-3",
+          "type": "bullet-list",
+          "items": [
+            "Study expert perception in musicians, doctors, meditators, and naturalists.",
+            "Compare raw sensation with trained discrimination.",
+            "Ask whether attention changes only reports or also the structure of experience."
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-attention-qualia-1",
+          "sourceType": "book",
+          "title": "The Embodied Mind",
+          "author": "Francisco Varela, Evan Thompson, Eleanor Rosch",
+          "year": "1991",
+          "publisher": "MIT Press",
+          "url": "",
+          "note": "Useful bridge between cognitive science, phenomenology, and contemplative traditions."
+        }
+      ],
+      "tags": ["attention", "qualia", "phenomenology"],
+      "previewDate": "Apr 29, 2026",
+      "updatedAt": "2026-04-29T11:30:00.000Z",
+      "isFavorite": false,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "eastern-philosophy-emptiness-relation",
+      "title": "Emptiness, Relation, and the Quieting of Certainty",
+      "collectionId": "research",
+      "folderId": "research-eastern-philosophy",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-emptiness-1",
+          "type": "paragraph",
+          "text": "In many strands of Eastern philosophy, wisdom begins by softening the grip of fixed identity. Things are not denied. Rather, they are seen as relational: arising through causes, language, perception, habit, and dependence."
+        },
+        {
+          "id": "block-emptiness-2",
+          "type": "paragraph",
+          "text": "Emptiness is easily misunderstood as nothingness. A more useful reading is that nothing possesses a sealed, independent essence apart from relations. This insight can be intellectually precise and psychologically freeing at the same time."
+        },
+        {
+          "id": "block-emptiness-3",
+          "type": "quote",
+          "text": "To see a thing clearly is to see the relations that make it appear alone.",
+          "citation": "Seed reflection"
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-emptiness-1",
+          "sourceType": "book",
+          "title": "Mulamadhyamakakarika",
+          "author": "Nagarjuna",
+          "year": "c. 2nd century",
+          "publisher": "Classical Buddhist text",
+          "url": "",
+          "note": "Primary philosophical source for Madhyamaka discussions of emptiness and dependent arising."
+        }
+      ],
+      "tags": ["eastern-philosophy", "emptiness", "dependent-arising"],
+      "previewDate": "Apr 29, 2026",
+      "updatedAt": "2026-04-29T12:00:00.000Z",
+      "isFavorite": true,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "feature"
+    },
+    {
+      "id": "eastern-philosophy-comparative-selfhood",
+      "title": "Research Topic: Comparative Selfhood in Buddhist and Vedantic Thought",
+      "collectionId": "research",
+      "folderId": "research-eastern-philosophy",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-comparative-self-1",
+          "type": "paragraph",
+          "text": "Research angle: compare traditions that seem to disagree about the self while sharing a discipline of examining ordinary identification. The contrast between no-self analysis and witness-consciousness can become a productive research frame rather than a simple opposition."
+        },
+        {
+          "id": "block-comparative-self-2",
+          "type": "bullet-list",
+          "items": [
+            "Track what each tradition means by self before comparing conclusions.",
+            "Distinguish metaphysical claims from contemplative methods.",
+            "Ask whether liberation depends on discovering a true self, dissolving a false self, or transforming attachment to self-making."
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-comparative-self-1",
+          "sourceType": "book",
+          "title": "The Principal Upanishads",
+          "author": "Classical Upanishadic tradition",
+          "year": "Ancient",
+          "publisher": "Various translations",
+          "url": "",
+          "note": "Useful for studying Atman, Brahman, and witness-consciousness themes."
+        }
+      ],
+      "tags": ["selfhood", "buddhism", "vedanta", "research-topic"],
+      "previewDate": "Apr 28, 2026",
+      "updatedAt": "2026-04-28T10:15:00.000Z",
+      "isFavorite": false,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "sanatan-dharma-living-order",
+      "title": "Sanatan Dharma as Living Order, Not Static Label",
+      "collectionId": "research",
+      "folderId": "research-sanatan-dharma",
+      "status": "Article",
+      "blocks": [
+        {
+          "id": "block-sanatan-order-1",
+          "type": "paragraph",
+          "text": "Sanatan Dharma is best approached with care because it is not a single centralized creed in the modern sense. It names a living civilizational field of practices, disciplines, stories, rituals, philosophies, and ways of orienting life toward order, responsibility, and liberation."
+        },
+        {
+          "id": "block-sanatan-order-2",
+          "type": "paragraph",
+          "text": "The word dharma carries several layers: cosmic order, ethical duty, sustaining principle, social responsibility, and personal path. These meanings do not collapse into one definition. They form a vocabulary for asking how life should be aligned."
+        },
+        {
+          "id": "block-sanatan-order-3",
+          "type": "heading",
+          "text": "Research caution"
+        },
+        {
+          "id": "block-sanatan-order-4",
+          "type": "paragraph",
+          "text": "A respectful research note should avoid reducing Sanatan Dharma either to abstract metaphysics or to external ritual alone. Its intellectual depth and lived diversity need to be held together."
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-sanatan-order-1",
+          "sourceType": "book",
+          "title": "Bhagavad Gita",
+          "author": "Classical Sanskrit tradition",
+          "year": "Ancient",
+          "publisher": "Various translations",
+          "url": "",
+          "note": "Important source for dharma, action, discipline, and devotion."
+        }
+      ],
+      "tags": ["sanatan-dharma", "dharma", "indian-philosophy"],
+      "previewDate": "Apr 28, 2026",
+      "updatedAt": "2026-04-28T11:00:00.000Z",
+      "isFavorite": true,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "feature"
+    },
+    {
+      "id": "sanatan-dharma-karma-responsibility",
+      "title": "Dharma, Karma, and the Architecture of Responsibility",
+      "collectionId": "research",
+      "folderId": "research-sanatan-dharma",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-karma-responsibility-1",
+          "type": "paragraph",
+          "text": "Karma is often simplified into reward and punishment, but its deeper philosophical force is relational causality. Action leaves traces in the world, in the actor, and in the field of future possibilities."
+        },
+        {
+          "id": "block-karma-responsibility-2",
+          "type": "paragraph",
+          "text": "Dharma gives action an orienting frame. It asks not only what one wants, but what the situation requires, what role one inhabits, what consequences follow, and what kind of person is being shaped by repeated action."
+        },
+        {
+          "id": "block-karma-responsibility-3",
+          "type": "bullet-list",
+          "items": [
+            "Karma: action as causal imprint.",
+            "Dharma: action aligned with sustaining order.",
+            "Yoga: disciplined transformation of perception, action, and attachment."
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-karma-responsibility-1",
+          "sourceType": "book",
+          "title": "The Yoga Sutras of Patanjali",
+          "author": "Patanjali",
+          "year": "Classical",
+          "publisher": "Various translations",
+          "url": "",
+          "note": "Useful source for disciplined attention, practice, and transformation."
+        }
+      ],
+      "tags": ["karma", "dharma", "responsibility", "yoga"],
+      "previewDate": "Apr 27, 2026",
+      "updatedAt": "2026-04-27T16:20:00.000Z",
+      "isFavorite": false,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "biology-life-organized-fragility",
+      "title": "Life as Organized Fragility",
+      "collectionId": "research",
+      "folderId": "research-biology",
+      "status": "Essay",
+      "blocks": [
+        {
+          "id": "block-life-fragility-1",
+          "type": "paragraph",
+          "text": "Biology studies systems that maintain themselves by remaining open. A living organism is not a static object but a pattern of exchange: energy, matter, signals, repair, reproduction, and boundary maintenance."
+        },
+        {
+          "id": "block-life-fragility-2",
+          "type": "paragraph",
+          "text": "This makes life organized fragility. The organism persists by constantly preventing collapse. Metabolism is not background machinery; it is the ongoing negotiation between order and entropy."
+        },
+        {
+          "id": "block-life-fragility-3",
+          "type": "heading",
+          "text": "Useful bridge"
+        },
+        {
+          "id": "block-life-fragility-4",
+          "type": "paragraph",
+          "text": "For students, this framing connects cell biology, ecology, evolution, and systems theory. Life is not just what has DNA. It is what must keep making itself possible."
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-life-fragility-1",
+          "sourceType": "book",
+          "title": "What Is Life?",
+          "author": "Erwin Schrodinger",
+          "year": "1944",
+          "publisher": "Cambridge University Press",
+          "url": "",
+          "note": "Classic reflection on life, order, and physical explanation."
+        }
+      ],
+      "tags": ["biology", "life", "systems-thinking"],
+      "previewDate": "Apr 27, 2026",
+      "updatedAt": "2026-04-27T17:00:00.000Z",
+      "isFavorite": true,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "feature"
+    },
+    {
+      "id": "biology-symbiosis-individual",
+      "title": "Research Topic: Symbiosis and the Boundaries of the Individual",
+      "collectionId": "research",
+      "folderId": "research-biology-systems",
+      "status": "Topic",
+      "blocks": [
+        {
+          "id": "block-symbiosis-1",
+          "type": "paragraph",
+          "text": "Research angle: question whether biological individuality is always located at the level of the organism. Microbiomes, lichens, endosymbiosis, and ecological dependence all challenge simple boundaries."
+        },
+        {
+          "id": "block-symbiosis-2",
+          "type": "bullet-list",
+          "items": [
+            "Compare organism, holobiont, colony, and ecosystem as units of analysis.",
+            "Use mitochondria as a historical example of life becoming layered.",
+            "Ask when cooperation becomes so deep that identity itself changes."
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "id": "source-symbiosis-1",
+          "sourceType": "book",
+          "title": "Origin of Eukaryotic Cells",
+          "author": "Lynn Margulis",
+          "year": "1970",
+          "publisher": "Yale University Press",
+          "url": "",
+          "note": "Foundational work associated with endosymbiotic theory."
+        }
+      ],
+      "tags": ["biology", "symbiosis", "individuality", "research-topic"],
+      "previewDate": "Apr 26, 2026",
+      "updatedAt": "2026-04-26T14:00:00.000Z",
+      "isFavorite": false,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "cross-consciousness-dharma-biology",
+      "title": "Research Map: Consciousness, Dharma, and Biology",
+      "collectionId": "ideas",
+      "folderId": "ideas-cross-disciplinary",
+      "status": "Research",
+      "blocks": [
+        {
+          "id": "block-cross-map-1",
+          "type": "paragraph",
+          "text": "This map links three questions that often remain separate: What is experience? How should action be aligned? What is life as a self-maintaining process?"
+        },
+        {
+          "id": "block-cross-map-2",
+          "type": "bullet-list",
+          "items": [
+            "Consciousness asks how experience appears from within.",
+            "Dharma asks how action can sustain order and responsibility.",
+            "Biology asks how living systems maintain pattern through exchange."
+          ]
+        },
+        {
+          "id": "block-cross-map-3",
+          "type": "paragraph",
+          "text": "Possible thesis: a serious education of the mind needs first-person attention, ethical orientation, and biological humility."
+        }
+      ],
+      "sources": [],
+      "tags": ["consciousness", "dharma", "biology", "research-map"],
+      "previewDate": "Apr 26, 2026",
+      "updatedAt": "2026-04-26T15:30:00.000Z",
+      "isFavorite": true,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "standard"
+    },
+    {
+      "id": "quote-attention-before-theory",
+      "title": "Quote: Attention Before Theory",
+      "collectionId": "ideas",
+      "folderId": "ideas-quotes",
+      "status": "Quote",
+      "type": "quote",
+      "blocks": [
+        {
+          "id": "block-quote-attention-1",
+          "type": "quote",
+          "text": "Before the mind can know clearly, it must learn to look without rushing to possess what it sees.",
+          "citation": "Seed reflection"
+        }
+      ],
+      "sources": [],
+      "tags": ["attention", "philosophy", "quote"],
+      "previewDate": "Apr 25, 2026",
+      "updatedAt": "2026-04-25T18:00:00.000Z",
+      "isFavorite": true,
+      "isPinned": false,
+      "isArchived": false,
+      "layout": "quote"
+    }
+  ]
+}
