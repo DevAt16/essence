@@ -598,6 +598,12 @@ const noteBody = {
       <cite>Antoine de Saint-Exupery</cite>
     </blockquote>
   `,
+  gorakh: `
+    <blockquote>
+      <p>मरो हे जोगी मरो, मरण है मीठा। तिस मरणी मरो, जिस मरणी गोरष मरि दीठा॥</p>
+      <cite>Gorakhnath</cite>
+    </blockquote>
+  `,
   typography: `
     <p>Typography should separate voice from system. Let the note title carry a literary cadence while the surrounding controls remain neutral and restrained.</p>
     <p>Newsreader feels right for the long-form note canvas because it introduces softness without sacrificing rigor.</p>
@@ -744,6 +750,33 @@ const initialNotes: Note[] = [
     updatedAt: '2026-04-20T12:00:00.000Z',
     isFavorite: true,
     isPinned: true,
+    type: 'quote',
+    layout: 'quote',
+  },
+  {
+    id: 'gorakh-quote',
+    title: 'मरो हे जोगी मरो',
+    collectionId: 'ideas',
+    folderId: 'ideas-quotes',
+    status: 'Quote',
+    blocks: createBlocksFromHtml(noteBody.gorakh),
+    sources: [
+      {
+        id: 'source-gorakh-bani',
+        sourceType: 'book',
+        title: 'Gorakh Bani',
+        author: 'Gorakhnath',
+        year: '',
+        publisher: 'Traditional Nath literature',
+        url: '',
+        note: 'Seed quote card with the original verse in Devanagari.',
+      },
+    ],
+    tags: ['gorakhnath', 'sanatan-dharma', 'eastern-philosophy'],
+    previewDate: 'May 3, 2026',
+    updatedAt: '2026-05-03T16:30:00.000Z',
+    isFavorite: true,
+    isPinned: false,
     type: 'quote',
     layout: 'quote',
   },
@@ -4899,6 +4932,28 @@ function CollectionsScreen({
   onMoveFolder: (folderId: string, nextCollectionId: CollectionId, nextParentId: string | null) => void
   tags: Array<{ name: string; count: number }>
 }) {
+  const [showAllTags, setShowAllTags] = useState(false)
+  const [tagQuery, setTagQuery] = useState('')
+  const deferredTagQuery = useDeferredValue(tagQuery)
+  const sortedTags = useMemo(
+    () =>
+      [...tags].sort(
+        (left, right) => right.count - left.count || left.name.localeCompare(right.name),
+      ),
+    [tags],
+  )
+  const normalizedTagQuery = deferredTagQuery.trim().toLowerCase()
+  const filteredTags = useMemo(() => {
+    if (!normalizedTagQuery) {
+      return sortedTags
+    }
+
+    return sortedTags.filter((tag) => tag.name.toLowerCase().includes(normalizedTagQuery))
+  }, [normalizedTagQuery, sortedTags])
+  const tagPreviewLimit = 8
+  const visibleTags = showAllTags ? filteredTags : filteredTags.slice(0, tagPreviewLimit)
+  const hiddenTagCount = Math.max(filteredTags.length - visibleTags.length, 0)
+
   return (
     <section className="collections-screen">
       <div className="collections-panel">
@@ -4985,8 +5040,63 @@ function CollectionsScreen({
 
           <div className="section-divider" />
 
-          <div className="tag-list">
-            {tags.map((tag) => (
+          {sortedTags.length > 0 && (
+            <div className="tag-list-toolbar">
+              <div className="tag-list-toolbar__summary">
+                <span className="tag-list-toolbar__eyebrow">Top topics</span>
+                <span>
+                  {showAllTags
+                    ? `Showing ${formatCount(filteredTags.length, 'topic')}`
+                    : `Showing ${formatCount(visibleTags.length, 'topic')}`}
+                </span>
+                {normalizedTagQuery && (
+                  <span className="tag-list-toolbar__filter">Filtered by “{tagQuery.trim()}”</span>
+                )}
+                {!showAllTags && hiddenTagCount > 0 && (
+                  <span className="tag-list-toolbar__more">+{hiddenTagCount} more</span>
+                )}
+              </div>
+
+              {sortedTags.length > tagPreviewLimit && (
+                <button
+                  type="button"
+                  className="tag-list-toolbar__toggle"
+                  onClick={() => setShowAllTags((currentValue) => !currentValue)}
+                  aria-expanded={showAllTags}
+                >
+                  {showAllTags ? 'Show less' : 'Show all tags'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {sortedTags.length > tagPreviewLimit && (
+            <label className="tag-list-search" htmlFor="tag-browser-search">
+              <Icon name="search" />
+              <input
+                id="tag-browser-search"
+                type="search"
+                value={tagQuery}
+                onChange={(event) => setTagQuery(event.target.value)}
+                placeholder="Search topics"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {tagQuery.trim() && (
+                <button
+                  type="button"
+                  className="tag-list-search__clear"
+                  onClick={() => setTagQuery('')}
+                  aria-label="Clear topic search"
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </label>
+          )}
+
+          <div className={`tag-list ${showAllTags ? 'tag-list--expanded' : ''}`}>
+            {visibleTags.map((tag) => (
               <div key={tag.name} className="tag-row">
                 <button type="button" className="tag-row__main" onClick={() => onOpenTag(tag.name)}>
                   <span className="tag-row__name">
@@ -5007,6 +5117,24 @@ function CollectionsScreen({
               </div>
             ))}
           </div>
+
+          {filteredTags.length === 0 && (
+            <div className="tag-list-empty">
+              <strong>No matching topics</strong>
+              <span>Try a broader keyword or clear the filter to see the full field.</span>
+            </div>
+          )}
+
+          {!showAllTags && hiddenTagCount > 0 && (
+            <button
+              type="button"
+              className="tag-list-more-card"
+              onClick={() => setShowAllTags(true)}
+            >
+              <span className="tag-list-more-card__count">+{hiddenTagCount}</span>
+              <span className="tag-list-more-card__label">Reveal the rest of the topic field</span>
+            </button>
+          )}
         </section>
       </aside>
     </section>
@@ -5852,8 +5980,10 @@ function FocusModeBar({
 
       <div className="focus-mode-bar__state">
         <Icon name="focus" />
-        <span>Focus Mode</span>
-        <strong>{mode === 'read' ? 'Reading view' : 'Writing view'}</strong>
+        <div className="focus-mode-bar__stateCopy">
+          <span>Focus Mode</span>
+          <strong>{mode === 'read' ? 'Reading view' : 'Writing view'}</strong>
+        </div>
       </div>
 
       <div className="focus-mode-bar__actions">
