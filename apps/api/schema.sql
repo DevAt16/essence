@@ -21,6 +21,31 @@ create table if not exists user_sessions (
 create index if not exists user_sessions_user_id_idx on user_sessions(user_id);
 create index if not exists user_sessions_expires_at_idx on user_sessions(expires_at);
 
+create table if not exists approved_users (
+  email text primary key,
+  display_name text null,
+  notes text not null default '',
+  approved_by text null,
+  approved_at timestamptz not null default now(),
+  revoked_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists approved_users_revoked_at_idx on approved_users(revoked_at);
+
+create table if not exists user_identities (
+  provider text not null,
+  subject text not null,
+  user_id text not null references users(id) on delete cascade,
+  email text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (provider, subject)
+);
+
+create index if not exists user_identities_user_id_idx on user_identities(user_id);
+
 create table if not exists app_state (
   id text primary key,
   payload jsonb not null,

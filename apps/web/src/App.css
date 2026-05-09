@@ -379,6 +379,13 @@
   text-transform: uppercase;
 }
 
+.auth-panel__copy {
+  margin: -4px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .auth-toggle {
   width: fit-content;
   display: inline-flex;
@@ -454,6 +461,22 @@
   cursor: default;
 }
 
+.auth-waitlist {
+  min-height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-subtle);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.auth-waitlist:hover {
+  border-color: var(--line-dark);
+  color: var(--ink);
+}
+
 .auth-error {
   border: 1px solid rgba(163, 65, 58, 0.22);
   border-radius: 12px;
@@ -461,6 +484,21 @@
   color: #8e332d;
   padding: 10px 12px;
   font-size: 0.84rem;
+}
+
+.auth-notice {
+  border: 1px solid rgba(71, 115, 88, 0.24);
+  border-radius: 12px;
+  background: rgba(71, 115, 88, 0.08);
+  color: #486b56;
+  padding: 10px 12px;
+  font-size: 0.84rem;
+}
+
+.auth-localChoice {
+  display: grid;
+  gap: 5px;
+  text-align: center;
 }
 
 .auth-local {
@@ -475,6 +513,13 @@
 .auth-local:hover {
   background: var(--paper-soft);
   color: var(--ink);
+}
+
+.auth-localChoice p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
 }
 
 .auth-poem {

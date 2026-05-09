@@ -75,15 +75,57 @@ Current backend model:
 - normalized tables for `workspace_state`, `folders`, `notes`, `note_blocks`, `note_tags`, and `note_links`
 - `note_revisions` as the foundation for note history/version restore
 - legacy `app_state` kept in sync as a compatibility backup snapshot
+- signed-in account sessions are required for sync, search, note history, and AI endpoints
+- local-only mode stays in browser `localStorage` and does not receive remote API capabilities
+
+## Authentication
+
+Production auth is designed around invite-only Supabase Auth magic links. Configure both the browser and API with the same Supabase project:
+
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` let the React app send the magic link and keep the user session.
+- `SUPABASE_URL` lets the API verify Supabase access-token JWTs with the project's JWKS endpoint.
+- `SUPABASE_JWT_AUDIENCE` defaults to `authenticated`.
+- `VITE_WAITLIST_URL` optionally adds a waitlist link to the sign-in screen.
+- Approved users live in the `approved_users` table, so waitlist approvals do not require app restarts.
+
+For invite-only operation, disable public signups in Supabase Auth and add or invite approved users from your waitlist. The app also asks Supabase not to create users during OTP sign-in, so unknown emails should not receive a usable sign-in flow. After adding the user in Supabase, approve the same email in Essence:
+
+```bash
+npm run auth:approve -- user@example.com
+npm run auth:list
+npm run auth:revoke -- user@example.com
+```
+
+If you want the approval command to also send the Supabase invite email, set the server-only `SUPABASE_SERVICE_ROLE_KEY` and run:
+
+```bash
+npm run auth:approve -- user@example.com --invite
+```
+
+The older `/api/auth/login` email-only flow is now a development helper. It requires both `AUTH_DEV_EMAIL_LOGIN=true` on the API and `VITE_AUTH_DEV_EMAIL_LOGIN=true` in the browser build. Keep both off for production deployments.
 
 Environment variables:
 
 - `DATABASE_URL`
 - `DATABASE_SSL`
 - `PORT`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_JWT_AUDIENCE`
+- `AUTH_INVITE_REDIRECT_URL`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_AUTH_DEV_EMAIL_LOGIN`
+- `VITE_WAITLIST_URL`
 - `AUTH_COOKIE_NAME`
 - `AUTH_SESSION_DAYS`
 - `AUTH_COOKIE_SECURE`
+- `AUTH_DEV_EMAIL_LOGIN` enables the API side of the old email-only development login. Leave it off in production.
+- `AUTH_RATE_LIMIT_MAX`
+- `AUTH_RATE_LIMIT_WINDOW_MS`
+- `AI_RATE_LIMIT_MAX`
+- `AI_RATE_LIMIT_WINDOW_MS`
+- `TRUST_PROXY`
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`
 

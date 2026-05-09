@@ -14,9 +14,13 @@
     "lint": "eslint .",
     "preview": "vite preview --config apps/web/vite.config.ts",
     "db:migrate": "node apps/api/migrate.mjs",
-    "db:seed": "node apps/api/seed.mjs"
+    "db:seed": "node apps/api/seed.mjs",
+    "auth:approve": "node apps/api/approved-users.mjs approve",
+    "auth:list": "node apps/api/approved-users.mjs list",
+    "auth:revoke": "node apps/api/approved-users.mjs revoke"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.4",
     "@tiptap/extension-highlight": "^3.22.5",
     "@tiptap/extension-link": "^3.22.5",
     "@tiptap/extension-placeholder": "^3.22.5",
@@ -29,6 +33,7 @@
     "concurrently": "^9.2.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jose": "^6.2.3",
     "lucide-react": "^1.9.0",
     "pg": "^8.20.0",
     "react": "^19.2.5",

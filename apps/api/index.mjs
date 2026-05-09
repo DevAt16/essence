@@ -3,6 +3,7 @@ import 'dotenv/config'
 import { randomUUID } from 'node:crypto'
 
 import express from 'express'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 import {
   createUserSession,
@@ -11,8 +12,10 @@ import {
   getAppState,
   getLocalUser,
   getNoteRevisions,
+  getOrCreateExternalUser,
   getOrCreateUserByEmail,
   getUserBySessionToken,
+  isApprovedUserEmail,
   localUserId,
   pool,
   saveAppState,
@@ -21,6 +24,20 @@ import {
 
 const port = Number(process.env.PORT ?? 4000)
 const app = express()
+const rateLimitBuckets = new Map()
+const supabaseAuthConfig = createSupabaseAuthConfig()
+const supabaseJwks = supabaseAuthConfig
+  ? createRemoteJWKSet(new URL(`${supabaseAuthConfig.issuer}/.well-known/jwks.json`))
+  : null
+
+if (process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', 1)
+}
+
+app.use('/api', (_request, response, next) => {
+  response.setHeader('Cache-Control', 'no-store')
+  next()
+})
 
 app.use(express.json({ limit: '5mb' }))
 
@@ -35,7 +52,14 @@ app.get('/api/health', async (_request, response, next) => {
 
 app.get('/api/auth/session', async (request, response, next) => {
   try {
-    const user = await getRequestUser(request)
+    const user = await getAccountUserFromRequest(request)
+
+    if (!user) {
+      const localUser = await getRequestUser({ headers: {} })
+      response.json({ state: null, user: serializeUser(localUser) })
+      return
+    }
+
     const state = await getAppState(user.id)
 
     response.json({ state, user: serializeUser(user) })
@@ -46,6 +70,16 @@ app.get('/api/auth/session', async (request, response, next) => {
 
 app.post('/api/auth/login', async (request, response, next) => {
   try {
+    enforceRateLimit(request, 'auth-login', getAuthRateLimitOptions(), normalizeRateLimitSubject(request.body?.email))
+
+    if (!isDevEmailLoginEnabled()) {
+      const error = new Error(
+        'Email-only development login is disabled. Use a configured production auth provider, or set AUTH_DEV_EMAIL_LOGIN=true for local development.',
+      )
+      error.status = 501
+      throw error
+    }
+
     const { email, state } = request.body ?? {}
     const user = await getOrCreateUserByEmail(email)
 
@@ -82,9 +116,8 @@ app.post('/api/auth/logout', async (request, response, next) => {
     clearSessionCookie(response)
 
     const user = await getRequestUser({ headers: {} })
-    const state = await getAppState(user.id)
 
-    response.json({ state, user: serializeUser(user) })
+    response.json({ state: createEmptyPersistedState(), user: serializeUser(user) })
   } catch (error) {
     next(error)
   }
@@ -92,7 +125,7 @@ app.post('/api/auth/logout', async (request, response, next) => {
 
 app.get('/api/state', async (request, response, next) => {
   try {
-    const user = await getRequestUser(request)
+    const user = await requireAccountUser(request)
     const state = await getAppState(user.id)
     response.json({ state, user: serializeUser(user) })
   } catch (error) {
@@ -102,7 +135,7 @@ app.get('/api/state', async (request, response, next) => {
 
 app.get('/api/notes/:noteId/revisions', async (request, response, next) => {
   try {
-    const user = await getRequestUser(request)
+    const user = await requireAccountUser(request)
     const { noteId } = request.params
     const limit = Number(request.query.limit ?? 20)
     const revisions = await getNoteRevisions(noteId, limit, user.id)
@@ -114,7 +147,7 @@ app.get('/api/notes/:noteId/revisions', async (request, response, next) => {
 
 app.get('/api/search', async (request, response, next) => {
   try {
-    const user = await getRequestUser(request)
+    const user = await requireAccountUser(request)
     const query = String(request.query.q ?? '')
     const limit = Number(request.query.limit ?? 24)
     const results = await searchNotes(query, limit, user.id)
@@ -126,7 +159,9 @@ app.get('/api/search', async (request, response, next) => {
 
 app.post('/api/ai/draft', async (request, response, next) => {
   try {
-    await getRequestUser(request)
+    enforceRateLimit(request, 'ai-draft-ip', getAiRateLimitOptions())
+    const user = await requireAccountUser(request)
+    enforceRateLimit(request, 'ai-draft-user', getAiRateLimitOptions(), user.id)
 
     const requestContext = normalizeAiDraftRequest(request.body)
 
@@ -150,7 +185,9 @@ app.post('/api/ai/draft', async (request, response, next) => {
 
 app.post('/api/ai/assist', async (request, response, next) => {
   try {
-    await getRequestUser(request)
+    enforceRateLimit(request, 'ai-assist-ip', getAiRateLimitOptions())
+    const user = await requireAccountUser(request)
+    enforceRateLimit(request, 'ai-assist-user', getAiRateLimitOptions(), user.id)
 
     const requestContext = normalizeAiAssistRequest(request.body)
 
@@ -183,7 +220,7 @@ app.put('/api/state', async (request, response, next) => {
       return
     }
 
-    const user = await getRequestUser(request)
+    const user = await requireAccountUser(request)
     await saveAppState(state, {
       userId: user.id,
       revisionEvents: normalizeRevisionEvents(revisionEvents),
@@ -197,6 +234,9 @@ app.put('/api/state', async (request, response, next) => {
 app.use((error, _request, response, _next) => {
   console.error(error)
   const statusCode = Number.isInteger(error?.status) ? error.status : 500
+  if (Number.isInteger(error?.retryAfterSeconds)) {
+    response.setHeader('Retry-After', String(error.retryAfterSeconds))
+  }
   response.status(statusCode).json({ error: statusCode === 500 ? 'Internal server error' : error.message })
 })
 
@@ -766,7 +806,7 @@ function normalizeDraftTags(values) {
 }
 
 async function getRequestUser(request) {
-  const sessionUser = await getUserBySessionToken(getSessionToken(request))
+  const sessionUser = await getAccountUserFromRequest(request)
 
   if (sessionUser) {
     return sessionUser
@@ -780,6 +820,93 @@ async function getRequestUser(request) {
       isLocal: true,
     }
   )
+}
+
+async function requireAccountUser(request) {
+  const sessionUser = await getAccountUserFromRequest(request)
+
+  if (sessionUser) {
+    return sessionUser
+  }
+
+  const error = new Error('Sign in required for workspace sync.')
+  error.status = 401
+  throw error
+}
+
+async function getAccountUserFromRequest(request) {
+  const sessionUser = isDevEmailLoginEnabled() ? await getUserBySessionToken(getSessionToken(request)) : null
+
+  if (sessionUser && !sessionUser.isLocal) {
+    return sessionUser
+  }
+
+  return getSupabaseUserFromRequest(request)
+}
+
+async function getSupabaseUserFromRequest(request) {
+  const token = getBearerToken(request)
+
+  if (!token) {
+    return null
+  }
+
+  if (!supabaseAuthConfig || !supabaseJwks) {
+    const error = new Error('Supabase auth is not configured on the API.')
+    error.status = 401
+    throw error
+  }
+
+  let payload
+
+  try {
+    const result = await jwtVerify(token, supabaseJwks, {
+      audience: supabaseAuthConfig.audience,
+      issuer: supabaseAuthConfig.issuer,
+    })
+    payload = result.payload
+  } catch {
+    const error = new Error('Invalid or expired auth token.')
+    error.status = 401
+    throw error
+  }
+
+  const email = typeof payload.email === 'string' ? payload.email : null
+  const subject = typeof payload.sub === 'string' ? payload.sub : null
+
+  if (!email || !subject) {
+    const error = new Error('Auth token is missing required user claims.')
+    error.status = 401
+    throw error
+  }
+
+  if (!(await isApprovedUserEmail(email))) {
+    const error = new Error('This email is not invited to Essence yet.')
+    error.status = 403
+    throw error
+  }
+
+  const user = await getOrCreateExternalUser({
+    displayName: getSupabaseDisplayName(payload),
+    email,
+    provider: 'supabase',
+    subject,
+  })
+
+  if (!user) {
+    const error = new Error('Unable to create account for authenticated user.')
+    error.status = 401
+    throw error
+  }
+
+  return user
+}
+
+function getSupabaseDisplayName(payload) {
+  const metadata = payload.user_metadata && typeof payload.user_metadata === 'object' ? payload.user_metadata : {}
+  const name = metadata.full_name ?? metadata.name ?? metadata.display_name
+
+  return typeof name === 'string' ? name : null
 }
 
 function serializeUser(user) {
@@ -796,6 +923,18 @@ function getSessionToken(request) {
   const cookies = parseCookies(cookieHeader)
 
   return cookies[getSessionCookieName()] ?? null
+}
+
+function getBearerToken(request) {
+  const authorizationHeader = request?.headers?.authorization
+
+  if (typeof authorizationHeader !== 'string') {
+    return null
+  }
+
+  const [scheme, token] = authorizationHeader.trim().split(/\s+/, 2)
+
+  return scheme?.toLowerCase() === 'bearer' && token ? token : null
 }
 
 function parseCookies(cookieHeader) {
@@ -853,6 +992,104 @@ function clearSessionCookie(response) {
 
 function getSessionCookieName() {
   return process.env.AUTH_COOKIE_NAME || 'essence_session'
+}
+
+function createSupabaseAuthConfig() {
+  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
+  const normalizedUrl = rawUrl.trim().replace(/\/+$/g, '')
+
+  if (!normalizedUrl) {
+    return null
+  }
+
+  return {
+    audience: process.env.SUPABASE_JWT_AUDIENCE || 'authenticated',
+    issuer: `${normalizedUrl}/auth/v1`,
+  }
+}
+
+function isDevEmailLoginEnabled() {
+  if (process.env.NODE_ENV === 'production') {
+    return false
+  }
+
+  if (process.env.AUTH_DEV_EMAIL_LOGIN === 'true') {
+    return true
+  }
+
+  if (process.env.AUTH_DEV_EMAIL_LOGIN === 'false') {
+    return false
+  }
+
+  return process.env.NODE_ENV !== 'production'
+}
+
+function enforceRateLimit(request, bucketName, options, subject = '') {
+  const now = Date.now()
+  const windowMs = Math.max(options.windowMs, 1_000)
+  const max = Math.max(options.max, 1)
+  const identifier = [bucketName, getRequestIp(request), subject].filter(Boolean).join(':')
+  const currentBucket = rateLimitBuckets.get(identifier)
+
+  if (!currentBucket || currentBucket.resetAt <= now) {
+    rateLimitBuckets.set(identifier, {
+      count: 1,
+      resetAt: now + windowMs,
+    })
+    cleanupExpiredRateLimitBuckets(now)
+    return
+  }
+
+  currentBucket.count += 1
+
+  if (currentBucket.count <= max) {
+    return
+  }
+
+  const error = new Error('Too many requests. Please wait a moment and try again.')
+  error.status = 429
+  error.retryAfterSeconds = Math.max(Math.ceil((currentBucket.resetAt - now) / 1000), 1)
+  throw error
+}
+
+function cleanupExpiredRateLimitBuckets(now) {
+  if (rateLimitBuckets.size < 1_000) {
+    return
+  }
+
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) {
+      rateLimitBuckets.delete(key)
+    }
+  }
+}
+
+function getAuthRateLimitOptions() {
+  return {
+    max: readPositiveIntegerEnv('AUTH_RATE_LIMIT_MAX', 8),
+    windowMs: readPositiveIntegerEnv('AUTH_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1_000),
+  }
+}
+
+function getAiRateLimitOptions() {
+  return {
+    max: readPositiveIntegerEnv('AI_RATE_LIMIT_MAX', 30),
+    windowMs: readPositiveIntegerEnv('AI_RATE_LIMIT_WINDOW_MS', 60 * 60 * 1_000),
+  }
+}
+
+function readPositiveIntegerEnv(name, fallback) {
+  const value = Number.parseInt(process.env[name] ?? '', 10)
+
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+function getRequestIp(request) {
+  return String(request.ip ?? request.socket?.remoteAddress ?? 'unknown')
+}
+
+function normalizeRateLimitSubject(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 128) : ''
 }
 
 function createEmptyPersistedState() {

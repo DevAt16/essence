@@ -7,6 +7,7 @@ import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 import TextAlign from '@tiptap/extension-text-align'
 import Underline from '@tiptap/extension-underline'
+import { createClient } from '@supabase/supabase-js'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
@@ -44,7 +45,6 @@ type NoteLayout = 'feature' | 'standard' | 'quote'
 type NoteType = 'quote' | undefined
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
 type NoteViewMode = 'read' | 'edit'
-type AuthViewMode = 'signin' | 'signup'
 type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
 type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
 type AiComposerMode = 'draft' | 'assist'
@@ -174,6 +174,10 @@ interface RemoteAppSnapshot {
   state: PersistedAppState | null
   user: AuthUser | null
 }
+
+type RemoteSignInResult =
+  | { kind: 'magic-link'; email: string }
+  | { kind: 'session'; snapshot: RemoteAppSnapshot }
 
 interface ImportedMarkdownNote {
   note: Note
@@ -314,6 +318,9 @@ const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
 const historyLimit = 120
 const composerHistoryLimit = 18
+const supabaseClient = createSupabaseBrowserClient()
+const devEmailLoginEnabled = getViteEnvString('VITE_AUTH_DEV_EMAIL_LOGIN') === 'true'
+const waitlistUrl = getViteEnvString('VITE_WAITLIST_URL')
 
 const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
@@ -371,6 +378,10 @@ function createEmptyPersistedState(): PersistedAppState {
     folders: [],
     notes: [],
   }
+}
+
+function hasWorkspaceData(state: PersistedAppState) {
+  return state.notes.length > 0 || state.folders.length > 0 || state.composerHistory.length > 0
 }
 
 const collections: CollectionSummary[] = [
@@ -887,9 +898,9 @@ function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [authEmail, setAuthEmail] = useState('')
   const [authError, setAuthError] = useState<string | null>(null)
+  const [authNotice, setAuthNotice] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
   const [authGateDismissed, setAuthGateDismissed] = useState(loadAuthGateDismissed)
-  const [authViewMode, setAuthViewMode] = useState<AuthViewMode>('signin')
   const [aiAssistAction, setAiAssistAction] = useState<AiAssistAction>('continue-writing')
   const [aiAssistError, setAiAssistError] = useState<string | null>(null)
   const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
@@ -943,6 +954,7 @@ function App() {
   const pendingRevisionEventRef = useRef<PendingRevisionEvent | null>(null)
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
+  const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
 
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
 
@@ -1041,13 +1053,39 @@ function App() {
     const hydrateRemoteState = async () => {
       try {
         const remoteSnapshot = await fetchRemoteAppState()
-        const resolvedState = remoteSnapshot.state ?? createEmptyPersistedState()
 
         if (isCancelled) {
           return
         }
 
-        setCurrentUser(remoteSnapshot.user)
+        const remoteUser = remoteSnapshot.user ?? createLocalAuthUser()
+        setCurrentUser(remoteUser)
+
+        if (remoteUser.isLocal) {
+          lastRemoteSnapshotRef.current = null
+          setRemoteBrowseSearchResults(null)
+          setRemoteQuickSearchResults(null)
+          return
+        }
+
+        let resolvedState = remoteSnapshot.state
+
+        if (!resolvedState) {
+          const localState = {
+            activeNoteId,
+            composerHistory,
+            folders,
+            notes,
+          }
+
+          if (hasWorkspaceData(localState)) {
+            await persistRemoteAppState(localState)
+            resolvedState = localState
+          } else {
+            resolvedState = createEmptyPersistedState()
+          }
+        }
+
         lastRemoteSnapshotRef.current = JSON.stringify(resolvedState)
         setComposerHistory(resolvedState.composerHistory)
         setFolders(resolvedState.folders)
@@ -1056,6 +1094,9 @@ function App() {
         setRemoteSyncVersion((currentValue) => currentValue + 1)
       } catch (error) {
         console.warn('PostgreSQL sync unavailable, continuing with local storage.', error)
+        if (!isCancelled) {
+          setCurrentUser(createLocalAuthUser())
+        }
       } finally {
         if (!isCancelled) {
           setRemoteSyncReady(true)
@@ -1149,7 +1190,7 @@ function App() {
   ])
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !remoteSyncReady) {
+    if (typeof window === 'undefined' || !remoteSyncReady || !remoteAccountActive) {
       return
     }
 
@@ -1195,7 +1236,7 @@ function App() {
         window.clearTimeout(remoteSyncTimerRef.current)
       }
     }
-  }, [activeNoteId, composerHistory, folders, notes, remoteSyncReady])
+  }, [activeNoteId, composerHistory, folders, notes, remoteAccountActive, remoteSyncReady])
 
   useEffect(() => {
     return () => {
@@ -1210,7 +1251,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!remoteSyncReady || !deferredSearch) {
+    if (!remoteSyncReady || !remoteAccountActive || !deferredSearch) {
       setRemoteBrowseSearchResults(null)
       return
     }
@@ -1233,10 +1274,10 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [deferredSearch, remoteSyncReady, remoteSyncVersion])
+  }, [deferredSearch, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
 
   useEffect(() => {
-    if (!remoteSyncReady || !deferredQuickSwitcherQuery) {
+    if (!remoteSyncReady || !remoteAccountActive || !deferredQuickSwitcherQuery) {
       setRemoteQuickSearchResults(null)
       return
     }
@@ -1259,7 +1300,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [deferredQuickSwitcherQuery, remoteSyncReady, remoteSyncVersion])
+  }, [deferredQuickSwitcherQuery, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
 
   const availableTags = useMemo(() => {
     return Array.from(new Set([...tagPool, ...notes.flatMap((note) => note.tags)])).sort((left, right) =>
@@ -1438,6 +1479,14 @@ function App() {
       return
     }
 
+    if (!remoteAccountActive) {
+      setNoteHistoryEntries([])
+      setSelectedNoteRevisionId(null)
+      setNoteHistoryError('Version history is available after signing in.')
+      setNoteHistoryLoading(false)
+      return
+    }
+
     let isCancelled = false
 
     setNoteHistoryLoading(true)
@@ -1472,7 +1521,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [activeNote?.id, noteHistoryOpen, remoteSyncVersion, view])
+  }, [activeNote?.id, noteHistoryOpen, remoteAccountActive, remoteSyncVersion, view])
 
   const quickSwitcherItems = useMemo(() => {
     const baseItems: QuickSwitcherItem[] = [
@@ -1665,10 +1714,19 @@ function App() {
     }
 
     setAuthError(null)
+    setAuthNotice(null)
     setAuthBusy(true)
 
     try {
-      const snapshot = await signInRemote(authEmail, getCurrentPersistedState())
+      const result = await signInRemote(authEmail, getCurrentPersistedState())
+
+      if (result.kind === 'magic-link') {
+        setAuthNotice(`Check ${result.email} for the Essence sign-in link, then return here.`)
+        flashSaveFeedback('Sign-in link sent')
+        return
+      }
+
+      const { snapshot } = result
       setCurrentUser(snapshot.user)
       setAuthEmail('')
       setAuthGateDismissed(false)
@@ -1676,7 +1734,11 @@ function App() {
       applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
     } catch (error) {
       console.warn('Unable to sign in.', error)
-      setAuthError('We could not open that workspace. Check the email and try again.')
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'We could not open that workspace. Check the email and try again.',
+      )
       flashSaveFeedback('Sign in failed')
     } finally {
       setAuthBusy(false)
@@ -1687,11 +1749,13 @@ function App() {
     setAuthBusy(true)
 
     try {
-      const snapshot = await signOutRemote()
-      setCurrentUser(snapshot.user)
+      await signOutRemote()
+      setCurrentUser(createLocalAuthUser())
+      setAuthEmail('')
+      setAuthNotice(null)
       setAuthGateDismissed(false)
       clearAuthGateDismissed()
-      applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Back to local workspace')
+      applyWorkspaceState(createEmptyPersistedState(), 'Signed out')
     } catch (error) {
       console.warn('Unable to sign out.', error)
       flashSaveFeedback('Sign out failed')
@@ -1702,12 +1766,14 @@ function App() {
 
   const continueLocally = () => {
     setAuthError(null)
+    setAuthNotice(null)
     setAuthGateDismissed(true)
     persistAuthGateDismissed()
   }
 
   const openAuthScreen = () => {
     setAuthError(null)
+    setAuthNotice(null)
     setAiComposerOpen(false)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
@@ -2167,6 +2233,11 @@ function App() {
       return
     }
 
+    if (!remoteAccountActive) {
+      setAiDraftError('Sign in to use Composer. Local-only notes stay on this device, and AI actions require an account.')
+      return
+    }
+
     setAiGenerating(true)
     setAiDraftError(null)
 
@@ -2256,6 +2327,11 @@ function App() {
 
     if (noteText.length < 3 && selectedText.length < 3) {
       setAiAssistError('Write a little in this note first, then Composer can help.')
+      return
+    }
+
+    if (!remoteAccountActive) {
+      setAiAssistError('Sign in to use Composer. Local-only notes stay on this device, and AI actions require an account.')
       return
     }
 
@@ -3112,17 +3188,15 @@ function App() {
         email={authEmail}
         error={authError}
         isLoading={!remoteSyncReady}
-        mode={authViewMode}
+        notice={authNotice}
         onContinueLocally={continueLocally}
         onEmailChange={(value) => {
           setAuthEmail(value)
           setAuthError(null)
-        }}
-        onModeChange={(mode) => {
-          setAuthViewMode(mode)
-          setAuthError(null)
+          setAuthNotice(null)
         }}
         onSubmit={handleSignIn}
+        waitlistUrl={waitlistUrl}
       />
     )
   }
@@ -6899,24 +6973,22 @@ function AuthScreen({
   email,
   error,
   isLoading,
-  mode,
+  notice,
   onContinueLocally,
   onEmailChange,
-  onModeChange,
   onSubmit,
+  waitlistUrl,
 }: {
   disabled: boolean
   email: string
   error: string | null
   isLoading: boolean
-  mode: AuthViewMode
+  notice: string | null
   onContinueLocally: () => void
   onEmailChange: (email: string) => void
-  onModeChange: (mode: AuthViewMode) => void
   onSubmit: () => void
+  waitlistUrl: string
 }) {
-  const isSignup = mode === 'signup'
-
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSubmit()
@@ -6934,32 +7006,12 @@ function AuthScreen({
 
         <div className="auth-main__content">
           <div className="auth-hero">
-            <h1>{isSignup ? 'Begin with a quiet room for your notes.' : 'Return to your thinking space.'}</h1>
+            <h1>Return to your thinking space.</h1>
           </div>
 
           <section className="auth-panel">
-            <span className="auth-panel__eyebrow">{isSignup ? 'Create workspace' : 'Welcome back'}</span>
-
-            <div className="auth-toggle" role="tablist" aria-label="Account mode">
-              <button
-                type="button"
-                className={`auth-toggle__button ${mode === 'signin' ? 'auth-toggle__button--active' : ''}`}
-                onClick={() => onModeChange('signin')}
-                role="tab"
-                aria-selected={mode === 'signin'}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                className={`auth-toggle__button ${mode === 'signup' ? 'auth-toggle__button--active' : ''}`}
-                onClick={() => onModeChange('signup')}
-                role="tab"
-                aria-selected={mode === 'signup'}
-              >
-                Sign up
-              </button>
-            </div>
+            <span className="auth-panel__eyebrow">Invite-only access</span>
+            <p className="auth-panel__copy">Use the email that was approved from the waitlist.</p>
 
             <form className="auth-form" onSubmit={handleSubmit}>
               <label className="auth-field">
@@ -6977,15 +7029,25 @@ function AuthScreen({
               </label>
 
               {error && <div className="auth-error">{error}</div>}
+              {notice && <div className="auth-notice">{notice}</div>}
 
               <button type="submit" className="auth-primary" disabled={disabled}>
-                {isLoading ? 'Preparing workspace...' : isSignup ? 'Create workspace' : 'Sign in'}
+                {isLoading ? 'Preparing workspace...' : 'Send sign-in link'}
               </button>
             </form>
 
-            <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
-              Continue locally
-            </button>
+            {waitlistUrl && (
+              <a className="auth-waitlist" href={waitlistUrl}>
+                Join the waitlist
+              </a>
+            )}
+
+            <div className="auth-localChoice">
+              <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
+                Use this device only
+              </button>
+              <p>Stores notes in this browser. Sign in later to sync them.</p>
+            </div>
           </section>
         </div>
       </section>
@@ -7619,6 +7681,19 @@ function clearAuthGateDismissed() {
   window.localStorage.removeItem(authGateStorageKey)
 }
 
+function createSupabaseBrowserClient() {
+  const supabaseUrl = getViteEnvString('VITE_SUPABASE_URL')
+  const supabaseKey = getViteEnvString('VITE_SUPABASE_PUBLISHABLE_KEY') || getViteEnvString('VITE_SUPABASE_ANON_KEY')
+
+  return supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+}
+
+function getViteEnvString(name: string) {
+  const value = import.meta.env[name]
+
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 function loadStoredCacheState(): PersistedAppState {
   if (typeof window === 'undefined') {
     return createEmptyPersistedState()
@@ -7637,10 +7712,35 @@ function loadStoredCacheState(): PersistedAppState {
   }
 }
 
+async function getRemoteAuthHeaders(): Promise<Record<string, string>> {
+  if (!supabaseClient) {
+    return {}
+  }
+
+  const { data, error } = await supabaseClient.auth.getSession()
+
+  if (error || !data.session?.access_token) {
+    return {}
+  }
+
+  return {
+    Authorization: `Bearer ${data.session.access_token}`,
+  }
+}
+
 async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch('/api/state', {
     credentials: 'same-origin',
+    headers: authHeaders,
   })
+
+  if (response.status === 401) {
+    return {
+      state: null,
+      user: createLocalAuthUser(),
+    }
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to load remote state: ${response.status}`)
@@ -7655,8 +7755,10 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
 }
 
 async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<NoteRevision[]> {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}/revisions?limit=${limit}`, {
     credentials: 'same-origin',
+    headers: authHeaders,
   })
 
   if (!response.ok) {
@@ -7673,8 +7775,10 @@ async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<Not
 }
 
 async function fetchRemoteSearchResults(query: string, limit = 24): Promise<SearchResult[]> {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
     credentials: 'same-origin',
+    headers: authHeaders,
   })
 
   if (!response.ok) {
@@ -7694,10 +7798,12 @@ async function generateRemoteAiDraft(request: {
   category: AiDraftCategory
   topic: string
 }): Promise<AiDraft> {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch('/api/ai/draft', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
+      ...authHeaders,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(request),
@@ -7722,10 +7828,12 @@ async function generateRemoteAiAssist(request: {
     title: string
   }
 }): Promise<AiAssistResult> {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch('/api/ai/assist', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
+      ...authHeaders,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(request),
@@ -7741,10 +7849,12 @@ async function generateRemoteAiAssist(request: {
 }
 
 async function persistRemoteAppState(state: PersistedAppState, revisionEvents: PendingRevisionEvent[] = []) {
+  const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch('/api/state', {
     method: 'PUT',
     credentials: 'same-origin',
     headers: {
+      ...authHeaders,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ revisionEvents, state }),
@@ -7944,7 +8054,36 @@ function cloneAiDraftBlocks(blocks: AiDraftBlock[]) {
   }))
 }
 
-async function signInRemote(email: string, state: PersistedAppState): Promise<RemoteAppSnapshot> {
+async function signInRemote(email: string, state: PersistedAppState): Promise<RemoteSignInResult> {
+  if (supabaseClient) {
+    const { data } = await supabaseClient.auth.getSession()
+
+    if (!data.session?.access_token) {
+      const { error } = await supabaseClient.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: false,
+        },
+      })
+
+      if (error) {
+        throw new Error(`Supabase could not send the sign-in link: ${error.message}`)
+      }
+
+      return { email, kind: 'magic-link' }
+    }
+
+    return {
+      kind: 'session',
+      snapshot: await fetchRemoteAppState(),
+    }
+  }
+
+  if (!devEmailLoginEnabled) {
+    throw new Error('Supabase sign-in is not active in this browser session. Restart the dev server after updating .env.')
+  }
+
   const response = await fetch('/api/auth/login', {
     method: 'POST',
     credentials: 'same-origin',
@@ -7954,14 +8093,23 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
     body: JSON.stringify({ email, state }),
   })
 
+  const payload = await response.json().catch(() => ({})) as { error?: unknown }
+
   if (!response.ok) {
-    throw new Error(`Failed to sign in: ${response.status}`)
+    throw new Error(typeof payload.error === 'string' ? payload.error : `Failed to sign in: ${response.status}`)
   }
 
-  return normalizeRemoteAppSnapshot(await response.json())
+  return {
+    kind: 'session',
+    snapshot: normalizeRemoteAppSnapshot(payload),
+  }
 }
 
 async function signOutRemote(): Promise<RemoteAppSnapshot> {
+  if (supabaseClient) {
+    await supabaseClient.auth.signOut()
+  }
+
   const response = await fetch('/api/auth/logout', {
     method: 'POST',
     credentials: 'same-origin',
@@ -8001,6 +8149,15 @@ function normalizeAuthUser(rawUser: unknown): AuthUser | null {
     email,
     displayName: typeof candidate.displayName === 'string' ? candidate.displayName : email,
     isLocal: Boolean(candidate.isLocal),
+  }
+}
+
+function createLocalAuthUser(): AuthUser {
+  return {
+    displayName: 'This device',
+    email: 'local@essence.local',
+    id: 'local',
+    isLocal: true,
   }
 }
 

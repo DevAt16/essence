@@ -79,6 +79,114 @@ export async function getUserById(userId) {
   return result.rows[0] ?? null
 }
 
+export async function approveUserEmail(email, options = {}) {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return null
+  }
+
+  const result = await pool.query(
+    `
+      insert into approved_users (email, display_name, notes, approved_by, approved_at, revoked_at, updated_at)
+      values ($1, $2, $3, $4, now(), null, now())
+      on conflict (email)
+      do update set
+        display_name = excluded.display_name,
+        notes = excluded.notes,
+        approved_by = excluded.approved_by,
+        approved_at = now(),
+        revoked_at = null,
+        updated_at = now()
+      returning
+        email,
+        display_name as "displayName",
+        notes,
+        approved_by as "approvedBy",
+        approved_at as "approvedAt",
+        revoked_at as "revokedAt",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `,
+    [
+      normalizedEmail,
+      normalizeOptionalString(options.displayName, 120),
+      normalizeOptionalString(options.notes, 500) ?? '',
+      normalizeOptionalString(options.approvedBy, 120),
+    ],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function revokeApprovedUserEmail(email) {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return null
+  }
+
+  const result = await pool.query(
+    `
+      update approved_users
+      set revoked_at = now(), updated_at = now()
+      where email = $1
+      returning
+        email,
+        display_name as "displayName",
+        notes,
+        approved_by as "approvedBy",
+        approved_at as "approvedAt",
+        revoked_at as "revokedAt",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `,
+    [normalizedEmail],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function listApprovedUsers() {
+  const result = await pool.query(
+    `
+      select
+        email,
+        display_name as "displayName",
+        notes,
+        approved_by as "approvedBy",
+        approved_at as "approvedAt",
+        revoked_at as "revokedAt",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      from approved_users
+      order by revoked_at nulls first, approved_at desc, email asc
+    `,
+  )
+
+  return result.rows
+}
+
+export async function isApprovedUserEmail(email) {
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedEmail) {
+    return false
+  }
+
+  const result = await pool.query(
+    `
+      select 1
+      from approved_users
+      where email = $1 and revoked_at is null
+      limit 1
+    `,
+    [normalizedEmail],
+  )
+
+  return Boolean(result.rows[0])
+}
+
 export async function getOrCreateUserByEmail(email) {
   const normalizedEmail = normalizeEmail(email)
 
@@ -106,6 +214,112 @@ export async function getOrCreateUserByEmail(email) {
   )
 
   return result.rows[0] ?? null
+}
+
+export async function getOrCreateExternalUser({ displayName, email, provider, subject }) {
+  const normalizedProvider = normalizeIdentityValue(provider)
+  const normalizedSubject = normalizeIdentityValue(subject)
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!normalizedProvider || !normalizedSubject || !normalizedEmail) {
+    return null
+  }
+
+  const client = await pool.connect()
+
+  try {
+    await client.query('begin')
+
+    const existingIdentity = await client.query(
+      `
+        select
+          users.id,
+          users.email,
+          users.display_name as "displayName",
+          users.is_local as "isLocal",
+          users.created_at as "createdAt",
+          users.updated_at as "updatedAt"
+        from user_identities
+        join users on users.id = user_identities.user_id
+        where user_identities.provider = $1 and user_identities.subject = $2
+        limit 1
+      `,
+      [normalizedProvider, normalizedSubject],
+    )
+
+    if (existingIdentity.rows[0]) {
+      await client.query(
+        `
+          update user_identities
+          set email = $3, updated_at = now()
+          where provider = $1 and subject = $2
+        `,
+        [normalizedProvider, normalizedSubject, normalizedEmail],
+      )
+      await client.query('commit')
+      return existingIdentity.rows[0]
+    }
+
+    const existingUser = await client.query(
+      `
+        select
+          id,
+          email,
+          display_name as "displayName",
+          is_local as "isLocal",
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        from users
+        where email = $1
+        limit 1
+      `,
+      [normalizedEmail],
+    )
+
+    let user = existingUser.rows[0] ?? null
+
+    if (!user) {
+      const userId = `user_${randomBytes(12).toString('hex')}`
+      const createdUser = await client.query(
+        `
+          insert into users (id, email, display_name, is_local, updated_at)
+          values ($1, $2, $3, false, now())
+          returning
+            id,
+            email,
+            display_name as "displayName",
+            is_local as "isLocal",
+            created_at as "createdAt",
+            updated_at as "updatedAt"
+        `,
+        [userId, normalizedEmail, normalizeDisplayName(displayName, normalizedEmail)],
+      )
+      user = createdUser.rows[0] ?? null
+    }
+
+    if (!user) {
+      await client.query('rollback')
+      return null
+    }
+
+    await client.query(
+      `
+        insert into user_identities (provider, subject, user_id, email, updated_at)
+        values ($1, $2, $3, $4, now())
+        on conflict (provider, subject)
+        do update set user_id = excluded.user_id, email = excluded.email, updated_at = now()
+      `,
+      [normalizedProvider, normalizedSubject, user.id, normalizedEmail],
+    )
+
+    await client.query('commit')
+    return user
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 export async function createUserSession(userId) {
@@ -884,6 +1098,24 @@ function normalizeEmail(value) {
   }
 
   return normalized
+}
+
+function normalizeIdentityValue(value) {
+  const normalized = String(value ?? '').trim()
+
+  return normalized.length > 0 && normalized.length <= 256 ? normalized : null
+}
+
+function normalizeOptionalString(value, maxLength) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
+
+  return normalized ? normalized.slice(0, maxLength) : null
+}
+
+function normalizeDisplayName(value, email) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
+
+  return normalized.length > 0 && normalized.length <= 120 ? normalized : createDisplayName(email)
 }
 
 function createDisplayName(email) {
