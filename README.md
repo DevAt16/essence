@@ -60,6 +60,14 @@ npm run build
 
 The Vite production build writes to `dist/web`.
 
+Run the local Production Gate 1 checks:
+
+```bash
+npm run check
+```
+
+This runs lint, API auth tests, and the production web build. Supabase dashboard settings still need to be verified separately before a real deployment.
+
 ## PostgreSQL
 
 Essence syncs app state through a small Node API backed by PostgreSQL.
@@ -82,9 +90,11 @@ Current backend model:
 
 Production auth is designed around invite-only Supabase Auth magic links. Configure both the browser and API with the same Supabase project:
 
-- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` let the React app send the magic link and keep the user session.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` let the React app receive Supabase sessions after the email link is opened.
 - `SUPABASE_URL` lets the API verify Supabase access-token JWTs with the project's JWKS endpoint.
+- `SUPABASE_PUBLISHABLE_KEY` lets the API request approved sign-in emails after checking `approved_users`.
 - `SUPABASE_JWT_AUDIENCE` defaults to `authenticated`.
+- `AUTH_ALLOWED_REDIRECT_ORIGINS` restricts where API-requested auth links may redirect.
 - `VITE_WAITLIST_URL` optionally adds a waitlist link to the sign-in screen.
 - Approved users live in the `approved_users` table, so waitlist approvals do not require app restarts.
 
@@ -110,9 +120,11 @@ Environment variables:
 - `DATABASE_SSL`
 - `PORT`
 - `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_AUDIENCE`
 - `AUTH_INVITE_REDIRECT_URL`
+- `AUTH_ALLOWED_REDIRECT_ORIGINS`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 - `VITE_AUTH_DEV_EMAIL_LOGIN`

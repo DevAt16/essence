@@ -1,9 +1,11 @@
 import 'dotenv/config'
 
 import { randomUUID } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 
 import express from 'express'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { createClient } from '@supabase/supabase-js'
 
 import {
   createUserSession,
@@ -29,6 +31,7 @@ const supabaseAuthConfig = createSupabaseAuthConfig()
 const supabaseJwks = supabaseAuthConfig
   ? createRemoteJWKSet(new URL(`${supabaseAuthConfig.issuer}/.well-known/jwks.json`))
   : null
+let supabaseOtpClient = createSupabaseOtpClient()
 
 if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1)
@@ -63,6 +66,49 @@ app.get('/api/auth/session', async (request, response, next) => {
     const state = await getAppState(user.id)
 
     response.json({ state, user: serializeUser(user) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/request-link', async (request, response, next) => {
+  try {
+    const email = normalizeEmailInput(request.body?.email)
+
+    enforceRateLimit(request, 'auth-link', getAuthRateLimitOptions(), email)
+
+    if (!email) {
+      response.status(400).json({ error: 'Enter a valid email address.' })
+      return
+    }
+
+    if (!(await isApprovedUserEmail(email))) {
+      const error = new Error('This email is not invited to Essence yet.')
+      error.status = 403
+      throw error
+    }
+
+    if (!supabaseOtpClient) {
+      const error = new Error('Supabase sign-in is not configured on the API.')
+      error.status = 501
+      throw error
+    }
+
+    const { error } = await supabaseOtpClient.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: getAuthRedirectTo(request.body?.redirectTo),
+        shouldCreateUser: false,
+      },
+    })
+
+    if (error) {
+      const requestError = new Error(`Supabase could not send the sign-in link: ${error.message}`)
+      requestError.status = Number.isInteger(error.status) ? error.status : 502
+      throw requestError
+    }
+
+    response.json({ ok: true })
   } catch (error) {
     next(error)
   }
@@ -232,35 +278,49 @@ app.put('/api/state', async (request, response, next) => {
 })
 
 app.use((error, _request, response, _next) => {
-  console.error(error)
   const statusCode = Number.isInteger(error?.status) ? error.status : 500
+  if (statusCode === 500) {
+    console.error(error)
+  }
   if (Number.isInteger(error?.retryAfterSeconds)) {
     response.setHeader('Retry-After', String(error.retryAfterSeconds))
   }
   response.status(statusCode).json({ error: statusCode === 500 ? 'Internal server error' : error.message })
 })
 
-await ensureSchema()
+let server = null
 
-const server = app.listen(port, () => {
-  console.log(`Essence API listening on http://localhost:${port}`)
-})
+export async function startServer() {
+  await ensureSchema()
+
+  server = app.listen(port, () => {
+    console.log(`Essence API listening on http://localhost:${port}`)
+  })
+
+  return server
+}
 
 async function shutdown(signal) {
   console.log(`\nReceived ${signal}. Shutting down...`)
-  server.close(async () => {
+  server?.close(async () => {
     await pool.end()
     process.exit(0)
   })
 }
 
-process.on('SIGINT', () => {
-  void shutdown('SIGINT')
-})
+if (isMainModule()) {
+  await startServer()
 
-process.on('SIGTERM', () => {
-  void shutdown('SIGTERM')
-})
+  process.on('SIGINT', () => {
+    void shutdown('SIGINT')
+  })
+
+  process.on('SIGTERM', () => {
+    void shutdown('SIGTERM')
+  })
+}
+
+export { app }
 
 function isPersistedAppState(value) {
   if (!value || typeof value !== 'object') {
@@ -1008,20 +1068,111 @@ function createSupabaseAuthConfig() {
   }
 }
 
+function createSupabaseOtpClient() {
+  const supabaseUrl = String(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim()
+  const publishableKey = String(
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      '',
+  ).trim()
+
+  if (!supabaseUrl || !publishableKey) {
+    return null
+  }
+
+  return createClient(supabaseUrl, publishableKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  })
+}
+
+function getAuthRedirectTo(value) {
+  const requestedUrl = normalizeRedirectUrl(value)
+
+  if (requestedUrl && isAllowedAuthRedirectUrl(requestedUrl)) {
+    return requestedUrl
+  }
+
+  return getDefaultAuthRedirectUrl()
+}
+
+function getDefaultAuthRedirectUrl() {
+  return (
+    normalizeRedirectUrl(process.env.AUTH_INVITE_REDIRECT_URL) ??
+    normalizeRedirectUrl(process.env.APP_URL) ??
+    'http://localhost:5173'
+  )
+}
+
+function isAllowedAuthRedirectUrl(url) {
+  const allowedOrigins = getAllowedAuthRedirectOrigins()
+
+  try {
+    return allowedOrigins.has(new URL(url).origin)
+  } catch {
+    return false
+  }
+}
+
+function getAllowedAuthRedirectOrigins() {
+  const origins = new Set()
+
+  for (const value of [
+    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS,
+    process.env.AUTH_INVITE_REDIRECT_URL,
+    process.env.APP_URL,
+    process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173',
+  ]) {
+    for (const origin of String(value ?? '').split(',')) {
+      const normalizedOrigin = normalizeRedirectOrigin(origin)
+
+      if (normalizedOrigin) {
+        origins.add(normalizedOrigin)
+      }
+    }
+  }
+
+  return origins
+}
+
+function normalizeRedirectOrigin(value) {
+  try {
+    return new URL(String(value ?? '').trim()).origin
+  } catch {
+    return null
+  }
+}
+
+function normalizeRedirectUrl(value) {
+  const url = String(value ?? '').trim()
+
+  if (!url) {
+    return null
+  }
+
+  try {
+    return new URL(url).toString()
+  } catch {
+    return null
+  }
+}
+
+function normalizeEmailInput(value) {
+  const email = String(value ?? '').trim().toLowerCase()
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null
+}
+
 function isDevEmailLoginEnabled() {
   if (process.env.NODE_ENV === 'production') {
     return false
   }
 
-  if (process.env.AUTH_DEV_EMAIL_LOGIN === 'true') {
-    return true
-  }
-
-  if (process.env.AUTH_DEV_EMAIL_LOGIN === 'false') {
-    return false
-  }
-
-  return process.env.NODE_ENV !== 'production'
+  return process.env.AUTH_DEV_EMAIL_LOGIN === 'true'
 }
 
 function enforceRateLimit(request, bucketName, options, subject = '') {
@@ -1090,6 +1241,18 @@ function getRequestIp(request) {
 
 function normalizeRateLimitSubject(value) {
   return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 128) : ''
+}
+
+function isMainModule() {
+  return process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false
+}
+
+export function clearRateLimitBucketsForTests() {
+  rateLimitBuckets.clear()
+}
+
+export function setSupabaseOtpClientForTests(client) {
+  supabaseOtpClient = client
 }
 
 function createEmptyPersistedState() {

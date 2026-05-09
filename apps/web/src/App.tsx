@@ -8059,18 +8059,7 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
     const { data } = await supabaseClient.auth.getSession()
 
     if (!data.session?.access_token) {
-      const { error } = await supabaseClient.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: window.location.origin,
-          shouldCreateUser: false,
-        },
-      })
-
-      if (error) {
-        throw new Error(`Supabase could not send the sign-in link: ${error.message}`)
-      }
-
+      await requestRemoteSignInLink(email)
       return { email, kind: 'magic-link' }
     }
 
@@ -8102,6 +8091,28 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
   return {
     kind: 'session',
     snapshot: normalizeRemoteAppSnapshot(payload),
+  }
+}
+
+async function requestRemoteSignInLink(email: string) {
+  const response = await fetch('/api/auth/request-link', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      redirectTo: window.location.origin,
+    }),
+  })
+
+  const payload = await response.json().catch(() => ({})) as { error?: unknown }
+
+  if (!response.ok) {
+    throw new Error(
+      typeof payload.error === 'string' ? payload.error : `Could not send sign-in link: ${response.status}`,
+    )
   }
 }
 
