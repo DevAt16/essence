@@ -11,6 +11,29 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
 import type { JSONContent } from '@tiptap/core'
+import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Code2,
+  Eraser,
+  Heading2,
+  Highlighter,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  Minus,
+  Quote as QuoteIcon,
+  Redo2,
+  Strikethrough,
+  Subscript as SubscriptIcon,
+  Superscript as SuperscriptIcon,
+  Underline as UnderlineIcon,
+  Undo2,
+} from 'lucide-react'
 import './App.css'
 
 type ViewMode = 'library' | 'collections' | 'search' | 'favorites' | 'archive' | 'editor'
@@ -37,6 +60,8 @@ type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
 type AmbienceMode = 'still' | 'subtle' | 'cosmic'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
+type LibraryDisplayMode = 'cards' | 'list'
+type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
 
 interface NoteBlock {
   id: string
@@ -524,6 +549,15 @@ const browseViewMeta: Record<NavMode, { heading: string; description: string }> 
     description: 'Earlier drafts and retired directions.',
   },
 }
+
+const libraryQuickFilters: Array<{ id: LibraryQuickFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'drafts', label: 'Drafts' },
+  { id: 'pinned', label: 'Pinned' },
+  { id: 'favorites', label: 'Favorites' },
+  { id: 'essays', label: 'Essays' },
+  { id: 'topics', label: 'Topics' },
+]
 
 const slashMenuOptions: SlashMenuItem[] = [
   {
@@ -1588,6 +1622,8 @@ function App() {
   const applyWorkspaceState = (nextState: PersistedAppState, message: string) => {
     const normalizedState = normalizePersistedAppState(nextState)
 
+    setAiComposerOpen(false)
+
     startTransition(() => {
       setFolders(normalizedState.folders)
       setNotes(normalizedState.notes)
@@ -1672,6 +1708,7 @@ function App() {
 
   const openAuthScreen = () => {
     setAuthError(null)
+    setAiComposerOpen(false)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
   }
@@ -1681,6 +1718,7 @@ function App() {
   }
 
   const openQuickSwitcher = () => {
+    setAiComposerOpen(false)
     setEditorActionsOpen(false)
     setQuickSwitcherOpen(true)
     setQuickSwitcherQuery('')
@@ -1703,6 +1741,7 @@ function App() {
       return
     }
 
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setSlashMenuState(null)
@@ -1712,6 +1751,7 @@ function App() {
 
   const openSearchView = () => {
     setZenMode(false)
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(null)
@@ -2070,6 +2110,7 @@ function App() {
       return
     }
 
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
 
     if (view !== 'editor') {
@@ -2097,7 +2138,7 @@ function App() {
       blocks,
       editorDoc: noteBlocksToTiptapContent(blocks),
       sources: [],
-      tags: ['drafts'],
+      tags: [],
       previewDate: 'Just now',
       updatedAt: new Date().toISOString(),
       isFavorite: false,
@@ -2105,6 +2146,7 @@ function App() {
       layout: 'standard',
     }
 
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorContext(view === 'editor' ? editorContext : view === 'collections' ? 'library' : view)
     setNotes((currentNotes) => [newNote, ...currentNotes])
@@ -2350,6 +2392,7 @@ function App() {
   }
 
   const focusImportedNote = (note: Note, message: string) => {
+    setAiComposerOpen(false)
     setActiveCollectionId(note.collectionId)
     setActiveFolderId(note.folderId)
     setActiveTag(null)
@@ -2364,10 +2407,13 @@ function App() {
   }
 
   const openImportDialog = () => {
+    setAiComposerOpen(false)
+    setQuickSwitcherOpen(false)
     importFileInputRef.current?.click()
   }
 
   const exportLibraryAsJson = () => {
+    setAiComposerOpen(false)
     downloadTextFile(
       `essence-export-${getExportDateStamp()}.json`,
       JSON.stringify(
@@ -2543,6 +2589,7 @@ function App() {
 
   const navigate = (nextView: NavMode) => {
     setZenMode(false)
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
 
@@ -2561,6 +2608,7 @@ function App() {
 
   const openCollection = (collectionId: CollectionId) => {
     setZenMode(false)
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusCollectionFilter(collectionId)
@@ -2568,6 +2616,7 @@ function App() {
 
   const openFolder = (folderId: string) => {
     setZenMode(false)
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusFolderFilter(folderId)
@@ -2575,6 +2624,7 @@ function App() {
 
   const openTag = (tagName: string) => {
     setZenMode(false)
+    setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(null)
@@ -2774,6 +2824,33 @@ function App() {
     flashSaveFeedback(activeNote.isPinned ? 'Removed from pinned notes' : 'Pinned note')
   }
 
+  const publishActiveNote = () => {
+    if (!activeNote) {
+      return
+    }
+
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      status: 'Published',
+      tags: removeDraftTags(note.tags),
+    }))
+    setNoteViewMode('read')
+    flashSaveFeedback('Published note')
+  }
+
+  const moveActiveNoteToDraft = () => {
+    if (!activeNote) {
+      return
+    }
+
+    patchNote(activeNote.id, (note) => ({
+      ...note,
+      status: 'Draft',
+    }))
+    setNoteViewMode('edit')
+    flashSaveFeedback('Moved back to drafts')
+  }
+
   const handleTitleChange = (value: string) => {
     if (!activeNote) {
       return
@@ -2824,16 +2901,45 @@ function App() {
       return
     }
 
-    const nextTag = availableTags.find((tag) => !activeNote.tags.includes(tag))
+    const noteId = activeNote.id
 
-    if (!nextTag) {
-      return
-    }
+    setDialogState({
+      type: 'prompt',
+      title: 'Add topic',
+      message: 'Create a short topic label for this note. Spaces will be converted to hyphens.',
+      label: 'Topic',
+      initialValue: '',
+      placeholder: 'philosophy-of-mind',
+      confirmLabel: 'Add topic',
+      onConfirm: (value) => {
+        const nextTag = normalizeTopicTag(value)
 
-    patchNote(activeNote.id, (note) => ({
-      ...note,
-      tags: [...note.tags, nextTag],
-    }))
+        if (!nextTag) {
+          flashSaveFeedback('Topic was empty')
+          return
+        }
+
+        if (activeNote.tags.some((tag) => tag.toLowerCase() === nextTag.toLowerCase())) {
+          flashSaveFeedback('Topic already on note')
+          return
+        }
+
+        patchNote(noteId, (note) => {
+          const hasTopic = note.tags.some((tag) => tag.toLowerCase() === nextTag.toLowerCase())
+
+          if (hasTopic) {
+            return note
+          }
+
+          return {
+            ...note,
+            tags: [...note.tags, nextTag],
+          }
+        })
+
+        flashSaveFeedback('Topic added')
+      },
+    })
   }
 
   const removeTagFromActiveNote = (tagName: string) => {
@@ -2976,6 +3082,7 @@ function App() {
     )
     setActiveCollectionId(collectionId)
     setActiveFolderId(newFolder.id)
+    setAiComposerOpen(false)
     startTransition(() => setView('collections'))
   }
 
@@ -3150,9 +3257,10 @@ function App() {
                   <span>{`Back to ${browseViewMeta[editorContext].heading}`}</span>
                 </button>
 
-                {showEditorToolbar ? (
-                  <div className="topbar__context topbar__context--editorEmpty">
-                    Rich editor · type / or select text
+                {showEditorToolbar && activeNote ? (
+                  <div className="topbar__context topbar__context--editorMode" aria-label="Current editor note">
+                    <span>Editing</span>
+                    <strong>{activeNote.title || 'Untitled note'}</strong>
                   </div>
                 ) : !activeNote ? (
                   <div className="topbar__context topbar__context--editorEmpty">No note selected yet.</div>
@@ -3214,6 +3322,17 @@ function App() {
                           <Icon name="focus" />
                           <span>Focus</span>
                         </button>
+                        {isDraftNote(activeNote) && (
+                          <button
+                            type="button"
+                            className="utility-button utility-button--accent"
+                            onClick={publishActiveNote}
+                            title="Publish this note"
+                          >
+                            <Icon name="check" />
+                            <span>Publish</span>
+                          </button>
+                        )}
                         <ModeToggle mode={noteViewMode} onChange={switchNoteViewMode} />
                         <EditorActionsMenu
                           isOpen={editorActionsOpen}
@@ -3222,6 +3341,8 @@ function App() {
                           onClose={() => setEditorActionsOpen(false)}
                           onDelete={() => deleteNote(activeNote.id)}
                           onExportMarkdown={exportActiveNoteAsMarkdown}
+                          onMoveToDraft={moveActiveNoteToDraft}
+                          onPublish={publishActiveNote}
                           onToggleFavorite={toggleFavorite}
                           onToggleHistory={toggleNoteHistory}
                           onToggleOpen={() => setEditorActionsOpen((currentValue) => !currentValue)}
@@ -3240,7 +3361,14 @@ function App() {
             ) : (
               <>
                 <div className="topbar__browseHeading">
-                  <div className="topbar__browseTitle">{browseViewMeta[view].heading}</div>
+                  {view === 'library' ? (
+                    <div className="topbar__browseContext">
+                      <span>Workspace</span>
+                      <strong>Essence</strong>
+                    </div>
+                  ) : (
+                    <div className="topbar__browseTitle">{browseViewMeta[view].heading}</div>
+                  )}
                 </div>
                 <div className="topbar__actions topbar__actions--browser">
                   <span className="topbar__context">{browseViewMeta[view].description}</span>
@@ -3367,7 +3495,7 @@ function App() {
                 {activeNote ? (
                   <div className={`editor-layout ${noteHistoryOpen ? 'editor-layout--history' : ''}`}>
                     <div className="editor-column">
-                      {!zenMode && (
+                      {!zenMode && noteViewMode === 'edit' && (
                         <Breadcrumbs
                           collectionId={activeNote.collectionId}
                           folderId={activeNote.folderId}
@@ -3425,6 +3553,7 @@ function App() {
                       ) : (
                         <ReadModeNote
                           backlinks={activeBacklinks}
+                          foldersById={foldersById}
                           linkedNotes={activeLinkedNotes}
                           note={activeNote}
                           notesByNormalizedTitle={notesByNormalizedTitle}
@@ -3620,6 +3749,7 @@ function ModernRichEditor({
   const latestSignatureRef = useRef(getEditorStateSignature(blocks, safeEditorDoc))
   const onChangeRef = useRef(onChange)
   const onFocusRef = useRef(onFocus)
+  const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const editor = useEditor({
     extensions: richEditorExtensions,
@@ -3659,6 +3789,17 @@ function ModernRichEditor({
   useEffect(() => {
     onFocusRef.current = onFocus
   }, [onFocus])
+
+  useEffect(() => {
+    const titleInput = titleInputRef.current
+
+    if (!titleInput) {
+      return
+    }
+
+    titleInput.style.height = 'auto'
+    titleInput.style.height = `${titleInput.scrollHeight}px`
+  }, [title])
 
   useEffect(() => {
     if (!editor) {
@@ -3734,31 +3875,31 @@ function ModernRichEditor({
             label="Bold"
             onClick={() => editor.chain().focus().toggleBold().run()}
           >
-            <strong>B</strong>
+            <Bold />
           </RichEditorButton>
           <RichEditorButton
             active={editor.isActive('italic')}
             label="Italic"
             onClick={() => editor.chain().focus().toggleItalic().run()}
           >
-            <em>I</em>
+            <Italic />
           </RichEditorButton>
           <RichEditorButton
             active={editor.isActive('underline')}
             label="Underline"
             onClick={() => editor.chain().focus().toggleUnderline().run()}
           >
-            <span className="modern-editor__underline">U</span>
+            <UnderlineIcon />
           </RichEditorButton>
           <RichEditorButton
             active={editor.isActive('code')}
             label="Inline code"
             onClick={() => editor.chain().focus().toggleCode().run()}
           >
-            <span>{'`'}</span>
+            <Code2 />
           </RichEditorButton>
           <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
-            <Icon name="link" />
+            <Link2 />
           </RichEditorButton>
         </BubbleMenu>
       )}
@@ -3773,10 +3914,10 @@ function ModernRichEditor({
           >
             <div className="modern-editor__toolbarGroup">
               <RichEditorButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
-                <Icon name="undo" />
+                <Undo2 />
               </RichEditorButton>
               <RichEditorButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
-                <Icon name="redo" />
+                <Redo2 />
               </RichEditorButton>
             </div>
 
@@ -3786,35 +3927,35 @@ function ModernRichEditor({
                 label="Heading"
                 onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
               >
-                H
+                <Heading2 />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('bulletList')}
                 label="Bullet list"
                 onClick={() => editor.chain().focus().toggleBulletList().run()}
               >
-                -
+                <List />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('orderedList')}
                 label="Numbered list"
                 onClick={() => editor.chain().focus().toggleOrderedList().run()}
               >
-                1.
+                <ListOrdered />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('blockquote')}
                 label="Quote"
                 onClick={() => editor.chain().focus().toggleBlockquote().run()}
               >
-                "
+                <QuoteIcon />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('codeBlock')}
                 label="Code block"
                 onClick={() => editor.chain().focus().toggleCodeBlock().run()}
               >
-                {'</>'}
+                <Code2 />
               </RichEditorButton>
             </div>
 
@@ -3824,59 +3965,59 @@ function ModernRichEditor({
                 label="Bold"
                 onClick={() => editor.chain().focus().toggleBold().run()}
               >
-                <strong>B</strong>
+                <Bold />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('italic')}
                 label="Italic"
                 onClick={() => editor.chain().focus().toggleItalic().run()}
               >
-                <em>I</em>
+                <Italic />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('strike')}
                 label="Strikethrough"
                 onClick={() => editor.chain().focus().toggleStrike().run()}
               >
-                <span className="modern-editor__strike">S</span>
+                <Strikethrough />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('code')}
                 label="Inline code"
                 onClick={() => editor.chain().focus().toggleCode().run()}
               >
-                {'`'}
+                <Code2 />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('underline')}
                 label="Underline"
                 onClick={() => editor.chain().focus().toggleUnderline().run()}
               >
-                <span className="modern-editor__underline">U</span>
+                <UnderlineIcon />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('highlight')}
                 label="Highlight"
                 onClick={() => editor.chain().focus().toggleHighlight().run()}
               >
-                <span className="modern-editor__highlightSwatch">A</span>
+                <Highlighter />
               </RichEditorButton>
               <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
-                <Icon name="link" />
+                <Link2 />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('superscript')}
                 label="Superscript"
                 onClick={() => editor.chain().focus().toggleSuperscript().run()}
               >
-                x^2
+                <SuperscriptIcon />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive('subscript')}
                 label="Subscript"
                 onClick={() => editor.chain().focus().toggleSubscript().run()}
               >
-                x_2
+                <SubscriptIcon />
               </RichEditorButton>
             </div>
 
@@ -3886,37 +4027,37 @@ function ModernRichEditor({
                 label="Align left"
                 onClick={() => editor.chain().focus().setTextAlign('left').run()}
               >
-                L
+                <AlignLeft />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive({ textAlign: 'center' })}
                 label="Align center"
                 onClick={() => editor.chain().focus().setTextAlign('center').run()}
               >
-                C
+                <AlignCenter />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive({ textAlign: 'right' })}
                 label="Align right"
                 onClick={() => editor.chain().focus().setTextAlign('right').run()}
               >
-                R
+                <AlignRight />
               </RichEditorButton>
               <RichEditorButton
                 active={editor.isActive({ textAlign: 'justify' })}
                 label="Justify"
                 onClick={() => editor.chain().focus().setTextAlign('justify').run()}
               >
-                J
+                <AlignJustify />
               </RichEditorButton>
             </div>
 
             <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end">
               <RichEditorButton label="Clear formatting" onClick={clearFormatting}>
-                Tx
+                <Eraser />
               </RichEditorButton>
               <RichEditorButton label="Add divider" onClick={insertDivider}>
-                +
+                <Minus />
               </RichEditorButton>
             </div>
           </header>
@@ -3924,15 +4065,18 @@ function ModernRichEditor({
       )}
 
       <div className="modern-editor__body">
-        <input
+        <textarea
+          ref={titleInputRef}
           className="modern-editor__title"
           value={title}
           onChange={(event) => onTitleChange(event.target.value)}
+          onFocus={onFocus}
           aria-label="Note title"
+          placeholder="Untitled note"
+          rows={1}
         />
         <EditorContent editor={editor} />
       </div>
-      <p className="modern-editor__hint">Markdown shortcuts work: #, -, 1., &gt;, ```. Select text for inline formatting.</p>
     </section>
   )
 }
@@ -4449,11 +4593,18 @@ function LibraryScreen({
   searchQuery: string
   viewMode: NavMode
 }) {
-  const visibleNoteCountLabel = `${cards.length} ${cards.length === 1 ? 'note' : 'notes'} in view`
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const isHomeView = viewMode === 'library' && searchQuery.trim().length === 0 && !activeFilterLabel
-  const homeSections = useMemo(() => buildLibraryHomeSections(cards), [cards])
-  const emptyState = getLibraryEmptyState(viewMode, searchQuery, activeFilterLabel)
+  const [displayMode, setDisplayMode] = useState<LibraryDisplayMode>('cards')
+  const [quickFilter, setQuickFilter] = useState<LibraryQuickFilter>('all')
+  const visibleCards = useMemo(() => filterLibraryCards(cards, quickFilter), [cards, quickFilter])
+  const visibleNoteCountLabel = `${formatCount(visibleCards.length, 'note')} in view`
+  const isHomeView = viewMode === 'library' && searchQuery.trim().length === 0 && !activeFilterLabel && quickFilter === 'all'
+  const homeSections = useMemo(() => buildLibraryHomeSections(visibleCards), [visibleCards])
+  const emptyState = getLibraryEmptyState(viewMode, searchQuery, activeFilterLabel, quickFilter)
+  const viewHeading = browseViewMeta[viewMode].heading
+  const viewDescription = activeFilterLabel
+    ? `Filtered to ${activeFilterLabel.toLowerCase()}.`
+    : browseViewMeta[viewMode].description
 
   useEffect(() => {
     if (focusSearchSignal <= 0) {
@@ -4466,9 +4617,11 @@ function LibraryScreen({
 
   return (
     <section className="library-screen">
-      <div className="section-heading section-heading--compact">
-        <div className="section-heading__copy section-heading__copy--compact">
+      <header className="library-hero">
+        <div className="library-hero__copy">
           <span className="section-heading__meta">{visibleNoteCountLabel}</span>
+          <h1>{viewHeading}</h1>
+          <p>{viewDescription}</p>
 
           {(activeCollectionId || activeFolderId) && (
             <Breadcrumbs
@@ -4481,7 +4634,7 @@ function LibraryScreen({
           )}
         </div>
 
-        <div className="section-actions">
+        <div className="library-hero__controls">
           <label className="search-field">
             <Icon name="search" />
             <input
@@ -4500,11 +4653,60 @@ function LibraryScreen({
             </button>
           )}
         </div>
+
+        <div className="library-spaces" aria-label="Collections">
+          {collections.map((collection) => (
+            <button key={collection.id} type="button" className="library-space" onClick={() => onOpenCollection(collection.id)}>
+              <CollectionGlyph icon={collection.icon} />
+              <span>{collection.name}</span>
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="library-toolbar" aria-label="Library controls">
+        <div className="library-filterChips" aria-label="Quick filters">
+          {libraryQuickFilters.map((filter) => {
+            const count = getLibraryQuickFilterCount(cards, filter.id)
+
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                className={`library-filterChip ${quickFilter === filter.id ? 'library-filterChip--active' : ''}`}
+                onClick={() => setQuickFilter(filter.id)}
+                aria-pressed={quickFilter === filter.id}
+              >
+                <span>{filter.label}</span>
+                <small>{count}</small>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="library-viewToggle" role="tablist" aria-label="Library view">
+          <button
+            type="button"
+            className={displayMode === 'cards' ? 'library-viewToggle__button--active' : ''}
+            onClick={() => setDisplayMode('cards')}
+            role="tab"
+            aria-selected={displayMode === 'cards'}
+          >
+            Cards
+          </button>
+          <button
+            type="button"
+            className={displayMode === 'list' ? 'library-viewToggle__button--active' : ''}
+            onClick={() => setDisplayMode('list')}
+            role="tab"
+            aria-selected={displayMode === 'list'}
+          >
+            List
+          </button>
+        </div>
       </div>
 
-      <div className="section-divider" />
-
-      {cards.length === 0 ? (
+      {visibleCards.length === 0 ? (
         <div className="empty-state">
           <h2>{emptyState.title}</h2>
           <p>{emptyState.description}</p>
@@ -4521,17 +4723,31 @@ function LibraryScreen({
                 <p>{section.description}</p>
               </div>
 
-              <div className={`note-grid ${section.emphasize ? 'note-grid--hero' : ''}`}>
-                {section.notes.map((note) => (
-                  <NoteCard key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
-                ))}
-              </div>
+              {displayMode === 'list' || section.id === 'recent' ? (
+                <div className="note-list">
+                  {section.notes.map((note) => (
+                    <NoteListItem key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+                  ))}
+                </div>
+              ) : (
+                <div className={`note-grid ${section.emphasize ? 'note-grid--hero' : ''}`}>
+                  {section.notes.map((note) => (
+                    <NoteCard key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+                  ))}
+                </div>
+              )}
             </section>
+          ))}
+        </div>
+      ) : displayMode === 'list' ? (
+        <div className="note-list">
+          {visibleCards.map((note) => (
+            <NoteListItem key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
           ))}
         </div>
       ) : (
         <div className="note-grid">
-          {cards.map((note) => (
+          {visibleCards.map((note) => (
             <NoteCard key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
           ))}
         </div>
@@ -4553,6 +4769,7 @@ function getLibraryEmptyState(
   viewMode: NavMode,
   searchQuery: string,
   activeFilterLabel: string | null,
+  quickFilter: LibraryQuickFilter = 'all',
 ): { description: string; title: string } {
   if (searchQuery.trim()) {
     return {
@@ -4565,6 +4782,15 @@ function getLibraryEmptyState(
     return {
       title: 'This view is quiet',
       description: 'No notes match the current filter yet. Clear it, or create a note for this space.',
+    }
+  }
+
+  if (quickFilter !== 'all') {
+    const label = libraryQuickFilters.find((filter) => filter.id === quickFilter)?.label.toLowerCase() ?? 'notes'
+
+    return {
+      title: `No ${label} here`,
+      description: 'Try another quick filter, or return to All when you want the full library back.',
     }
   }
 
@@ -4607,7 +4833,6 @@ function NoteCard({
   const excerpt = summarizeBlocks(note.blocks)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
   const locationLabel = folderPath || collectionNameById[note.collectionId]
-  const visibleTags = note.tags.slice(0, 2)
   const isCompact = note.layout === 'standard' && excerpt.length < 90
   const displayExcerpt =
     excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
@@ -4640,13 +4865,7 @@ function NoteCard({
           </div>
           <div className="note-card__bottom">
             <span className="note-card__footer">{locationLabel}</span>
-            {visibleTags.length > 0 && (
-              <span className="note-card__meta">
-                {visibleTags.map((tag) => (
-                  <span key={tag}>{tag}</span>
-                ))}
-              </span>
-            )}
+            <NoteTagSummary tags={note.tags} className="note-card__meta" />
           </div>
         </>
       ) : (
@@ -4657,17 +4876,70 @@ function NoteCard({
           </div>
           <div className="note-card__bottom">
             <span className="note-card__footer">{locationLabel}</span>
-            {visibleTags.length > 0 && (
-              <span className="note-card__meta">
-                {visibleTags.map((tag) => (
-                  <span key={tag}>{tag}</span>
-                ))}
-              </span>
-            )}
+            <NoteTagSummary tags={note.tags} className="note-card__meta" />
           </div>
         </>
       )}
     </button>
+  )
+}
+
+function NoteListItem({
+  note,
+  foldersById,
+  onOpenNote,
+}: {
+  note: Note
+  foldersById: Record<string, Folder>
+  onOpenNote: (noteId: string) => void
+}) {
+  const excerpt = summarizeBlocks(note.blocks)
+  const folderPath = getFolderPathLabel(note.folderId, foldersById)
+  const locationLabel = folderPath || collectionNameById[note.collectionId]
+  const wordCount = countWordsFromBlocks(note.blocks)
+  const displayExcerpt =
+    excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
+
+  return (
+    <button type="button" className="note-list-item" onClick={() => onOpenNote(note.id)}>
+      <div className="note-list-item__main">
+        <div className="note-list-item__meta">
+          <span className="badge">{note.status}</span>
+          <span>{note.previewDate}</span>
+          {note.isPinned && (
+            <span className="note-list-item__pin" aria-label="Pinned note" title="Pinned note">
+              <Icon name="pin" />
+            </span>
+          )}
+        </div>
+        <h3>{note.title}</h3>
+        {displayExcerpt && <p>{displayExcerpt}</p>}
+      </div>
+
+      <div className="note-list-item__side">
+        <span>{locationLabel}</span>
+        <small>{`${formatCount(wordCount, 'word')} / ${formatCount(note.blocks.length, 'block')}`}</small>
+        <NoteTagSummary tags={note.tags} className="note-list-item__tags" />
+      </div>
+    </button>
+  )
+}
+
+function NoteTagSummary({ className, tags }: { className: string; tags: string[] }) {
+  if (tags.length === 0) {
+    return null
+  }
+
+  const visibleTags = tags.slice(0, 1)
+  const hiddenTagCount = Math.max(tags.length - visibleTags.length, 0)
+
+  return (
+    <span className={className}>
+      {visibleTags.map((tag) => (
+        <span key={tag}>{tag}</span>
+      ))}
+      {hiddenTagCount > 0 && <span>{`+${hiddenTagCount}`}</span>}
+    </span>
   )
 }
 
@@ -5635,6 +5907,7 @@ function EditorContextPanel({
   onRemoveTag: (tag: string) => void
   onUpdateSource: (sourceId: string, changes: Partial<NoteSource>) => void
 }) {
+  const [isExpanded, setIsExpanded] = useState(false)
   const [openSections, setOpenSections] = useState<Record<EditorContextSectionId, boolean>>({
     details: true,
     sources: false,
@@ -5654,116 +5927,133 @@ function EditorContextPanel({
   }
 
   return (
-    <section className="editor-context" aria-label="Note context">
-      <div className="editor-context__summary">
-        <span className="badge">{note.status}</span>
-        <span>{note.previewDate}</span>
-        {note.isPinned && <span>Pinned</span>}
-        {note.isFavorite && <span>Favorited</span>}
-        <span>{topicSummary}</span>
-        <span>{sourceSummary}</span>
-      </div>
+    <section className={`editor-context ${isExpanded ? 'editor-context--expanded' : 'editor-context--collapsed'}`} aria-label="Note context">
+      <button
+        type="button"
+        className="editor-context__toggle"
+        onClick={() => setIsExpanded((currentValue) => !currentValue)}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? 'Hide' : 'Show'} note context`}
+      >
+        <span className="editor-context__toggleMain">
+          <span>Note context</span>
+          <strong>{`${collectionLabel} / ${folderLabel}`}</strong>
+        </span>
+        <span className="editor-context__summary" aria-hidden="true">
+          <span className="badge">{note.status}</span>
+          <span>{note.previewDate}</span>
+          {note.isPinned && <span>Pinned</span>}
+          {note.isFavorite && <span>Favorited</span>}
+          <span>{topicSummary}</span>
+          <span>{sourceSummary}</span>
+        </span>
+        <span className="editor-context__toggleAction">{isExpanded ? 'Hide' : 'Show'}</span>
+      </button>
 
-      <div className="editor-context__sections">
-        <section className="editor-context__section" data-open={openSections.details}>
-          <button
-            type="button"
-            className="editor-context__sectionToggle"
-            onClick={() => toggleSection('details')}
-            aria-expanded={openSections.details}
-          >
-            <span>Details</span>
-            <small>{`${collectionLabel} / ${folderLabel}`}</small>
-          </button>
-          {openSections.details && (
-            <div className="editor-context__body editor-context__body--fields">
-              <div className="editor-meta">
-                <label className="meta-field">
-                  <span>Collection</span>
-                  <select value={note.collectionId} onChange={onCollectionChange}>
-                    {activeCollectionOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+      {isExpanded && (
+        <div className="editor-context__sections">
+          <section className="editor-context__section" data-open={openSections.details}>
+            <button
+              type="button"
+              className="editor-context__sectionToggle"
+              onClick={() => toggleSection('details')}
+              aria-expanded={openSections.details}
+            >
+              <span>Location</span>
+              <small>{`${collectionLabel} / ${folderLabel}`}</small>
+            </button>
+            {openSections.details && (
+              <div className="editor-context__body editor-context__body--location">
+                <div className="editor-location-grid">
+                  <label className="meta-field">
+                    <span>Collection</span>
+                    <select value={note.collectionId} onChange={onCollectionChange}>
+                      {activeCollectionOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <label className="meta-field">
-                  <span>Folder</span>
-                  <select value={note.folderId ?? ''} onChange={onFolderChange}>
-                    <option value="">No folder</option>
-                    {activeFolderOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <label className="meta-field">
+                    <span>Folder</span>
+                    <select value={note.folderId ?? ''} onChange={onFolderChange}>
+                      <option value="">No folder</option>
+                      {activeFolderOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+          </section>
 
-        <section className="editor-context__section" data-open={openSections.topics}>
-          <button
-            type="button"
-            className="editor-context__sectionToggle"
-            onClick={() => toggleSection('topics')}
-            aria-expanded={openSections.topics}
-          >
-            <span>Topics</span>
-            <small>{topicSummary}</small>
-          </button>
-          {openSections.topics && (
-            <div className="editor-context__body">
-              <div className="editor-tags">
-                {note.tags.map((tag) => (
-                  <span key={tag} className="chip chip--editable">
-                    <button type="button" className="chip__label" onClick={() => onOpenTag(tag)}>
-                      {tag}
-                    </button>
-                    <button
-                      type="button"
-                      className="chip__remove"
-                      onClick={() => onRemoveTag(tag)}
-                      aria-label={`Remove ${tag} from this note`}
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </span>
-                ))}
-                <button type="button" className="tag-add" onClick={onAddTag} aria-label="Add tag">
-                  <Icon name="plus" />
-                </button>
+          <section className="editor-context__section" data-open={openSections.topics}>
+            <button
+              type="button"
+              className="editor-context__sectionToggle"
+              onClick={() => toggleSection('topics')}
+              aria-expanded={openSections.topics}
+            >
+              <span>Topics</span>
+              <small>{topicSummary}</small>
+            </button>
+            {openSections.topics && (
+              <div className="editor-context__body">
+                <div className="editor-tags">
+                  {note.tags.map((tag) => (
+                    <span key={tag} className="chip chip--editable">
+                      <button type="button" className="chip__label" onClick={() => onOpenTag(tag)}>
+                        {tag}
+                      </button>
+                      <button
+                        type="button"
+                        className="chip__remove"
+                        onClick={() => onRemoveTag(tag)}
+                        aria-label={`Remove ${tag} from this note`}
+                      >
+                        <Icon name="close" />
+                      </button>
+                    </span>
+                  ))}
+                  {note.tags.length === 0 && <span className="editor-tags__empty">No topics yet</span>}
+                  <button type="button" className="tag-add tag-add--inline" onClick={onAddTag} aria-label="Add tag">
+                    <Icon name="plus" />
+                    <span>Add topic</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+          </section>
 
-        <section className="editor-context__section" data-open={openSections.sources}>
-          <button
-            type="button"
-            className="editor-context__sectionToggle"
-            onClick={() => toggleSection('sources')}
-            aria-expanded={openSections.sources}
-          >
-            <span>Sources</span>
-            <small>{sourceSummary}</small>
-          </button>
-          {openSections.sources && (
-            <div className="editor-context__body">
-              <SourceCardsEditor
-                showHeader={false}
-                sources={note.sources}
-                onAddSource={onAddSource}
-                onDeleteSource={onDeleteSource}
-                onUpdateSource={onUpdateSource}
-              />
-            </div>
-          )}
-        </section>
-      </div>
+          <section className="editor-context__section" data-open={openSections.sources}>
+            <button
+              type="button"
+              className="editor-context__sectionToggle"
+              onClick={() => toggleSection('sources')}
+              aria-expanded={openSections.sources}
+            >
+              <span>Sources</span>
+              <small>{sourceSummary}</small>
+            </button>
+            {openSections.sources && (
+              <div className="editor-context__body">
+                <SourceCardsEditor
+                  showHeader={false}
+                  sources={note.sources}
+                  onAddSource={onAddSource}
+                  onDeleteSource={onDeleteSource}
+                  onUpdateSource={onUpdateSource}
+                />
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </section>
   )
 }
@@ -5796,7 +6086,11 @@ function SourceCardsEditor({
         </div>
       ) : (
         <div className="source-cards__compactActions">
-          <button type="button" className="utility-button" onClick={onAddSource}>
+          <div>
+            <span>Reference shelf</span>
+            <strong>{sources.length > 0 ? formatCount(sources.length, 'source') : 'No sources yet'}</strong>
+          </div>
+          <button type="button" className="utility-button utility-button--accent" onClick={onAddSource}>
             <Icon name="plus" />
             <span>Add source</span>
           </button>
@@ -5807,7 +6101,7 @@ function SourceCardsEditor({
         <div className="source-cards__grid">
           {sources.map((source) => (
             <article key={source.id} className="source-card source-card--editable">
-              <div className="source-card__top">
+              <div className="source-card__top source-card__top--editable">
                 <label className="source-field source-field--type">
                   <span>Type</span>
                   <select
@@ -5826,6 +6120,15 @@ function SourceCardsEditor({
                   </select>
                 </label>
 
+                <label className="source-field source-field--title">
+                  <span>Title</span>
+                  <input
+                    value={source.title}
+                    onChange={(event) => onUpdateSource(source.id, { title: event.target.value })}
+                    placeholder="Paper, article, book, dataset..."
+                  />
+                </label>
+
                 <button
                   type="button"
                   className="icon-button icon-button--danger"
@@ -5837,16 +6140,7 @@ function SourceCardsEditor({
                 </button>
               </div>
 
-              <label className="source-field source-field--wide">
-                <span>Title</span>
-                <input
-                  value={source.title}
-                  onChange={(event) => onUpdateSource(source.id, { title: event.target.value })}
-                  placeholder="Paper, article, book, dataset..."
-                />
-              </label>
-
-              <div className="source-card__columns">
+              <div className="source-card__columns source-card__columns--compact">
                 <label className="source-field">
                   <span>Author</span>
                   <input
@@ -5863,16 +6157,15 @@ function SourceCardsEditor({
                     placeholder="2026"
                   />
                 </label>
+                <label className="source-field">
+                  <span>Publication / Journal</span>
+                  <input
+                    value={source.publisher}
+                    onChange={(event) => onUpdateSource(source.id, { publisher: event.target.value })}
+                    placeholder="Journal, publisher, archive, course..."
+                  />
+                </label>
               </div>
-
-              <label className="source-field source-field--wide">
-                <span>Publication / Journal</span>
-                <input
-                  value={source.publisher}
-                  onChange={(event) => onUpdateSource(source.id, { publisher: event.target.value })}
-                  placeholder="Journal, publisher, archive, course..."
-                />
-              </label>
 
               <label className="source-field source-field--wide">
                 <span>URL / DOI</span>
@@ -6001,6 +6294,7 @@ function FocusModeBar({
 function ReadModeNote({
   backlinks,
   explorationAwake,
+  foldersById,
   isFocusMode,
   linkedNotes,
   note,
@@ -6013,6 +6307,7 @@ function ReadModeNote({
 }: {
   backlinks: Note[]
   explorationAwake: boolean
+  foldersById: Record<string, Folder>
   isFocusMode: boolean
   linkedNotes: Note[]
   note: Note
@@ -6023,31 +6318,35 @@ function ReadModeNote({
   pendingExplorationAction: ReaderExplorationAction | null
   wordCount: number
 }) {
+  const folderPath = getFolderPathLabel(note.folderId, foldersById)
+  const locationLabel = [collectionNameById[note.collectionId], folderPath].filter(Boolean).join(' / ')
+  const visibleTags = note.tags.slice(0, 2)
+  const hiddenTagCount = Math.max(note.tags.length - visibleTags.length, 0)
+
   return (
     <div className={`reader-column ${isFocusMode ? 'reader-column--focus' : ''}`}>
-      {!isFocusMode && (
-        <div className="reader-utility">
-          <div className="editor-note-meta">
-            <span className="badge">{note.status}</span>
+      <header className="reader-header">
+        {!isFocusMode && (
+          <div className="reader-kicker" aria-label="Note details">
+            {locationLabel && <span>{locationLabel}</span>}
+            <span>{note.status}</span>
             <span>{note.previewDate}</span>
             {note.isPinned && <span>Pinned</span>}
             {note.isFavorite && <span>Favorited</span>}
           </div>
-
-          {note.tags.length > 0 && (
-            <div className="reader-tags">
-              {note.tags.map((tag) => (
-                <button key={tag} type="button" className="chip" onClick={() => onOpenTag(tag)}>
-                  {tag}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <header className="reader-header">
+        )}
         <h1 className="reader-title">{note.title}</h1>
+        {!isFocusMode && note.tags.length > 0 && (
+          <div className="reader-topics" aria-label="Topics">
+            <span>Topics</span>
+            {visibleTags.map((tag) => (
+              <button key={tag} type="button" className="reader-topic" onClick={() => onOpenTag(tag)}>
+                {tag}
+              </button>
+            ))}
+            {hiddenTagCount > 0 && <span className="reader-topic reader-topic--count">{`+${hiddenTagCount}`}</span>}
+          </div>
+        )}
       </header>
 
       <article className="reader-content">
@@ -6460,6 +6759,8 @@ function EditorActionsMenu({
   onClose,
   onDelete,
   onExportMarkdown,
+  onMoveToDraft,
+  onPublish,
   onToggleFavorite,
   onToggleHistory,
   onToggleOpen,
@@ -6471,12 +6772,16 @@ function EditorActionsMenu({
   onClose: () => void
   onDelete: () => void
   onExportMarkdown: () => void
+  onMoveToDraft: () => void
+  onPublish: () => void
   onToggleFavorite: () => void
   onToggleHistory: () => void
   onToggleOpen: () => void
   onTogglePinned: () => void
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const noteIsDraft = isDraftNote(note)
+  const noteIsPublished = isPublishedNote(note)
 
   useEffect(() => {
     if (!isOpen) {
@@ -6518,6 +6823,26 @@ function EditorActionsMenu({
             <span>Note actions</span>
             <strong>{note.title}</strong>
           </div>
+
+          {noteIsDraft && (
+            <button type="button" role="menuitem" className="editor-more__item editor-more__item--positive" onClick={() => runAction(onPublish)}>
+              <Icon name="check" />
+              <span>
+                <strong>Publish note</strong>
+                <small>Mark it ready and remove draft tags</small>
+              </span>
+            </button>
+          )}
+
+          {noteIsPublished && (
+            <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onMoveToDraft)}>
+              <Icon name="edit" />
+              <span>
+                <strong>Move back to draft</strong>
+                <small>Return this note to editing status</small>
+              </span>
+            </button>
+          )}
 
           <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onExportMarkdown)}>
             <Icon name="download" />
@@ -6980,6 +7305,12 @@ function Icon({ name }: { name: string }) {
         <Glyph>
           <path d="M6 6l12 12" />
           <path d="M18 6 6 18" />
+        </Glyph>
+      )
+    case 'check':
+      return (
+        <Glyph>
+          <path d="m5 12 4 4 10-10" />
         </Glyph>
       )
     case 'compose':
@@ -8526,6 +8857,38 @@ function buildLibraryHomeSections(notes: Note[]) {
   return sections.filter((section) => section.notes.length > 0)
 }
 
+function filterLibraryCards(notes: Note[], filter: LibraryQuickFilter) {
+  if (filter === 'all') {
+    return notes
+  }
+
+  return notes.filter((note) => noteMatchesLibraryQuickFilter(note, filter))
+}
+
+function getLibraryQuickFilterCount(notes: Note[], filter: LibraryQuickFilter) {
+  return filter === 'all' ? notes.length : notes.filter((note) => noteMatchesLibraryQuickFilter(note, filter)).length
+}
+
+function noteMatchesLibraryQuickFilter(note: Note, filter: LibraryQuickFilter) {
+  const normalizedStatus = note.status.trim().toLowerCase()
+
+  switch (filter) {
+    case 'drafts':
+      return isDraftNote(note)
+    case 'pinned':
+      return note.isPinned
+    case 'favorites':
+      return note.isFavorite
+    case 'essays':
+      return normalizedStatus.includes('essay') || countWordsFromBlocks(note.blocks) >= 140
+    case 'topics':
+      return note.tags.length > 0 || normalizedStatus.includes('topic')
+    case 'all':
+    default:
+      return true
+  }
+}
+
 function compareNotesByUpdatedAt(left: Note, right: Note) {
   const rightTime = getNoteTimestampValue(right)
   const leftTime = getNoteTimestampValue(left)
@@ -8858,11 +9221,24 @@ function getBlockTextValue(block: NoteBlock) {
 }
 
 function getDefaultNoteViewMode(note: Note): NoteViewMode {
-  const normalizedStatus = note.status.trim().toLowerCase()
-  const normalizedTitle = note.title.trim().toLowerCase()
-  const isDraftLike = normalizedStatus === 'draft' || normalizedTitle.startsWith('untitled')
+  const isDraftLike = isDraftNote(note)
 
   return isDraftLike ? 'edit' : 'read'
+}
+
+function isDraftNote(note: Pick<Note, 'status'>) {
+  return note.status.trim().toLowerCase() === 'draft'
+}
+
+function isPublishedNote(note: Pick<Note, 'status'>) {
+  return note.status.trim().toLowerCase() === 'published'
+}
+
+function removeDraftTags(tags: string[]) {
+  return tags.filter((tag) => {
+    const normalizedTag = tag.trim().toLowerCase()
+    return normalizedTag !== 'draft' && normalizedTag !== 'drafts' && normalizedTag !== 'ai-draft'
+  })
 }
 
 function convertBlockType(block: NoteBlock, nextType: BlockType): NoteBlock {
@@ -9584,6 +9960,17 @@ function inferImportedLayout(blocks: NoteBlock[], type: NoteType): NoteLayout {
 
 function dedupeStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+}
+
+function normalizeTopicTag(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 36)
 }
 
 function formatMarkdownFrontmatterValue(value: string) {

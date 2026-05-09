@@ -4,15 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:client": "vite",
-    "dev:server": "node server/index.mjs",
+    "dev": "npm run dev:web",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "dev:client": "npm run dev:web",
+    "dev:api": "node apps/api/index.mjs",
+    "dev:server": "npm run dev:api",
     "dev:full": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build --config apps/web/vite.config.ts",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "db:migrate": "node server/migrate.mjs",
-    "db:seed": "node server/seed.mjs"
+    "preview": "vite preview --config apps/web/vite.config.ts",
+    "db:migrate": "node apps/api/migrate.mjs",
+    "db:seed": "node apps/api/seed.mjs"
   },
   "dependencies": {
     "@tiptap/extension-highlight": "^3.22.5",
