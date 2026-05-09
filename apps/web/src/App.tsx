@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
 import Highlight from '@tiptap/extension-highlight'
 import LinkExtension from '@tiptap/extension-link'
@@ -956,6 +956,26 @@ function App() {
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
 
+  const handleRemoteAccessEnded = useCallback((error: unknown) => {
+    void clearRemoteBrowserSession()
+
+    if (remoteSyncTimerRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(remoteSyncTimerRef.current)
+      remoteSyncTimerRef.current = null
+    }
+
+    pendingRevisionEventRef.current = null
+    lastRemoteSnapshotRef.current = null
+    setCurrentUser(createLocalAuthUser())
+    setAuthGateDismissed(false)
+    clearAuthGateDismissed()
+    setAuthNotice(null)
+    setAuthError(getRemoteAccessEndedMessage(error))
+    setRemoteBrowseSearchResults(null)
+    setRemoteQuickSearchResults(null)
+    setSaveMessage('Sign in required')
+  }, [])
+
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
 
   const activeNote = useMemo(
@@ -1093,6 +1113,14 @@ function App() {
         setActiveNoteId(resolvedState.activeNoteId)
         setRemoteSyncVersion((currentValue) => currentValue + 1)
       } catch (error) {
+        if (isRemoteAccessError(error)) {
+          console.warn('Remote account access ended.', error)
+          if (!isCancelled) {
+            handleRemoteAccessEnded(error)
+          }
+          return
+        }
+
         console.warn('PostgreSQL sync unavailable, continuing with local storage.', error)
         if (!isCancelled) {
           setCurrentUser(createLocalAuthUser())
@@ -1109,7 +1137,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [])
+  }, [handleRemoteAccessEnded])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1226,7 +1254,12 @@ function App() {
             pendingRevisionEventRef.current = null
           }
         })
-        .catch(() => {
+        .catch((error) => {
+          if (isRemoteAccessError(error)) {
+            handleRemoteAccessEnded(error)
+            return
+          }
+
           setSaveMessage('Saved locally')
         })
     }, 700)
@@ -1236,7 +1269,7 @@ function App() {
         window.clearTimeout(remoteSyncTimerRef.current)
       }
     }
-  }, [activeNoteId, composerHistory, folders, notes, remoteAccountActive, remoteSyncReady])
+  }, [activeNoteId, composerHistory, folders, handleRemoteAccessEnded, notes, remoteAccountActive, remoteSyncReady])
 
   useEffect(() => {
     return () => {
@@ -1265,8 +1298,13 @@ function App() {
           setRemoteBrowseSearchResults(results)
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!isCancelled) {
+          if (isRemoteAccessError(error)) {
+            handleRemoteAccessEnded(error)
+            return
+          }
+
           setRemoteBrowseSearchResults(null)
         }
       })
@@ -1274,7 +1312,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [deferredSearch, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
+  }, [deferredSearch, handleRemoteAccessEnded, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
 
   useEffect(() => {
     if (!remoteSyncReady || !remoteAccountActive || !deferredQuickSwitcherQuery) {
@@ -1291,8 +1329,13 @@ function App() {
           setRemoteQuickSearchResults(results)
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!isCancelled) {
+          if (isRemoteAccessError(error)) {
+            handleRemoteAccessEnded(error)
+            return
+          }
+
           setRemoteQuickSearchResults(null)
         }
       })
@@ -1300,7 +1343,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [deferredQuickSwitcherQuery, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
+  }, [deferredQuickSwitcherQuery, handleRemoteAccessEnded, remoteAccountActive, remoteSyncReady, remoteSyncVersion])
 
   const availableTags = useMemo(() => {
     return Array.from(new Set([...tagPool, ...notes.flatMap((note) => note.tags)])).sort((left, right) =>
@@ -1508,6 +1551,11 @@ function App() {
           return
         }
 
+        if (isRemoteAccessError(error)) {
+          handleRemoteAccessEnded(error)
+          return
+        }
+
         setNoteHistoryEntries([])
         setSelectedNoteRevisionId(null)
         setNoteHistoryError(error instanceof Error ? error.message : 'Unable to load note history.')
@@ -1521,7 +1569,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [activeNote?.id, noteHistoryOpen, remoteAccountActive, remoteSyncVersion, view])
+  }, [activeNote?.id, handleRemoteAccessEnded, noteHistoryOpen, remoteAccountActive, remoteSyncVersion, view])
 
   const quickSwitcherItems = useMemo(() => {
     const baseItems: QuickSwitcherItem[] = [
@@ -1733,6 +1781,10 @@ function App() {
       clearAuthGateDismissed()
       applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
     } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
       console.warn('Unable to sign in.', error)
       setAuthError(
         error instanceof Error && error.message
@@ -7728,6 +7780,43 @@ async function getRemoteAuthHeaders(): Promise<Record<string, string>> {
   }
 }
 
+class RemoteRequestError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'RemoteRequestError'
+    this.status = status
+  }
+}
+
+async function createRemoteRequestError(response: Response, fallbackMessage: string) {
+  const payload = await response.json().catch(() => ({})) as { error?: unknown }
+  const message = typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : fallbackMessage
+
+  return new RemoteRequestError(response.status, message)
+}
+
+function isRemoteAccessError(error: unknown) {
+  return error instanceof RemoteRequestError && (error.status === 401 || error.status === 403)
+}
+
+function getRemoteAccessEndedMessage(error: unknown) {
+  if (error instanceof RemoteRequestError && error.status === 403) {
+    return 'This email is no longer approved for Essence. Ask for a new invite if this looks wrong.'
+  }
+
+  return 'Your sign-in expired. Sign in again to continue syncing.'
+}
+
+async function clearRemoteBrowserSession() {
+  if (!supabaseClient) {
+    return
+  }
+
+  await supabaseClient.auth.signOut().catch(() => undefined)
+}
+
 async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
   const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch('/api/state', {
@@ -7736,6 +7825,10 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
   })
 
   if (response.status === 401) {
+    if (authHeaders.Authorization) {
+      throw await createRemoteRequestError(response, 'Your sign-in expired. Sign in again to continue syncing.')
+    }
+
     return {
       state: null,
       user: createLocalAuthUser(),
@@ -7743,7 +7836,7 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
   }
 
   if (!response.ok) {
-    throw new Error(`Failed to load remote state: ${response.status}`)
+    throw await createRemoteRequestError(response, `Failed to load remote state: ${response.status}`)
   }
 
   const payload = (await response.json()) as { state?: unknown | null; user?: unknown | null }
@@ -7762,7 +7855,7 @@ async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<Not
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to load note history: ${response.status}`)
+    throw await createRemoteRequestError(response, `Failed to load note history: ${response.status}`)
   }
 
   const payload = (await response.json()) as { revisions?: unknown[] }
@@ -7782,7 +7875,7 @@ async function fetchRemoteSearchResults(query: string, limit = 24): Promise<Sear
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to search notes: ${response.status}`)
+    throw await createRemoteRequestError(response, `Failed to search notes: ${response.status}`)
   }
 
   const payload = (await response.json()) as { results?: unknown[] }
@@ -7809,11 +7902,11 @@ async function generateRemoteAiDraft(request: {
     body: JSON.stringify(request),
   })
 
-  const payload = await response.json().catch(() => ({})) as { draft?: unknown; error?: unknown }
-
   if (!response.ok) {
-    throw new Error(typeof payload.error === 'string' ? payload.error : `Composer failed with status ${response.status}.`)
+    throw await createRemoteRequestError(response, `Composer failed with status ${response.status}.`)
   }
+
+  const payload = await response.json().catch(() => ({})) as { draft?: unknown; error?: unknown }
 
   return normalizeRemoteAiDraft(payload.draft)
 }
@@ -7839,11 +7932,11 @@ async function generateRemoteAiAssist(request: {
     body: JSON.stringify(request),
   })
 
-  const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
-
   if (!response.ok) {
-    throw new Error(typeof payload.error === 'string' ? payload.error : `Composer failed with status ${response.status}.`)
+    throw await createRemoteRequestError(response, `Composer failed with status ${response.status}.`)
   }
+
+  const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
 
   return normalizeRemoteAiAssistResult(payload.result, request.action)
 }
@@ -7861,7 +7954,7 @@ async function persistRemoteAppState(state: PersistedAppState, revisionEvents: P
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to persist remote state: ${response.status}`)
+    throw await createRemoteRequestError(response, `Failed to persist remote state: ${response.status}`)
   }
 }
 
