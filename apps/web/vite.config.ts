@@ -13,6 +13,35 @@ export default defineConfig({
   build: {
     outDir: '../../dist/web',
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          const moduleId = id.replaceAll('\\', '/')
+
+          if (!moduleId.includes('/node_modules/')) {
+            return undefined
+          }
+
+          if (moduleId.includes('/node_modules/@tiptap/')) {
+            return 'vendor-editor'
+          }
+
+          if (moduleId.includes('/node_modules/@supabase/')) {
+            return 'vendor-supabase'
+          }
+
+          if (
+            moduleId.includes('/node_modules/react/') ||
+            moduleId.includes('/node_modules/react-dom/') ||
+            moduleId.includes('/node_modules/scheduler/')
+          ) {
+            return 'vendor-react'
+          }
+
+          return undefined
+        },
+      },
+    },
   },
   server: {
     proxy: {

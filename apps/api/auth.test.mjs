@@ -17,8 +17,11 @@ import {
 
 let server
 let baseUrl
+let previousRequestLogging
 
 before(async () => {
+  previousRequestLogging = process.env.REQUEST_LOGGING
+  process.env.REQUEST_LOGGING = 'false'
   await ensureSchema()
   server = app.listen(0)
   await new Promise((resolve) => server.once('listening', resolve))
@@ -36,6 +39,7 @@ after(async () => {
   await new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })
+  restoreEnvValue('REQUEST_LOGGING', previousRequestLogging)
   await pool.end()
 })
 
@@ -51,6 +55,55 @@ test('unapproved emails cannot request Supabase sign-in links', async () => {
   assert.equal(response.status, 403)
   assert.equal(fakeSupabase.requests.length, 0)
   assert.match(response.body.error, /not invited/i)
+})
+
+test('health endpoint returns API liveness metadata', async () => {
+  const response = await apiRequest('/api/health', undefined, { method: 'GET' })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ok, true)
+  assert.equal(response.body.service, 'essence-api')
+  assert.equal(typeof response.body.uptimeSeconds, 'number')
+  assert.match(response.headers.get('x-request-id'), /^[a-zA-Z0-9_.:-]{8,128}$/)
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+  assert.equal(response.headers.get('x-frame-options'), 'DENY')
+  assert.match(response.headers.get('content-security-policy'), /default-src 'self'/)
+})
+
+test('ready endpoint verifies database readiness', async () => {
+  const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ok, true)
+  assert.equal(response.body.checks.database, 'ok')
+})
+
+test('CORS preflight allows configured development origin', async () => {
+  const response = await apiRequest('/api/state', undefined, {
+    headers: {
+      'Access-Control-Request-Headers': 'Authorization, Content-Type',
+      'Access-Control-Request-Method': 'PUT',
+      Origin: 'http://localhost:5173',
+    },
+    method: 'OPTIONS',
+  })
+
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:5173')
+  assert.match(response.headers.get('access-control-allow-methods'), /PUT/)
+})
+
+test('CORS preflight rejects unknown origins', async () => {
+  const response = await apiRequest('/api/state', undefined, {
+    headers: {
+      'Access-Control-Request-Method': 'GET',
+      Origin: 'https://not-essence.example',
+    },
+    method: 'OPTIONS',
+  })
+
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('access-control-allow-origin'), null)
 })
 
 test('approved emails can request a sign-in link through the API gate', async () => {
@@ -175,13 +228,17 @@ async function apiRequest(path, body, options = {}) {
   const method = options.method ?? 'POST'
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...options.headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await response.text()
 
   return {
     body: text ? JSON.parse(text) : null,
+    headers: response.headers,
     status: response.status,
   }
 }

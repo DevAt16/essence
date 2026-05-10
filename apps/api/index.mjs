@@ -1,7 +1,9 @@
 import 'dotenv/config'
 
+import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import express from 'express'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
@@ -25,6 +27,10 @@ import {
 } from './db.mjs'
 
 const port = Number(process.env.PORT ?? 4000)
+const apiStartedAt = new Date()
+const apiDirectory = path.dirname(fileURLToPath(import.meta.url))
+const webDistPath = path.resolve(apiDirectory, '../../dist/web')
+const webIndexPath = path.join(webDistPath, 'index.html')
 const app = express()
 const rateLimitBuckets = new Map()
 const supabaseAuthConfig = createSupabaseAuthConfig()
@@ -33,9 +39,38 @@ const supabaseJwks = supabaseAuthConfig
   : null
 let supabaseOtpClient = createSupabaseOtpClient()
 
+app.disable('x-powered-by')
+
 if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1)
 }
+
+app.use((request, response, next) => {
+  const requestId = getRequestId(request)
+  const startedAt = Date.now()
+
+  request.id = requestId
+  response.setHeader('X-Request-Id', requestId)
+
+  response.on('finish', () => {
+    if (!shouldLogRequest(request, response.statusCode)) {
+      return
+    }
+
+    logInfo('http_request', {
+      durationMs: Date.now() - startedAt,
+      method: request.method,
+      path: request.originalUrl,
+      requestId,
+      status: response.statusCode,
+    })
+  })
+
+  next()
+})
+
+app.use(applySecurityHeaders)
+app.use(handleCors)
 
 app.use('/api', (_request, response, next) => {
   response.setHeader('Cache-Control', 'no-store')
@@ -44,10 +79,26 @@ app.use('/api', (_request, response, next) => {
 
 app.use(express.json({ limit: '5mb' }))
 
-app.get('/api/health', async (_request, response, next) => {
+app.get('/api/health', (_request, response) => {
+  response.json({
+    ok: true,
+    service: 'essence-api',
+    startedAt: apiStartedAt.toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+  })
+})
+
+app.get('/api/ready', async (_request, response, next) => {
   try {
     await pool.query('select 1')
-    response.json({ ok: true })
+    const checks = getReadinessChecks('ok')
+    const ok = isReady(checks)
+
+    response.status(ok ? 200 : 503).json({
+      checks,
+      ok,
+      service: 'essence-api',
+    })
   } catch (error) {
     next(error)
   }
@@ -277,33 +328,54 @@ app.put('/api/state', async (request, response, next) => {
   }
 })
 
-app.use((error, _request, response, _next) => {
+configureStaticWeb(app)
+
+app.use((error, request, response, next) => {
+  if (response.headersSent) {
+    next(error)
+    return
+  }
+
   const statusCode = Number.isInteger(error?.status) ? error.status : 500
   if (statusCode === 500) {
-    console.error(error)
+    logError('request_error', {
+      method: request.method,
+      path: request.originalUrl,
+      requestId: request.id,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack,
+      status: statusCode,
+    })
   }
   if (Number.isInteger(error?.retryAfterSeconds)) {
     response.setHeader('Retry-After', String(error.retryAfterSeconds))
   }
-  response.status(statusCode).json({ error: statusCode === 500 ? 'Internal server error' : error.message })
+  response.status(statusCode).json({
+    error: statusCode === 500 ? 'Internal server error' : error.message,
+    requestId: request.id,
+  })
 })
 
 let server = null
 
 export async function startServer() {
+  validateRuntimeConfig()
   await ensureSchema()
 
   server = app.listen(port, () => {
-    console.log(`Essence API listening on http://localhost:${port}`)
+    logInfo('api_listening', {
+      port,
+      serveWeb: shouldServeWeb(),
+    })
   })
 
   return server
 }
 
 async function shutdown(signal) {
-  console.log(`\nReceived ${signal}. Shutting down...`)
+  logInfo('shutdown_started', { signal })
   server?.close(async () => {
     await pool.end()
+    logInfo('shutdown_complete', { signal })
     process.exit(0)
   })
 }
@@ -321,6 +393,347 @@ if (isMainModule()) {
 }
 
 export { app }
+
+function configureStaticWeb(expressApp) {
+  if (!shouldServeWeb()) {
+    return
+  }
+
+  if (!existsSync(webIndexPath)) {
+    throw new Error(`SERVE_WEB=true but the built web app was not found at ${webIndexPath}. Run npm run build first.`)
+  }
+
+  expressApp.use(
+    express.static(webDistPath, {
+      immutable: process.env.NODE_ENV === 'production',
+      index: false,
+      maxAge: process.env.NODE_ENV === 'production' ? '1y' : 0,
+    }),
+  )
+
+  expressApp.use((request, response, next) => {
+    if (request.method !== 'GET' || request.path.startsWith('/api')) {
+      next()
+      return
+    }
+
+    response.setHeader('Cache-Control', 'no-cache')
+    response.sendFile(webIndexPath)
+  })
+}
+
+function shouldServeWeb() {
+  return process.env.SERVE_WEB === 'true'
+}
+
+function validateRuntimeConfig() {
+  if (process.env.NODE_ENV !== 'production') {
+    return
+  }
+
+  const errors = []
+
+  if (!process.env.DATABASE_URL) {
+    errors.push('DATABASE_URL is required.')
+  }
+
+  if (!supabaseAuthConfig) {
+    errors.push('SUPABASE_URL is required for production Supabase JWT verification.')
+  }
+
+  if (!supabaseOtpClient) {
+    errors.push('SUPABASE_PUBLISHABLE_KEY is required for production magic-link delivery.')
+  }
+
+  if (process.env.AUTH_COOKIE_SECURE !== 'true') {
+    errors.push('AUTH_COOKIE_SECURE=true is required behind HTTPS.')
+  }
+
+  if (process.env.AUTH_DEV_EMAIL_LOGIN === 'true') {
+    errors.push('AUTH_DEV_EMAIL_LOGIN must be false in production.')
+  }
+
+  if (!process.env.AUTH_ALLOWED_REDIRECT_ORIGINS) {
+    errors.push('AUTH_ALLOWED_REDIRECT_ORIGINS must be set to the production app origin.')
+  } else if (hasLocalhostValue(process.env.AUTH_ALLOWED_REDIRECT_ORIGINS)) {
+    errors.push('AUTH_ALLOWED_REDIRECT_ORIGINS must not include localhost in production.')
+  }
+
+  if (process.env.CORS_ALLOWED_ORIGINS && hasLocalhostValue(process.env.CORS_ALLOWED_ORIGINS)) {
+    errors.push('CORS_ALLOWED_ORIGINS must not include localhost in production.')
+  }
+
+  const inviteRedirectUrl = process.env.AUTH_INVITE_REDIRECT_URL || process.env.APP_URL || ''
+
+  if (!inviteRedirectUrl) {
+    errors.push('AUTH_INVITE_REDIRECT_URL or APP_URL must be set to the production app URL.')
+  } else if (hasLocalhostValue(inviteRedirectUrl)) {
+    errors.push('AUTH_INVITE_REDIRECT_URL/APP_URL must not use localhost in production.')
+  }
+
+  if (shouldServeWeb() && !existsSync(webIndexPath)) {
+    errors.push(`SERVE_WEB=true requires a built web app at ${webIndexPath}.`)
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid production configuration:\n- ${errors.join('\n- ')}`)
+  }
+}
+
+function getReadinessChecks(databaseStatus) {
+  return {
+    database: databaseStatus,
+    staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
+    supabaseJwt: supabaseAuthConfig ? 'ok' : 'missing',
+    supabaseOtp: supabaseOtpClient ? 'ok' : 'missing',
+  }
+}
+
+function isReady(checks) {
+  if (checks.database !== 'ok') {
+    return false
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    return true
+  }
+
+  return (
+    checks.supabaseJwt === 'ok' &&
+    checks.supabaseOtp === 'ok' &&
+    (!shouldServeWeb() || checks.staticWeb === 'ok')
+  )
+}
+
+function getRequestId(request) {
+  const incomingId = request.get('x-request-id')
+
+  if (typeof incomingId === 'string' && /^[a-zA-Z0-9_.:-]{8,128}$/.test(incomingId)) {
+    return incomingId
+  }
+
+  return randomUUID()
+}
+
+function applySecurityHeaders(_request, response, next) {
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  response.setHeader('X-Frame-Options', 'DENY')
+  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+  )
+
+  if (process.env.NODE_ENV === 'production' && process.env.SECURITY_HSTS !== 'false') {
+    response.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains')
+  }
+
+  if (process.env.SECURITY_CSP !== 'false') {
+    response.setHeader('Content-Security-Policy', getContentSecurityPolicy())
+  }
+
+  next()
+}
+
+function handleCors(request, response, next) {
+  if (!request.path.startsWith('/api')) {
+    next()
+    return
+  }
+
+  const origin = request.get('origin')
+  const allowedOrigin = origin ? getAllowedCorsOrigin(origin) : null
+
+  if (origin && !allowedOrigin) {
+    if (request.method === 'OPTIONS') {
+      response.status(403).end()
+      return
+    }
+
+    const error = new Error('Origin is not allowed.')
+    error.status = 403
+    next(error)
+    return
+  }
+
+  if (allowedOrigin) {
+    response.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    response.setHeader('Access-Control-Expose-Headers', 'X-Request-Id')
+    response.setHeader('Vary', appendVaryHeader(response.getHeader('Vary'), 'Origin'))
+
+    if (isCorsCredentialsEnabled()) {
+      response.setHeader('Access-Control-Allow-Credentials', 'true')
+    }
+  }
+
+  if (request.method === 'OPTIONS') {
+    response.setHeader('Access-Control-Allow-Methods', getCorsAllowedMethods().join(', '))
+    response.setHeader('Access-Control-Allow-Headers', getCorsAllowedHeaders(request))
+    response.setHeader('Access-Control-Max-Age', String(readPositiveIntegerEnv('CORS_MAX_AGE_SECONDS', 600)))
+    response.status(204).end()
+    return
+  }
+
+  next()
+}
+
+function getContentSecurityPolicy() {
+  const connectSources = new Set(["'self'"])
+
+  for (const value of [
+    process.env.SUPABASE_URL,
+    process.env.VITE_SUPABASE_URL,
+    process.env.APP_URL,
+    process.env.AUTH_INVITE_REDIRECT_URL,
+    process.env.CORS_ALLOWED_ORIGINS,
+    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS,
+  ]) {
+    for (const origin of String(value ?? '').split(',')) {
+      const normalizedOrigin = normalizeRedirectOrigin(origin)
+
+      if (normalizedOrigin) {
+        connectSources.add(normalizedOrigin)
+      }
+    }
+  }
+
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "media-src 'self' data: blob:",
+    `connect-src ${[...connectSources].join(' ')}`,
+  ].join('; ')
+}
+
+function getAllowedCorsOrigin(origin) {
+  const normalizedOrigin = normalizeRedirectOrigin(origin)
+
+  if (!normalizedOrigin) {
+    return null
+  }
+
+  return getAllowedCorsOrigins().has(normalizedOrigin) ? normalizedOrigin : null
+}
+
+function getAllowedCorsOrigins() {
+  const origins = new Set()
+
+  for (const value of [
+    process.env.CORS_ALLOWED_ORIGINS,
+    process.env.AUTH_ALLOWED_REDIRECT_ORIGINS,
+    process.env.AUTH_INVITE_REDIRECT_URL,
+    process.env.APP_URL,
+    process.env.NODE_ENV === 'production'
+      ? ''
+      : 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173',
+  ]) {
+    for (const origin of String(value ?? '').split(',')) {
+      const normalizedOrigin = normalizeRedirectOrigin(origin)
+
+      if (normalizedOrigin) {
+        origins.add(normalizedOrigin)
+      }
+    }
+  }
+
+  return origins
+}
+
+function getCorsAllowedMethods() {
+  return ['GET', 'POST', 'PUT', 'OPTIONS']
+}
+
+function getCorsAllowedHeaders(request) {
+  const requestedHeaders = request.get('access-control-request-headers')
+
+  return requestedHeaders || 'Authorization, Content-Type, X-Request-Id'
+}
+
+function isCorsCredentialsEnabled() {
+  return process.env.CORS_ALLOW_CREDENTIALS !== 'false'
+}
+
+function appendVaryHeader(currentValue, nextValue) {
+  const values = String(Array.isArray(currentValue) ? currentValue.join(',') : currentValue ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (!values.some((value) => value.toLowerCase() === nextValue.toLowerCase())) {
+    values.push(nextValue)
+  }
+
+  return values.join(', ')
+}
+
+function shouldLogRequest(request, statusCode) {
+  if (process.env.REQUEST_LOGGING === 'false' || process.env.LOG_LEVEL === 'silent') {
+    return false
+  }
+
+  if (request.path === '/api/health' && statusCode < 500) {
+    return false
+  }
+
+  return true
+}
+
+function logInfo(event, meta = {}) {
+  if (process.env.LOG_LEVEL === 'silent' || process.env.LOG_LEVEL === 'error') {
+    return
+  }
+
+  logStructured('info', event, meta)
+}
+
+function logError(event, meta = {}) {
+  if (process.env.LOG_LEVEL === 'silent') {
+    return
+  }
+
+  logStructured('error', event, meta)
+}
+
+function logStructured(level, event, meta) {
+  const payload = {
+    event,
+    level,
+    time: new Date().toISOString(),
+    ...removeUndefinedValues(meta),
+  }
+  const line = JSON.stringify(payload)
+
+  if (level === 'error') {
+    console.error(line)
+    return
+  }
+
+  console.log(line)
+}
+
+function removeUndefinedValues(value) {
+  return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined))
+}
+
+function hasLocalhostValue(value) {
+  return String(value ?? '')
+    .split(',')
+    .some((candidate) => {
+      try {
+        const hostname = new URL(candidate.trim()).hostname
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+      } catch {
+        return /(^|\/\/)(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(candidate)
+      }
+    })
+}
 
 function isPersistedAppState(value) {
   if (!value || typeof value !== 'object') {

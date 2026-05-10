@@ -60,6 +60,12 @@ npm run build
 
 The Vite production build writes to `dist/web`.
 
+Run the production API:
+
+```bash
+npm start
+```
+
 Run the local Production Gate 1 checks:
 
 ```bash
@@ -67,6 +73,8 @@ npm run check
 ```
 
 This runs lint, API auth tests, and the production web build. Supabase dashboard settings still need to be verified separately before a real deployment.
+
+For production runtime, health checks, logging, backups, and deployment options, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## PostgreSQL
 
@@ -117,8 +125,20 @@ The older `/api/auth/login` email-only flow is now a development helper. It requ
 Environment variables:
 
 - `DATABASE_URL`
+- `RESTORE_DATABASE_URL`
 - `DATABASE_SSL`
+- `NODE_ENV`
 - `PORT`
+- `SERVE_WEB`
+- `LOG_LEVEL`
+- `REQUEST_LOGGING`
+- `CORS_ALLOWED_ORIGINS`
+- `CORS_ALLOW_CREDENTIALS`
+- `CORS_MAX_AGE_SECONDS`
+- `SECURITY_CSP`
+- `SECURITY_HSTS`
+- `SMOKE_BASE_URL`
+- `SMOKE_ORIGIN`
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
@@ -127,6 +147,8 @@ Environment variables:
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_API_BASE_URL`
+- `VITE_API_CREDENTIALS`
 - `VITE_AUTH_DEV_EMAIL_LOGIN`
 - `VITE_WAITLIST_URL`
 - `AUTH_COOKIE_NAME`
@@ -144,7 +166,9 @@ Environment variables:
 Current API endpoints:
 
 - `GET /api/health`
+- `GET /api/ready`
 - `GET /api/auth/session`
+- `POST /api/auth/request-link`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/state`

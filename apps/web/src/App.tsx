@@ -1,41 +1,11 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
-import Highlight from '@tiptap/extension-highlight'
-import LinkExtension from '@tiptap/extension-link'
-import Placeholder from '@tiptap/extension-placeholder'
-import Subscript from '@tiptap/extension-subscript'
-import Superscript from '@tiptap/extension-superscript'
-import TextAlign from '@tiptap/extension-text-align'
-import Underline from '@tiptap/extension-underline'
 import { createClient } from '@supabase/supabase-js'
-import { EditorContent, useEditor } from '@tiptap/react'
-import { BubbleMenu } from '@tiptap/react/menus'
-import StarterKit from '@tiptap/starter-kit'
 import type { JSONContent } from '@tiptap/core'
-import {
-  AlignCenter,
-  AlignJustify,
-  AlignLeft,
-  AlignRight,
-  Bold,
-  Code2,
-  Eraser,
-  Heading2,
-  Highlighter,
-  Italic,
-  Link2,
-  List,
-  ListOrdered,
-  Minus,
-  Quote as QuoteIcon,
-  Redo2,
-  Strikethrough,
-  Subscript as SubscriptIcon,
-  Superscript as SuperscriptIcon,
-  Underline as UnderlineIcon,
-  Undo2,
-} from 'lucide-react'
 import './App.css'
+
+const ModernRichEditor = lazy(() => import('./editor/ModernRichEditor'))
+const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
 type ViewMode = 'library' | 'collections' | 'search' | 'favorites' | 'archive' | 'editor'
 type NavMode = Exclude<ViewMode, 'editor'>
@@ -48,7 +18,6 @@ type NoteViewMode = 'read' | 'edit'
 type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
 type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
 type AiComposerMode = 'draft' | 'assist'
-type AiComposerOutputMode = 'preview' | 'insert'
 type AiAssistAction =
   | 'continue-writing'
   | 'improve-clarity'
@@ -318,6 +287,8 @@ const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
 const historyLimit = 120
 const composerHistoryLimit = 18
+const apiBaseUrl = normalizeApiBaseUrl(getViteEnvString('VITE_API_BASE_URL'))
+const apiFetchCredentials = getApiFetchCredentials()
 const supabaseClient = createSupabaseBrowserClient()
 const devEmailLoginEnabled = getViteEnvString('VITE_AUTH_DEV_EMAIL_LOGIN') === 'true'
 const waitlistUrl = getViteEnvString('VITE_WAITLIST_URL')
@@ -335,40 +306,6 @@ const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
   { label: 'Web', value: 'web' },
   { label: 'Dataset', value: 'dataset' },
   { label: 'Other', value: 'other' },
-]
-
-const richEditorExtensions = [
-  StarterKit.configure({
-    heading: {
-      levels: [2, 3],
-    },
-  }),
-  Underline,
-  Highlight.configure({
-    multicolor: false,
-  }),
-  Superscript,
-  Subscript,
-  LinkExtension.configure({
-    autolink: true,
-    openOnClick: false,
-  }),
-  TextAlign.configure({
-    types: ['heading', 'paragraph'],
-  }),
-  Placeholder.configure({
-    placeholder: ({ node }) => {
-      if (node.type.name === 'heading') {
-        return 'Section heading'
-      }
-
-      if (node.type.name === 'codeBlock') {
-        return 'Code, data, or structured notes'
-      }
-
-      return 'Start writing, or type / for structure'
-    },
-  }),
 ]
 
 function createEmptyPersistedState(): PersistedAppState {
@@ -501,8 +438,6 @@ const aiAssistActions: Array<{
     description: 'Turn this note into a guided source-finding plan.',
   },
 ]
-
-const aiAssistActionGroups: AiAssistActionGroup[] = ['Write', 'Review']
 
 const readerExplorationActions: Array<{
   action: ReaderExplorationAction
@@ -952,9 +887,59 @@ function App() {
   const lastHistorySnapshotRef = useRef<HistorySnapshot | null>(null)
   const lastRemoteSnapshotRef = useRef<string | null>(null)
   const pendingRevisionEventRef = useRef<PendingRevisionEvent | null>(null)
+  const initialLocalStateRef = useRef<PersistedAppState | null>(null)
+  const keyboardShortcutStateRef = useRef<{
+    activeNote: Note | null
+    aiComposerOpen: boolean
+    dialogState: AppDialogState | null
+    editorActionsOpen: boolean
+    noteHistoryOpen: boolean
+    noteViewMode: NoteViewMode
+    quickSwitcherOpen: boolean
+    view: ViewMode
+  }>({
+    activeNote: null as Note | null,
+    aiComposerOpen: false,
+    dialogState: null as AppDialogState | null,
+    editorActionsOpen: false,
+    noteHistoryOpen: false,
+    noteViewMode: 'edit' as NoteViewMode,
+    quickSwitcherOpen: false,
+    view: 'library' as ViewMode,
+  })
+  const keyboardShortcutActionsRef = useRef<{
+    closeNoteHistory: () => void
+    closeQuickSwitcher: () => void
+    createNote: () => void
+    openQuickSwitcher: () => void
+    openSearchView: () => void
+    redo: () => void
+    switchNoteViewMode: (nextMode: NoteViewMode) => void
+    toggleFocusMode: () => void
+    undo: () => void
+  }>({
+    closeNoteHistory: () => undefined,
+    closeQuickSwitcher: () => undefined,
+    createNote: () => undefined,
+    openQuickSwitcher: () => undefined,
+    openSearchView: () => undefined,
+    redo: () => undefined,
+    switchNoteViewMode: () => undefined,
+    toggleFocusMode: () => undefined,
+    undo: () => undefined,
+  })
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
+
+  if (initialLocalStateRef.current == null) {
+    initialLocalStateRef.current = {
+      activeNoteId,
+      composerHistory,
+      folders,
+      notes,
+    }
+  }
 
   const handleRemoteAccessEnded = useCallback((error: unknown) => {
     void clearRemoteBrowserSession()
@@ -993,6 +978,40 @@ function App() {
     [activeNote, selectedBlockId],
   )
   const selectedBlockText = selectedBlock ? getBlockTextValue(selectedBlock) : ''
+
+  const createHistorySnapshot = useCallback(
+    (): HistorySnapshot => ({
+      activeCollectionId,
+      activeFolderId,
+      activeNoteId,
+      activeTag,
+      editorContext,
+      expandedFolderIds,
+      folders,
+      noteViewMode,
+      notes,
+      view,
+    }),
+    [
+      activeCollectionId,
+      activeFolderId,
+      activeNoteId,
+      activeTag,
+      editorContext,
+      expandedFolderIds,
+      folders,
+      noteViewMode,
+      notes,
+      view,
+    ],
+  )
+
+  const updateHistoryState = useCallback(() => {
+    setHistoryState({
+      canUndo: historyRef.current.past.length > 0,
+      canRedo: historyRef.current.future.length > 0,
+    })
+  }, [])
 
   useEffect(() => {
     setSelectedBlockId(activeNote?.blocks[0]?.id ?? null)
@@ -1091,12 +1110,7 @@ function App() {
         let resolvedState = remoteSnapshot.state
 
         if (!resolvedState) {
-          const localState = {
-            activeNoteId,
-            composerHistory,
-            folders,
-            notes,
-          }
+          const localState = initialLocalStateRef.current ?? createEmptyPersistedState()
 
           if (hasWorkspaceData(localState)) {
             await persistRemoteAppState(localState)
@@ -1204,17 +1218,9 @@ function App() {
     lastHistorySnapshotJsonRef.current = nextSnapshotJson
     updateHistoryState()
   }, [
-    activeCollectionId,
-    activeFolderId,
-    activeNoteId,
-    activeTag,
-    editorContext,
-    expandedFolderIds,
-    folders,
-    noteViewMode,
-    notes,
+    createHistorySnapshot,
     remoteSyncReady,
-    view,
+    updateHistoryState,
   ])
 
   useEffect(() => {
@@ -1496,6 +1502,7 @@ function App() {
     () => noteHistoryEntries.find((entry) => entry.id === selectedNoteRevisionId) ?? noteHistoryEntries[0] ?? null,
     [noteHistoryEntries, selectedNoteRevisionId],
   )
+  const noteHistoryActiveNoteId = activeNote?.id ?? null
   const quickSwitcherNotes = useMemo(
     () =>
       deferredQuickSwitcherQuery
@@ -1518,7 +1525,7 @@ function App() {
   }, [activeNote, view])
 
   useEffect(() => {
-    if (!noteHistoryOpen || view !== 'editor' || !activeNote) {
+    if (!noteHistoryOpen || view !== 'editor' || !noteHistoryActiveNoteId) {
       return
     }
 
@@ -1535,7 +1542,7 @@ function App() {
     setNoteHistoryLoading(true)
     setNoteHistoryError(null)
 
-    void fetchRemoteNoteRevisions(activeNote.id, 24)
+    void fetchRemoteNoteRevisions(noteHistoryActiveNoteId, 24)
       .then((revisions) => {
         if (isCancelled) {
           return
@@ -1569,7 +1576,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [activeNote?.id, handleRemoteAccessEnded, noteHistoryOpen, remoteAccountActive, remoteSyncVersion, view])
+  }, [handleRemoteAccessEnded, noteHistoryActiveNoteId, noteHistoryOpen, remoteAccountActive, remoteSyncVersion, view])
 
   const quickSwitcherItems = useMemo(() => {
     const baseItems: QuickSwitcherItem[] = [
@@ -1662,26 +1669,6 @@ function App() {
       })
       .slice(0, 14)
   }, [folders, foldersById, quickSwitcherNotes, quickSwitcherQuery, tagSummaries])
-
-  const createHistorySnapshot = (): HistorySnapshot => ({
-    activeCollectionId,
-    activeFolderId,
-    activeNoteId,
-    activeTag,
-    editorContext,
-    expandedFolderIds,
-    folders,
-    noteViewMode,
-    notes,
-    view,
-  })
-
-  const updateHistoryState = () => {
-    setHistoryState({
-      canUndo: historyRef.current.past.length > 0,
-      canRedo: historyRef.current.future.length > 0,
-    })
-  }
 
   const markSaving = () => {
     setSaveMessage('Saving...')
@@ -2794,39 +2781,66 @@ function App() {
   }
 
   useEffect(() => {
+    keyboardShortcutStateRef.current = {
+      activeNote,
+      aiComposerOpen,
+      dialogState,
+      editorActionsOpen,
+      noteHistoryOpen,
+      noteViewMode,
+      quickSwitcherOpen,
+      view,
+    }
+
+    keyboardShortcutActionsRef.current = {
+      closeNoteHistory,
+      closeQuickSwitcher,
+      createNote,
+      openQuickSwitcher,
+      openSearchView,
+      redo,
+      switchNoteViewMode,
+      toggleFocusMode,
+      undo,
+    }
+  })
+
+  useEffect(() => {
     const handleKeyboardShortcuts = (event: KeyboardEvent) => {
+      const state = keyboardShortcutStateRef.current
+      const actions = keyboardShortcutActionsRef.current
       const key = event.key.toLowerCase()
       const isModifierPressed = event.metaKey || event.ctrlKey
 
-      if (dialogState) {
+      if (state.dialogState) {
         return
       }
 
-      if (quickSwitcherOpen) {
+      if (state.quickSwitcherOpen) {
         if (event.key === 'Escape' || (isModifierPressed && key === 'k')) {
           event.preventDefault()
-          closeQuickSwitcher()
+          actions.closeQuickSwitcher()
         }
 
         return
       }
 
       if (event.key === 'Escape') {
-        if (editorActionsOpen) {
+        if (state.editorActionsOpen) {
           event.preventDefault()
           setEditorActionsOpen(false)
           return
         }
 
-        if (aiComposerOpen) {
+        if (state.aiComposerOpen) {
           event.preventDefault()
           setAiComposerOpen(false)
           return
         }
 
-        if (noteHistoryOpen) {
+        if (state.noteHistoryOpen) {
           event.preventDefault()
-          closeNoteHistory()
+          actions.closeNoteHistory()
           return
         }
 
@@ -2836,13 +2850,13 @@ function App() {
 
       if (
         key === 'f' &&
-        view === 'editor' &&
-        activeNote &&
+        state.view === 'editor' &&
+        state.activeNote &&
         !isModifierPressed &&
         !isEditableKeyboardTarget(event.target)
       ) {
         event.preventDefault()
-        toggleFocusMode()
+        actions.toggleFocusMode()
         return
       }
 
@@ -2852,25 +2866,25 @@ function App() {
 
       if (key === 'k') {
         event.preventDefault()
-        openQuickSwitcher()
+        actions.openQuickSwitcher()
         return
       }
 
       if (key === 'n') {
         event.preventDefault()
-        createNote()
+        actions.createNote()
         return
       }
 
       if (key === 'f' && event.shiftKey) {
         event.preventDefault()
-        openSearchView()
+        actions.openSearchView()
         return
       }
 
-      if (key === 'e' && view === 'editor' && activeNote) {
+      if (key === 'e' && state.view === 'editor' && state.activeNote) {
         event.preventDefault()
-        switchNoteViewMode(noteViewMode === 'edit' ? 'read' : 'edit')
+        actions.switchNoteViewMode(state.noteViewMode === 'edit' ? 'read' : 'edit')
         return
       }
 
@@ -2878,9 +2892,9 @@ function App() {
         event.preventDefault()
 
         if (event.shiftKey) {
-          redo()
+          actions.redo()
         } else {
-          undo()
+          actions.undo()
         }
 
         return
@@ -2888,30 +2902,13 @@ function App() {
 
       if (key === 'y' && !event.shiftKey) {
         event.preventDefault()
-        redo()
+        actions.redo()
       }
     }
 
     window.addEventListener('keydown', handleKeyboardShortcuts)
     return () => window.removeEventListener('keydown', handleKeyboardShortcuts)
-  }, [
-    activeNote,
-    aiComposerOpen,
-    closeNoteHistory,
-    closeQuickSwitcher,
-    createNote,
-    dialogState,
-    editorActionsOpen,
-    noteHistoryOpen,
-    noteViewMode,
-    openQuickSwitcher,
-    openSearchView,
-    quickSwitcherOpen,
-    redo,
-    toggleFocusMode,
-    undo,
-    view,
-  ])
+  }, [])
 
   const clearFilters = () => {
     setActiveCollectionId(null)
@@ -3325,52 +3322,54 @@ function App() {
       )}
 
       {!zenMode && aiComposerOpen && (
-        <AiComposerPanel
-          activeNoteTitle={activeNote?.title ?? null}
-          assistAction={aiAssistAction}
-          assistError={aiAssistError}
-          assistResult={aiAssistResult}
-          category={aiDraftCategory}
-          canReplaceSelection={
-            Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')
-          }
-          composerHistory={composerHistory}
-          draft={aiDraft}
-          error={aiDraftError}
-          isAssisting={aiAssisting}
-          isGenerating={aiGenerating}
-          isOpen={aiComposerOpen}
-          mode={aiComposerMode}
-          onAppendAssist={appendAiAssistToActiveNote}
-          onAssistActionChange={(action) => {
-            setAiAssistAction(action)
-            setAiAssistResult(null)
-            setAiAssistError(null)
-          }}
-          onCategoryChange={(category) => {
-            setAiDraftCategory(category)
-            setAiDraft(null)
-            setAiDraftError(null)
-          }}
-          onClearHistory={clearComposerHistory}
-          onClose={() => setAiComposerOpen(false)}
-          onCreateNote={createNoteFromAiDraft}
-          onGenerateAssist={generateAiAssist}
-          onGenerate={generateAiDraft}
-          onModeChange={(mode) => {
-            setAiComposerMode(mode)
-            setAiDraftError(null)
-            setAiAssistError(null)
-          }}
-          onReplaceSelection={replaceSelectedBlockWithAiAssist}
-          onRestoreHistory={restoreComposerHistoryEntry}
-          onTopicChange={(value) => {
-            setAiDraftTopic(value)
-            setAiDraftError(null)
-          }}
-          selectedBlockPreview={noteViewMode === 'edit' ? summarizeInlineText(selectedBlockText, 120) : ''}
-          topic={aiDraftTopic}
-        />
+        <Suspense fallback={<AiComposerPanelFallback />}>
+          <AiComposerPanel
+            activeNoteTitle={activeNote?.title ?? null}
+            assistAction={aiAssistAction}
+            assistError={aiAssistError}
+            assistResult={aiAssistResult}
+            category={aiDraftCategory}
+            canReplaceSelection={
+              Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')
+            }
+            composerHistory={composerHistory}
+            draft={aiDraft}
+            error={aiDraftError}
+            isAssisting={aiAssisting}
+            isGenerating={aiGenerating}
+            isOpen={aiComposerOpen}
+            mode={aiComposerMode}
+            onAppendAssist={appendAiAssistToActiveNote}
+            onAssistActionChange={(action) => {
+              setAiAssistAction(action)
+              setAiAssistResult(null)
+              setAiAssistError(null)
+            }}
+            onCategoryChange={(category) => {
+              setAiDraftCategory(category)
+              setAiDraft(null)
+              setAiDraftError(null)
+            }}
+            onClearHistory={clearComposerHistory}
+            onClose={() => setAiComposerOpen(false)}
+            onCreateNote={createNoteFromAiDraft}
+            onGenerateAssist={generateAiAssist}
+            onGenerate={generateAiDraft}
+            onModeChange={(mode) => {
+              setAiComposerMode(mode)
+              setAiDraftError(null)
+              setAiAssistError(null)
+            }}
+            onReplaceSelection={replaceSelectedBlockWithAiAssist}
+            onRestoreHistory={restoreComposerHistoryEntry}
+            onTopicChange={(value) => {
+              setAiDraftTopic(value)
+              setAiDraftError(null)
+            }}
+            selectedBlockPreview={noteViewMode === 'edit' ? summarizeInlineText(selectedBlockText, 120) : ''}
+            topic={aiDraftTopic}
+          />
+        </Suspense>
       )}
 
       <div className="workspace">
@@ -3650,15 +3649,17 @@ function App() {
                             />
                           )}
 
-                          <ModernRichEditor
-                            blocks={activeNote.blocks}
-                            editorDoc={activeNote.editorDoc}
-                            key={activeNote.id}
-                            onChange={replaceActiveNoteBlocks}
-                            onFocus={() => setSelectedBlockId(activeNote.blocks[0]?.id ?? null)}
-                            onTitleChange={handleTitleChange}
-                            title={activeNote.title}
-                          />
+                          <Suspense fallback={<ModernRichEditorFallback title={activeNote.title} />}>
+                            <ModernRichEditor
+                              blocks={activeNote.blocks}
+                              editorDoc={activeNote.editorDoc}
+                              key={activeNote.id}
+                              onChange={replaceActiveNoteBlocks}
+                              onFocus={() => setSelectedBlockId(activeNote.blocks[0]?.id ?? null)}
+                              onTitleChange={handleTitleChange}
+                              title={activeNote.title}
+                            />
+                          </Suspense>
 
                           {!zenMode && (
                             <NoteConnections
@@ -3854,840 +3855,49 @@ function AppDialog({ dialog, onClose }: { dialog: AppDialogState | null; onClose
   )
 }
 
-function ModernRichEditor({
-  blocks,
-  editorDoc,
-  onChange,
-  onFocus,
-  onTitleChange,
-  title,
-}: {
-  blocks: NoteBlock[]
-  editorDoc?: JSONContent | null
-  onChange: (blocks: NoteBlock[], editorDoc: JSONContent) => void
-  onFocus: () => void
-  onTitleChange: (title: string) => void
-  title: string
-}) {
-  const safeEditorDoc = useMemo(() => normalizeEditorDocument(editorDoc, blocks), [blocks, editorDoc])
-  const latestBlocksRef = useRef(blocks)
-  const latestEditorDocRef = useRef(safeEditorDoc)
-  const latestSignatureRef = useRef(getEditorStateSignature(blocks, safeEditorDoc))
-  const onChangeRef = useRef(onChange)
-  const onFocusRef = useRef(onFocus)
-  const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
-
-  const editor = useEditor({
-    extensions: richEditorExtensions,
-    content: safeEditorDoc,
-    immediatelyRender: false,
-    editorProps: {
-      attributes: {
-        class: 'modern-editor__surface',
-        'aria-label': 'Note body',
-      },
-    },
-    onFocus: () => {
-      onFocusRef.current()
-    },
-    onUpdate: ({ editor: currentEditor }) => {
-      const nextEditorDoc = normalizeEditorDocument(currentEditor.getJSON(), latestBlocksRef.current)
-      const nextBlocks = tiptapDocToNoteBlocks(nextEditorDoc, latestBlocksRef.current)
-      const nextSignature = getEditorStateSignature(nextBlocks, nextEditorDoc)
-
-      if (nextSignature === latestSignatureRef.current) {
-        return
-      }
-
-      latestBlocksRef.current = nextBlocks
-      latestEditorDocRef.current = nextEditorDoc
-      latestSignatureRef.current = nextSignature
-      onChangeRef.current(nextBlocks, nextEditorDoc)
-    },
-  })
-
-  const externalSignature = getEditorStateSignature(blocks, safeEditorDoc)
-
-  useEffect(() => {
-    onChangeRef.current = onChange
-  }, [onChange])
-
-  useEffect(() => {
-    onFocusRef.current = onFocus
-  }, [onFocus])
-
-  useEffect(() => {
-    const titleInput = titleInputRef.current
-
-    if (!titleInput) {
-      return
-    }
-
-    titleInput.style.height = 'auto'
-    titleInput.style.height = `${titleInput.scrollHeight}px`
-  }, [title])
-
-  useEffect(() => {
-    if (!editor) {
-      latestBlocksRef.current = blocks
-      latestEditorDocRef.current = safeEditorDoc
-      latestSignatureRef.current = externalSignature
-      return
-    }
-
-    if (externalSignature === latestSignatureRef.current) {
-      latestBlocksRef.current = blocks
-      latestEditorDocRef.current = safeEditorDoc
-      return
-    }
-
-    const currentEditorDoc = normalizeEditorDocument(editor.getJSON(), blocks)
-    const currentSignature = getEditorStateSignature(tiptapDocToNoteBlocks(currentEditorDoc, blocks), currentEditorDoc)
-
-    if (currentSignature !== externalSignature) {
-      editor.commands.setContent(safeEditorDoc, { emitUpdate: false })
-    }
-
-    latestBlocksRef.current = blocks
-    latestEditorDocRef.current = safeEditorDoc
-    latestSignatureRef.current = externalSignature
-  }, [blocks, editor, externalSignature, safeEditorDoc])
-
-  const applyExternalLink = () => {
-    if (!editor) {
-      return
-    }
-
-    const currentHref = typeof editor.getAttributes('link').href === 'string' ? editor.getAttributes('link').href : ''
-    const nextHref = window.prompt('Paste a URL for this text', currentHref)
-
-    if (nextHref === null) {
-      return
-    }
-
-    if (!nextHref.trim()) {
-      editor.chain().focus().extendMarkRange('link').unsetLink().run()
-      return
-    }
-
-    editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeExternalHref(nextHref) }).run()
-  }
-
-  const clearFormatting = () => {
-    editor?.chain().focus().unsetAllMarks().clearNodes().run()
-  }
-
-  const insertDivider = () => {
-    editor?.chain().focus().setHorizontalRule().run()
-  }
-
-  const handleToolbarWheel = (event: ReactWheelEvent<HTMLElement>) => {
-    const toolbar = event.currentTarget
-
-    if (toolbar.scrollWidth <= toolbar.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-      return
-    }
-
-    event.preventDefault()
-    toolbar.scrollLeft += event.deltaY
-  }
-
+function ModernRichEditorFallback({ title }: { title: string }) {
   return (
-    <section className="modern-editor" aria-label="Rich note editor">
-      {editor && (
-        <BubbleMenu editor={editor} className="modern-editor__bubble">
-          <RichEditorButton
-            active={editor.isActive('bold')}
-            label="Bold"
-            onClick={() => editor.chain().focus().toggleBold().run()}
-          >
-            <Bold />
-          </RichEditorButton>
-          <RichEditorButton
-            active={editor.isActive('italic')}
-            label="Italic"
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-          >
-            <Italic />
-          </RichEditorButton>
-          <RichEditorButton
-            active={editor.isActive('underline')}
-            label="Underline"
-            onClick={() => editor.chain().focus().toggleUnderline().run()}
-          >
-            <UnderlineIcon />
-          </RichEditorButton>
-          <RichEditorButton
-            active={editor.isActive('code')}
-            label="Inline code"
-            onClick={() => editor.chain().focus().toggleCode().run()}
-          >
-            <Code2 />
-          </RichEditorButton>
-          <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
-            <Link2 />
-          </RichEditorButton>
-        </BubbleMenu>
-      )}
-
-      {editor && (
-        <div className="modern-editor__toolbarFrame">
-          <header
-            className="modern-editor__toolbar"
-            role="toolbar"
-            aria-label="Editor formatting"
-            onWheel={handleToolbarWheel}
-          >
-            <div className="modern-editor__toolbarGroup">
-              <RichEditorButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
-                <Undo2 />
-              </RichEditorButton>
-              <RichEditorButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
-                <Redo2 />
-              </RichEditorButton>
-            </div>
-
-            <div className="modern-editor__toolbarGroup">
-              <RichEditorButton
-                active={editor.isActive('heading', { level: 2 })}
-                label="Heading"
-                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-              >
-                <Heading2 />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('bulletList')}
-                label="Bullet list"
-                onClick={() => editor.chain().focus().toggleBulletList().run()}
-              >
-                <List />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('orderedList')}
-                label="Numbered list"
-                onClick={() => editor.chain().focus().toggleOrderedList().run()}
-              >
-                <ListOrdered />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('blockquote')}
-                label="Quote"
-                onClick={() => editor.chain().focus().toggleBlockquote().run()}
-              >
-                <QuoteIcon />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('codeBlock')}
-                label="Code block"
-                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-              >
-                <Code2 />
-              </RichEditorButton>
-            </div>
-
-            <div className="modern-editor__toolbarGroup">
-              <RichEditorButton
-                active={editor.isActive('bold')}
-                label="Bold"
-                onClick={() => editor.chain().focus().toggleBold().run()}
-              >
-                <Bold />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('italic')}
-                label="Italic"
-                onClick={() => editor.chain().focus().toggleItalic().run()}
-              >
-                <Italic />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('strike')}
-                label="Strikethrough"
-                onClick={() => editor.chain().focus().toggleStrike().run()}
-              >
-                <Strikethrough />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('code')}
-                label="Inline code"
-                onClick={() => editor.chain().focus().toggleCode().run()}
-              >
-                <Code2 />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('underline')}
-                label="Underline"
-                onClick={() => editor.chain().focus().toggleUnderline().run()}
-              >
-                <UnderlineIcon />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('highlight')}
-                label="Highlight"
-                onClick={() => editor.chain().focus().toggleHighlight().run()}
-              >
-                <Highlighter />
-              </RichEditorButton>
-              <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
-                <Link2 />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('superscript')}
-                label="Superscript"
-                onClick={() => editor.chain().focus().toggleSuperscript().run()}
-              >
-                <SuperscriptIcon />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive('subscript')}
-                label="Subscript"
-                onClick={() => editor.chain().focus().toggleSubscript().run()}
-              >
-                <SubscriptIcon />
-              </RichEditorButton>
-            </div>
-
-            <div className="modern-editor__toolbarGroup">
-              <RichEditorButton
-                active={editor.isActive({ textAlign: 'left' })}
-                label="Align left"
-                onClick={() => editor.chain().focus().setTextAlign('left').run()}
-              >
-                <AlignLeft />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive({ textAlign: 'center' })}
-                label="Align center"
-                onClick={() => editor.chain().focus().setTextAlign('center').run()}
-              >
-                <AlignCenter />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive({ textAlign: 'right' })}
-                label="Align right"
-                onClick={() => editor.chain().focus().setTextAlign('right').run()}
-              >
-                <AlignRight />
-              </RichEditorButton>
-              <RichEditorButton
-                active={editor.isActive({ textAlign: 'justify' })}
-                label="Justify"
-                onClick={() => editor.chain().focus().setTextAlign('justify').run()}
-              >
-                <AlignJustify />
-              </RichEditorButton>
-            </div>
-
-            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end">
-              <RichEditorButton label="Clear formatting" onClick={clearFormatting}>
-                <Eraser />
-              </RichEditorButton>
-              <RichEditorButton label="Add divider" onClick={insertDivider}>
-                <Minus />
-              </RichEditorButton>
-            </div>
-          </header>
+    <section className="modern-editor modern-editor--loading" aria-busy="true" aria-label="Loading note editor">
+      <div className="modern-editor__toolbarFrame">
+        <div className="modern-editor__toolbar modern-editor__toolbar--loading">
+          <span />
+          <span />
+          <span />
         </div>
-      )}
-
+      </div>
       <div className="modern-editor__body">
-        <textarea
-          ref={titleInputRef}
-          className="modern-editor__title"
-          value={title}
-          onChange={(event) => onTitleChange(event.target.value)}
-          onFocus={onFocus}
-          aria-label="Note title"
-          placeholder="Untitled note"
-          rows={1}
-        />
-        <EditorContent editor={editor} />
+        <div className="modern-editor__title modern-editor__title--loading">{title || 'Untitled note'}</div>
+        <div className="modern-editor__surface modern-editor__surface--loading">
+          <p>Preparing editor...</p>
+        </div>
       </div>
     </section>
   )
 }
 
-function RichEditorButton({
-  active = false,
-  children,
-  disabled = false,
-  label,
-  onClick,
-}: {
-  active?: boolean
-  children: ReactNode
-  disabled?: boolean
-  label: string
-  onClick: () => void
-}) {
+function AiComposerPanelFallback() {
   return (
-    <button
-      type="button"
-      className={`modern-editor__button ${active ? 'modern-editor__button--active' : ''}`}
-      disabled={disabled}
-      onMouseDown={preventButtonFocus}
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
-  )
-}
-
-function AiComposerPanel({
-  activeNoteTitle,
-  assistAction,
-  assistError,
-  assistResult,
-  category,
-  canReplaceSelection,
-  composerHistory,
-  draft,
-  error,
-  isAssisting,
-  isGenerating,
-  isOpen,
-  mode,
-  onAppendAssist,
-  onAssistActionChange,
-  onCategoryChange,
-  onClearHistory,
-  onClose,
-  onCreateNote,
-  onGenerateAssist,
-  onGenerate,
-  onModeChange,
-  onReplaceSelection,
-  onRestoreHistory,
-  onTopicChange,
-  selectedBlockPreview,
-  topic,
-}: {
-  activeNoteTitle: string | null
-  assistAction: AiAssistAction
-  assistError: string | null
-  assistResult: AiAssistResult | null
-  category: AiDraftCategory
-  canReplaceSelection: boolean
-  composerHistory: ComposerHistoryEntry[]
-  draft: AiDraft | null
-  error: string | null
-  isAssisting: boolean
-  isGenerating: boolean
-  isOpen: boolean
-  mode: AiComposerMode
-  onAppendAssist: () => void
-  onAssistActionChange: (action: AiAssistAction) => void
-  onCategoryChange: (category: AiDraftCategory) => void
-  onClearHistory: () => void
-  onClose: () => void
-  onCreateNote: () => void
-  onGenerateAssist: () => void
-  onGenerate: () => void
-  onModeChange: (mode: AiComposerMode) => void
-  onReplaceSelection: () => void
-  onRestoreHistory: (entry: ComposerHistoryEntry) => void
-  onTopicChange: (value: string) => void
-  selectedBlockPreview: string
-  topic: string
-}) {
-  const activeCategory = aiDraftCategories.find((candidate) => candidate.value === category) ?? aiDraftCategories[0]
-  const previewBlocks = draft?.blocks.slice(0, 4) ?? []
-  const assistPreviewBlocks = assistResult?.blocks.slice(0, 4) ?? []
-  const activeAssistAction = aiAssistActions.find((action) => action.value === assistAction) ?? aiAssistActions[0]
-  const [outputMode, setOutputMode] = useState<AiComposerOutputMode>('preview')
-
-  useEffect(() => {
-    setOutputMode('preview')
-  }, [assistResult, draft, mode])
-
-  const handleDraftSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    onGenerate()
-  }
-
-  const handleAssistSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    onGenerateAssist()
-  }
-
-  return (
-    <aside className={`ai-composer ${isOpen ? 'ai-composer--open' : ''}`} aria-hidden={!isOpen}>
-      <div className="ai-composer__panel">
+    <aside className="ai-composer ai-composer--open" aria-label="Loading Composer">
+      <div className="ai-composer__panel ai-composer__panel--loading">
         <div className="ai-composer__header">
           <div>
             <span className="ai-composer__eyebrow">Essence Composer</span>
-            <h2>{mode === 'draft' ? 'Draft with a topic.' : 'Work inside this note.'}</h2>
-            <p>
-              {mode === 'draft'
-                ? 'Generate a structured note, then refine it in the editor.'
-                : 'Continue, clarify, outline, or turn this note into study material.'}
-            </p>
+            <h2>Opening Composer...</h2>
+            <p>Preparing the drafting side panel.</p>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close Composer">
-            <Icon name="close" />
-          </button>
         </div>
-
-        <div className="ai-composer__modeToggle" role="tablist" aria-label="Composer mode">
-          <button
-            type="button"
-            className={`ai-composer__modeButton ${mode === 'draft' ? 'ai-composer__modeButton--active' : ''}`}
-            onClick={() => onModeChange('draft')}
-            role="tab"
-            aria-selected={mode === 'draft'}
-          >
-            <strong>New draft</strong>
-            <span>Creates a note</span>
-          </button>
-          <button
-            type="button"
-            className={`ai-composer__modeButton ${mode === 'assist' ? 'ai-composer__modeButton--active' : ''}`}
-            onClick={() => onModeChange('assist')}
-            role="tab"
-            aria-selected={mode === 'assist'}
-          >
-            <strong>Assist note</strong>
-            <span>Writes here</span>
-          </button>
+        <div className="ai-composer__modeToggle" aria-hidden="true">
+          <span className="ai-composer__loadingPill" />
+          <span className="ai-composer__loadingPill" />
         </div>
-
-        {mode === 'draft' ? (
-          <>
-            <form className="ai-composer__form" onSubmit={handleDraftSubmit} aria-busy={isGenerating}>
-              <div className="ai-composer__sectionLabel">
-                <Icon name="spark" />
-                <span>Prompt</span>
-              </div>
-
-              <label className="ai-composer__field">
-                <span>Topic</span>
-                <textarea
-                  value={topic}
-                  onChange={(event) => onTopicChange(event.target.value)}
-                  placeholder="Cliodynamics and the rise of empires"
-                  rows={3}
-                />
-              </label>
-
-              <label className="ai-composer__field">
-                <span>Type</span>
-                <select value={category} onChange={(event) => onCategoryChange(event.target.value as AiDraftCategory)}>
-                  {aiDraftCategories.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <p className="ai-composer__hint">{activeCategory.description}</p>
-
-              {error && <p className="ai-composer__error">{error}</p>}
-
-              <button type="submit" className="primary-button ai-composer__submit" disabled={isGenerating}>
-                <Icon name="spark" />
-                <span>{isGenerating ? 'Composing...' : 'Generate draft'}</span>
-              </button>
-            </form>
-
-            <div className="ai-composer__preview" aria-live="polite" aria-busy={isGenerating}>
-              {draft ? (
-                <>
-                  <AiOutputToolbar
-                    mode={outputMode}
-                    onChange={setOutputMode}
-                    summary={`${formatCount(draft.blocks.length, 'block')} ready`}
-                  />
-
-                  {outputMode === 'preview' ? (
-                    <>
-                      <div className="ai-composer__draftHeader">
-                        <span className="badge">{draft.status}</span>
-                        <h3>{draft.title}</h3>
-                        {draft.summary && <p>{draft.summary}</p>}
-                      </div>
-
-                      <div className="ai-composer__tags">
-                        {draft.tags.slice(0, 5).map((tag) => (
-                          <span key={tag}>{tag}</span>
-                        ))}
-                      </div>
-
-                      <AiBlocksPreview blocks={previewBlocks} />
-                    </>
-                  ) : (
-                    <div className="ai-composer__insertPlan">
-                      <span>Insert plan</span>
-                      <h3>{`Create a ${collectionNameById[draft.collectionId]} note`}</h3>
-                      <p>
-                        Essence will create a new note named "{draft.title}" with {formatCount(draft.blocks.length, 'block')} and keep it editable in the block editor.
-                      </p>
-                      <button type="button" className="primary-button" onClick={onCreateNote}>
-                        <Icon name="compose" />
-                        <span>Create note</span>
-                      </button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="ai-composer__empty">
-                  <Icon name="spark" />
-                  <strong>A quiet drafting sidecar.</strong>
-                  <span>Use it for first drafts, article skeletons, research framings, and quotes.</span>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <form className="ai-composer__form" onSubmit={handleAssistSubmit} aria-busy={isAssisting}>
-              <div className="ai-composer__sectionLabel">
-                <Icon name="spark" />
-                <span>Assist action</span>
-              </div>
-
-              <div className="ai-composer__contextCard">
-                <span>Current note</span>
-                <strong>{activeNoteTitle ?? 'No note open'}</strong>
-                {selectedBlockPreview && <p>Selected block: {selectedBlockPreview}</p>}
-              </div>
-
-              <div className="ai-composer__actionGroups" role="radiogroup" aria-label="Assist note Composer action">
-                {aiAssistActionGroups.map((group) => (
-                  <section key={group} className="ai-composer__actionGroup" aria-label={group}>
-                    <span>{group}</span>
-                    <div className="ai-composer__actionGrid">
-                      {aiAssistActions
-                        .filter((action) => action.group === group)
-                        .map((action) => (
-                          <button
-                            key={action.value}
-                            type="button"
-                            className={`ai-composer__actionChoice ${assistAction === action.value ? 'ai-composer__actionChoice--active' : ''}`}
-                            onClick={() => onAssistActionChange(action.value)}
-                            role="radio"
-                            aria-checked={assistAction === action.value}
-                          >
-                            <strong>{action.label}</strong>
-                            <span>{action.description}</span>
-                          </button>
-                        ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-
-              <p className="ai-composer__hint">{activeAssistAction.description}</p>
-
-              {assistError && <p className="ai-composer__error">{assistError}</p>}
-
-              <button
-                type="submit"
-                className="primary-button ai-composer__submit"
-                disabled={isAssisting || !activeNoteTitle}
-              >
-                <Icon name="spark" />
-                <span>{isAssisting ? 'Thinking...' : 'Assist this note'}</span>
-              </button>
-            </form>
-
-            <div className="ai-composer__preview" aria-live="polite" aria-busy={isAssisting}>
-              {assistResult ? (
-                <>
-                  <AiOutputToolbar
-                    mode={outputMode}
-                    onChange={setOutputMode}
-                    summary={`${formatCount(assistResult.blocks.length, 'block')} ready`}
-                  />
-
-                  {outputMode === 'preview' ? (
-                    <>
-                      <div className="ai-composer__draftHeader">
-                        <span className="badge">{assistResult.actionLabel}</span>
-                        <h3>{assistResult.title}</h3>
-                        {assistResult.summary && <p>{assistResult.summary}</p>}
-                      </div>
-
-                      <AiBlocksPreview blocks={assistPreviewBlocks} />
-                    </>
-                  ) : (
-                    <div className="ai-composer__insertPlan">
-                      <span>Insert plan</span>
-                      <h3>Write into the current note</h3>
-                      <p>
-                        Append {formatCount(assistResult.blocks.length, 'block')} to "{activeNoteTitle}". Clarify can also replace the selected block when a block is selected.
-                      </p>
-                      <div className="ai-composer__buttonRow">
-                        {canReplaceSelection && (
-                          <button type="button" className="ghost-button" onClick={onReplaceSelection}>
-                            <Icon name="edit" />
-                            <span>Replace block</span>
-                          </button>
-                        )}
-                        <button type="button" className="primary-button" onClick={onAppendAssist}>
-                          <Icon name="plus" />
-                          <span>Append</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="ai-composer__empty">
-                  <Icon name="spark" />
-                  <strong>Context-aware help.</strong>
-                  <span>Open a note, choose a focused action, and insert the result as editable blocks.</span>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        <ComposerHistoryList
-          entries={composerHistory}
-          onClear={onClearHistory}
-          onRestore={onRestoreHistory}
-        />
-
-        <p className="ai-composer__footnote">Generated drafts can be useful starting points. Verify facts and sources before treating them as research.</p>
+        <div className="ai-composer__preview ai-composer__preview--loading" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
       </div>
     </aside>
   )
-}
-
-function ComposerHistoryList({
-  entries,
-  onClear,
-  onRestore,
-}: {
-  entries: ComposerHistoryEntry[]
-  onClear: () => void
-  onRestore: (entry: ComposerHistoryEntry) => void
-}) {
-  if (entries.length === 0) {
-    return (
-      <section className="ai-composer__history ai-composer__history--empty">
-        <div className="ai-composer__historyHeader">
-          <div>
-            <span>History</span>
-            <h3>Composer history</h3>
-          </div>
-        </div>
-        <p>Generated drafts and note assists will appear here for quick reuse.</p>
-      </section>
-    )
-  }
-
-  return (
-    <section className="ai-composer__history">
-      <div className="ai-composer__historyHeader">
-        <div>
-          <span>History</span>
-          <h3>Composer history</h3>
-        </div>
-        <button type="button" className="text-link" onClick={onClear}>
-          Clear
-        </button>
-      </div>
-
-      <div className="ai-composer__historyList">
-        {entries.slice(0, 6).map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className="ai-composer__historyItem"
-            onClick={() => onRestore(entry)}
-          >
-            <span className="ai-composer__historyMeta">
-              <span>{entry.mode === 'draft' ? 'New draft' : entry.assist?.actionLabel ?? 'Assist note'}</span>
-              <span>{formatComposerHistoryTimestamp(entry.createdAt)}</span>
-            </span>
-            <strong>{entry.title}</strong>
-            <span className="ai-composer__historySource">{entry.sourceTitle}</span>
-          </button>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function AiOutputToolbar({
-  mode,
-  onChange,
-  summary,
-}: {
-  mode: AiComposerOutputMode
-  onChange: (mode: AiComposerOutputMode) => void
-  summary: string
-}) {
-  return (
-    <div className="ai-composer__outputToolbar">
-      <span>{summary}</span>
-      <div className="ai-composer__outputTabs" role="tablist" aria-label="Composer output">
-        <button
-          type="button"
-          className={mode === 'preview' ? 'ai-composer__outputTab--active' : ''}
-          onClick={() => onChange('preview')}
-          role="tab"
-          aria-selected={mode === 'preview'}
-        >
-          Preview
-        </button>
-        <button
-          type="button"
-          className={mode === 'insert' ? 'ai-composer__outputTab--active' : ''}
-          onClick={() => onChange('insert')}
-          role="tab"
-          aria-selected={mode === 'insert'}
-        >
-          Insert
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function AiBlocksPreview({ blocks }: { blocks: AiDraftBlock[] }) {
-  return (
-    <div className="ai-composer__blocks">
-      {blocks.map((block, index) => (
-        <AiDraftPreviewBlock key={`${block.type}-${index}`} block={block} />
-      ))}
-    </div>
-  )
-}
-
-function AiDraftPreviewBlock({ block }: { block: AiDraftBlock }) {
-  if (block.type === 'heading') {
-    return <h4>{block.text}</h4>
-  }
-
-  if (block.type === 'quote') {
-    return (
-      <blockquote>
-        <p>{block.text}</p>
-        {block.citation && <cite>{block.citation}</cite>}
-      </blockquote>
-    )
-  }
-
-  if (block.type === 'bullet-list') {
-    return (
-      <ul>
-        {(block.items ?? []).slice(0, 5).map((item, index) => (
-          <li key={`${item}-${index}`}>{item}</li>
-        ))}
-      </ul>
-    )
-  }
-
-  if (block.type === 'code') {
-    return <pre>{block.text}</pre>
-  }
-
-  return <p>{block.text}</p>
 }
 
 function LibraryScreen({
@@ -7746,6 +6956,33 @@ function getViteEnvString(name: string) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function normalizeApiBaseUrl(value: string) {
+  if (!value) {
+    return ''
+  }
+
+  try {
+    return new URL(value).toString().replace(/\/+$/g, '')
+  } catch {
+    console.warn(`Ignoring invalid VITE_API_BASE_URL: ${value}`)
+    return ''
+  }
+}
+
+function getApiFetchCredentials(): RequestCredentials {
+  const value = getViteEnvString('VITE_API_CREDENTIALS')
+
+  if (value === 'include' || value === 'omit' || value === 'same-origin') {
+    return value
+  }
+
+  return apiBaseUrl ? 'omit' : 'same-origin'
+}
+
+function getApiUrl(path: string) {
+  return apiBaseUrl ? `${apiBaseUrl}${path}` : path
+}
+
 function loadStoredCacheState(): PersistedAppState {
   if (typeof window === 'undefined') {
     return createEmptyPersistedState()
@@ -7819,8 +7056,8 @@ async function clearRemoteBrowserSession() {
 
 async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch('/api/state', {
-    credentials: 'same-origin',
+  const response = await fetch(getApiUrl('/api/state'), {
+    credentials: apiFetchCredentials,
     headers: authHeaders,
   })
 
@@ -7849,8 +7086,8 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
 
 async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<NoteRevision[]> {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch(`/api/notes/${encodeURIComponent(noteId)}/revisions?limit=${limit}`, {
-    credentials: 'same-origin',
+  const response = await fetch(getApiUrl(`/api/notes/${encodeURIComponent(noteId)}/revisions?limit=${limit}`), {
+    credentials: apiFetchCredentials,
     headers: authHeaders,
   })
 
@@ -7869,8 +7106,8 @@ async function fetchRemoteNoteRevisions(noteId: string, limit = 20): Promise<Not
 
 async function fetchRemoteSearchResults(query: string, limit = 24): Promise<SearchResult[]> {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`, {
-    credentials: 'same-origin',
+  const response = await fetch(getApiUrl(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`), {
+    credentials: apiFetchCredentials,
     headers: authHeaders,
   })
 
@@ -7892,9 +7129,9 @@ async function generateRemoteAiDraft(request: {
   topic: string
 }): Promise<AiDraft> {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch('/api/ai/draft', {
+  const response = await fetch(getApiUrl('/api/ai/draft'), {
     method: 'POST',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
     headers: {
       ...authHeaders,
       'Content-Type': 'application/json',
@@ -7922,9 +7159,9 @@ async function generateRemoteAiAssist(request: {
   }
 }): Promise<AiAssistResult> {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch('/api/ai/assist', {
+  const response = await fetch(getApiUrl('/api/ai/assist'), {
     method: 'POST',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
     headers: {
       ...authHeaders,
       'Content-Type': 'application/json',
@@ -7943,9 +7180,9 @@ async function generateRemoteAiAssist(request: {
 
 async function persistRemoteAppState(state: PersistedAppState, revisionEvents: PendingRevisionEvent[] = []) {
   const authHeaders = await getRemoteAuthHeaders()
-  const response = await fetch('/api/state', {
+  const response = await fetch(getApiUrl('/api/state'), {
     method: 'PUT',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
     headers: {
       ...authHeaders,
       'Content-Type': 'application/json',
@@ -8166,9 +7403,9 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
     throw new Error('Supabase sign-in is not active in this browser session. Restart the dev server after updating .env.')
   }
 
-  const response = await fetch('/api/auth/login', {
+  const response = await fetch(getApiUrl('/api/auth/login'), {
     method: 'POST',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
     headers: {
       'Content-Type': 'application/json',
     },
@@ -8188,9 +7425,9 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
 }
 
 async function requestRemoteSignInLink(email: string) {
-  const response = await fetch('/api/auth/request-link', {
+  const response = await fetch(getApiUrl('/api/auth/request-link'), {
     method: 'POST',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
     headers: {
       'Content-Type': 'application/json',
     },
@@ -8214,9 +7451,9 @@ async function signOutRemote(): Promise<RemoteAppSnapshot> {
     await supabaseClient.auth.signOut()
   }
 
-  const response = await fetch('/api/auth/logout', {
+  const response = await fetch(getApiUrl('/api/auth/logout'), {
     method: 'POST',
-    credentials: 'same-origin',
+    credentials: apiFetchCredentials,
   })
 
   if (!response.ok) {
@@ -8788,157 +8025,6 @@ function isEditorDocument(value: unknown): value is JSONContent {
 
   const candidate = value as JSONContent
   return candidate.type === 'doc' && (candidate.content === undefined || Array.isArray(candidate.content))
-}
-
-function tiptapDocToNoteBlocks(doc: JSONContent, previousBlocks: NoteBlock[] = []): NoteBlock[] {
-  const blocks = (doc.content ?? [])
-    .map((node, index) => tiptapNodeToNoteBlock(node, previousBlocks[index]))
-    .filter((block): block is NoteBlock => Boolean(block))
-
-  return blocks.length > 0 ? blocks : [createEmptyBlock('paragraph')]
-}
-
-function tiptapNodeToNoteBlock(node: JSONContent, previousBlock?: NoteBlock): NoteBlock | null {
-  const id = previousBlock?.id ?? generateId('block')
-
-  if (node.type === 'heading') {
-    return {
-      id,
-      type: 'heading',
-      text: serializeTiptapInlineContent(node.content),
-    }
-  }
-
-  if (node.type === 'blockquote') {
-    return {
-      id,
-      type: 'quote',
-      text: serializeTiptapBlockText(node).trim(),
-      citation: previousBlock?.type === 'quote' ? previousBlock.citation ?? '' : '',
-    }
-  }
-
-  if (node.type === 'bulletList' || node.type === 'orderedList') {
-    const items = (node.content ?? [])
-      .filter((child) => child.type === 'listItem')
-      .map((child) => serializeTiptapBlockText(child).trim())
-
-    return {
-      id,
-      type: 'bullet-list',
-      items: items.length > 0 ? items : [''],
-    }
-  }
-
-  if (node.type === 'codeBlock') {
-    return {
-      id,
-      type: 'code',
-      text: serializeTiptapBlockText(node),
-    }
-  }
-
-  if (node.type === 'paragraph') {
-    return {
-      id,
-      type: 'paragraph',
-      text: serializeTiptapInlineContent(node.content),
-    }
-  }
-
-  return null
-}
-
-function serializeTiptapBlockText(node: JSONContent): string {
-  if (node.type === 'text') {
-    return serializeTiptapTextNode(node)
-  }
-
-  if (node.type === 'hardBreak') {
-    return '\n'
-  }
-
-  if (node.type === 'paragraph' || node.type === 'heading') {
-    return serializeTiptapInlineContent(node.content)
-  }
-
-  if (node.type === 'listItem') {
-    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
-  }
-
-  if (node.type === 'bulletList' || node.type === 'orderedList') {
-    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
-  }
-
-  if (node.type === 'blockquote') {
-    return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
-  }
-
-  if (node.type === 'codeBlock') {
-    return (node.content ?? []).map((child) => child.text ?? '').join('')
-  }
-
-  return (node.content ?? []).map(serializeTiptapBlockText).filter(Boolean).join('\n')
-}
-
-function serializeTiptapInlineContent(content: JSONContent[] | undefined) {
-  return (content ?? []).map((node) => {
-    if (node.type === 'text') {
-      return serializeTiptapTextNode(node)
-    }
-
-    if (node.type === 'hardBreak') {
-      return '\n'
-    }
-
-    return serializeTiptapBlockText(node)
-  }).join('')
-}
-
-function serializeTiptapTextNode(node: JSONContent) {
-  let text = node.text ?? ''
-
-  if (!text) {
-    return ''
-  }
-
-  const marks = node.marks ?? []
-  const linkMark = marks.find((mark) => mark.type === 'link')
-
-  if (linkMark) {
-    const href = typeof linkMark.attrs?.href === 'string' ? linkMark.attrs.href : ''
-    return href ? `[${text}](${href})` : text
-  }
-
-  if (marks.some((mark) => mark.type === 'code')) {
-    return `\`${text}\``
-  }
-
-  if (marks.some((mark) => mark.type === 'underline')) {
-    text = `<u>${text}</u>`
-  }
-
-  if (marks.some((mark) => mark.type === 'bold')) {
-    text = `**${text}**`
-  }
-
-  if (marks.some((mark) => mark.type === 'italic')) {
-    text = `*${text}*`
-  }
-
-  return text
-}
-
-function getEditorStateSignature(blocks: NoteBlock[], editorDoc: JSONContent) {
-  return JSON.stringify({
-    blocks: blocks.map((block) => ({
-      citation: block.citation ?? '',
-      items: block.items ?? [],
-      text: block.text ?? '',
-      type: block.type,
-    })),
-    editorDoc,
-  })
 }
 
 function applyInlineFormatToText(value: string, range: TextSelectionRange, format: InlineFormat) {
@@ -10388,36 +9474,6 @@ function normalizeExternalHref(value: string) {
   }
 
   return `https://${trimmedValue}`
-}
-
-function formatComposerHistoryTimestamp(value: string) {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown'
-  }
-
-  const elapsedMs = Date.now() - date.getTime()
-  const minuteMs = 60 * 1000
-  const hourMs = 60 * minuteMs
-  const dayMs = 24 * hourMs
-
-  if (elapsedMs < minuteMs) {
-    return 'Just now'
-  }
-
-  if (elapsedMs < hourMs) {
-    return `${Math.floor(elapsedMs / minuteMs)}m ago`
-  }
-
-  if (elapsedMs < dayMs) {
-    return `${Math.floor(elapsedMs / hourMs)}h ago`
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-  }).format(date)
 }
 
 function formatCount(count: number, noun: string) {
