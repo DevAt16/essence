@@ -51,6 +51,7 @@ Set these on the API host:
 - `AUTH_INVITE_REDIRECT_URL=https://your-app-domain`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-app-domain`
 - `TRUST_PROXY=true` when the API runs behind a proxy/load balancer
+- `AI_ENABLED=true`; set `false` as a cost-control kill switch
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`
 
@@ -118,6 +119,7 @@ Manual smoke checks still required:
 - approve a real test email
 - receive and open the magic link
 - create/edit a note and refresh to confirm sync
+- confirm Composer is unavailable in local-only mode and available only after invite sign-in
 - revoke the test email and confirm access is blocked
 - confirm a fresh unapproved email cannot receive a usable sign-in flow
 
@@ -158,6 +160,7 @@ The restore command refuses to restore into `DATABASE_URL` unless `--allow-sourc
 
 Before launch, confirm:
 
+- local-only users can create/edit manual notes but cannot open or call Composer
 - daily automated backups are enabled
 - at least one restore has been tested
 - backup retention matches your support expectations

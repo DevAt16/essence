@@ -724,6 +724,17 @@
   color: var(--ink-subtle);
 }
 
+.rail__button--disabled,
+.rail__button--disabled:hover {
+  background: transparent;
+  color: rgba(225, 218, 204, 0.38);
+  cursor: not-allowed;
+}
+
+.rail__button--disabled .rail__buttonLabel {
+  color: rgba(168, 160, 147, 0.54);
+}
+
 .rail__settings {
   width: 42px;
   height: 42px;
@@ -850,6 +861,11 @@
 .rail__button:hover {
   background: transparent;
   border-color: transparent;
+}
+
+.rail__button--disabled:hover {
+  color: rgba(225, 218, 204, 0.38);
+  background: transparent;
 }
 
 .workspace {
@@ -4432,6 +4448,13 @@
     0 24px 80px rgba(0, 0, 0, 0.24),
     0 0 42px rgba(255, 242, 200, 0.06);
   transform: translateY(-2px);
+}
+
+.reader-depth--locked {
+  border-color: rgba(255, 255, 255, 0.1);
+  background:
+    radial-gradient(circle at 50% -18%, rgba(255, 242, 200, 0.07), transparent 18rem),
+    linear-gradient(180deg, rgba(17, 19, 24, 0.68), rgba(8, 10, 14, 0.6));
 }
 
 .reader-depth__threshold {

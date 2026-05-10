@@ -256,8 +256,9 @@ app.get('/api/search', async (request, response, next) => {
 
 app.post('/api/ai/draft', async (request, response, next) => {
   try {
-    enforceRateLimit(request, 'ai-draft-ip', getAiRateLimitOptions())
     const user = await requireAccountUser(request)
+    enforceAiEnabled()
+    enforceRateLimit(request, 'ai-draft-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-draft-user', getAiRateLimitOptions(), user.id)
 
     const requestContext = normalizeAiDraftRequest(request.body)
@@ -282,8 +283,9 @@ app.post('/api/ai/draft', async (request, response, next) => {
 
 app.post('/api/ai/assist', async (request, response, next) => {
   try {
-    enforceRateLimit(request, 'ai-assist-ip', getAiRateLimitOptions())
     const user = await requireAccountUser(request)
+    enforceAiEnabled()
+    enforceRateLimit(request, 'ai-assist-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-assist-user', getAiRateLimitOptions(), user.id)
 
     const requestContext = normalizeAiAssistRequest(request.body)
@@ -475,6 +477,10 @@ function validateRuntimeConfig() {
     errors.push(`SERVE_WEB=true requires a built web app at ${webIndexPath}.`)
   }
 
+  if (isAiEnabled() && !process.env.GEMINI_API_KEY?.trim()) {
+    errors.push('GEMINI_API_KEY is required when AI_ENABLED is not false.')
+  }
+
   if (errors.length > 0) {
     throw new Error(`Invalid production configuration:\n- ${errors.join('\n- ')}`)
   }
@@ -482,6 +488,7 @@ function validateRuntimeConfig() {
 
 function getReadinessChecks(databaseStatus) {
   return {
+    aiComposer: isAiEnabled() ? (process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing') : 'disabled',
     database: databaseStatus,
     staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
     supabaseJwt: supabaseAuthConfig ? 'ok' : 'missing',
@@ -499,6 +506,7 @@ function isReady(checks) {
   }
 
   return (
+    (checks.aiComposer === 'ok' || checks.aiComposer === 'disabled') &&
     checks.supabaseJwt === 'ok' &&
     checks.supabaseOtp === 'ok' &&
     (!shouldServeWeb() || checks.staticWeb === 'ok')
@@ -1586,6 +1594,20 @@ function isDevEmailLoginEnabled() {
   }
 
   return process.env.AUTH_DEV_EMAIL_LOGIN === 'true'
+}
+
+function isAiEnabled() {
+  return process.env.AI_ENABLED !== 'false'
+}
+
+function enforceAiEnabled() {
+  if (isAiEnabled()) {
+    return
+  }
+
+  const error = new Error('Composer is currently disabled.')
+  error.status = 503
+  throw error
 }
 
 function enforceRateLimit(request, bucketName, options, subject = '') {

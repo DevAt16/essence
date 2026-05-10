@@ -157,6 +157,7 @@ Environment variables:
 - `AUTH_DEV_EMAIL_LOGIN` enables the API side of the old email-only development login. Leave it off in production.
 - `AUTH_RATE_LIMIT_MAX`
 - `AUTH_RATE_LIMIT_WINDOW_MS`
+- `AI_ENABLED` set to `false` to disable Composer API calls without disabling manual notes or account login.
 - `AI_RATE_LIMIT_MAX`
 - `AI_RATE_LIMIT_WINDOW_MS`
 - `TRUST_PROXY`

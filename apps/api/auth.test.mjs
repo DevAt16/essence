@@ -172,6 +172,49 @@ test('workspace endpoints reject unauthenticated requests', async () => {
   }
 })
 
+test('AI endpoints can be disabled without affecting account login', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousNodeEnv = process.env.NODE_ENV
+  const previousDevLogin = process.env.AUTH_DEV_EMAIL_LOGIN
+
+  process.env.AI_ENABLED = 'false'
+  process.env.NODE_ENV = 'development'
+  process.env.AUTH_DEV_EMAIL_LOGIN = 'true'
+
+  try {
+    const loginResponse = await apiRequest('/api/auth/login', {
+      email: uniqueEmail('ai-disabled'),
+      state: {
+        activeNoteId: null,
+        composerHistory: [],
+        folders: [],
+        notes: [],
+      },
+    })
+    const sessionCookie = loginResponse.headers.get('set-cookie')?.split(';')[0]
+
+    assert.equal(loginResponse.status, 200)
+    assert.ok(sessionCookie)
+
+    const response = await apiRequest(
+      '/api/ai/draft',
+      { category: 'essay', topic: 'consciousness' },
+      {
+        headers: {
+          Cookie: sessionCookie,
+        },
+      },
+    )
+
+    assert.equal(response.status, 503)
+    assert.match(response.body.error, /disabled/i)
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('NODE_ENV', previousNodeEnv)
+    restoreEnvValue('AUTH_DEV_EMAIL_LOGIN', previousDevLogin)
+  }
+})
+
 test('development email login cannot be enabled in production', async () => {
   const previousNodeEnv = process.env.NODE_ENV
   const previousDevLogin = process.env.AUTH_DEV_EMAIL_LOGIN

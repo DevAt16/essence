@@ -931,6 +931,8 @@ function App() {
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
+  const composerLockedMessage =
+    'Composer is available after invite sign-in. Local mode keeps manual notes on this device and does not run AI.'
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1053,6 +1055,13 @@ function App() {
       setAiComposerOpen(false)
     }
   }, [zenMode])
+
+  useEffect(() => {
+    if (!remoteAccountActive) {
+      setAiComposerOpen(false)
+      setReaderExplorationPendingAction(null)
+    }
+  }, [remoteAccountActive])
 
   useEffect(() => {
     setReadingProgress(0)
@@ -1694,6 +1703,25 @@ function App() {
     }, 1800)
   }
 
+  const showComposerLockedDialog = () => {
+    setDialogState({
+      type: 'alert',
+      title: 'Composer needs invite access',
+      message: composerLockedMessage,
+      confirmLabel: 'Got it',
+    })
+  }
+
+  const toggleComposerPanel = () => {
+    if (!remoteAccountActive) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setAiComposerOpen((isOpen) => !isOpen)
+    setQuickSwitcherOpen(false)
+  }
+
   const resetHistoryTracking = () => {
     historyRef.current = { future: [], past: [] }
     historyInitializedRef.current = false
@@ -2273,7 +2301,7 @@ function App() {
     }
 
     if (!remoteAccountActive) {
-      setAiDraftError('Sign in to use Composer. Local-only notes stay on this device, and AI actions require an account.')
+      setAiDraftError(composerLockedMessage)
       return
     }
 
@@ -2370,7 +2398,7 @@ function App() {
     }
 
     if (!remoteAccountActive) {
-      setAiAssistError('Sign in to use Composer. Local-only notes stay on this device, and AI actions require an account.')
+      setAiAssistError(composerLockedMessage)
       return
     }
 
@@ -2458,6 +2486,11 @@ function App() {
   }
 
   const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
+    if (!remoteAccountActive) {
+      showComposerLockedDialog()
+      return
+    }
+
     setAiComposerOpen(true)
     setAiComposerMode(entry.mode)
     setAiDraftError(null)
@@ -2679,6 +2712,11 @@ function App() {
 
   const exploreReaderDepth = async (action: ReaderExplorationAction) => {
     if (!activeNote) {
+      return
+    }
+
+    if (!remoteAccountActive) {
+      showComposerLockedDialog()
       return
     }
 
@@ -3291,12 +3329,11 @@ function App() {
             <RailButton
               isActive={aiComposerOpen}
               label="Composer"
-              onClick={() => {
-                setAiComposerOpen((isOpen) => !isOpen)
-                setQuickSwitcherOpen(false)
-              }}
+              disabled={!remoteAccountActive}
+              onClick={toggleComposerPanel}
+              title={remoteAccountActive ? 'Composer' : 'Sign in with an approved invite to use Composer'}
             >
-              <Icon name="spark" />
+              <Icon name={remoteAccountActive ? 'spark' : 'lock'} />
             </RailButton>
             <RailButton isActive={view === 'library'} label="Library" onClick={() => navigate('library')}>
               <Icon name="library" />
@@ -3687,6 +3724,7 @@ function App() {
                           onOpenTag={openTag}
                           onOpenNote={openNote}
                           onExplore={exploreReaderDepth}
+                          composerAvailable={remoteAccountActive}
                           explorationAwake={readerExplorationAwake || readingProgress > 0.96}
                           pendingExplorationAction={readerExplorationPendingAction}
                           isFocusMode={zenMode}
@@ -5629,6 +5667,7 @@ function FocusModeBar({
 
 function ReadModeNote({
   backlinks,
+  composerAvailable,
   explorationAwake,
   foldersById,
   isFocusMode,
@@ -5642,6 +5681,7 @@ function ReadModeNote({
   wordCount,
 }: {
   backlinks: Note[]
+  composerAvailable: boolean
   explorationAwake: boolean
   foldersById: Record<string, Folder>
   isFocusMode: boolean
@@ -5696,6 +5736,7 @@ function ReadModeNote({
       {!isFocusMode && <NoteConnections backlinks={backlinks} linkedNotes={linkedNotes} onOpenNote={onOpenNote} />}
 
       <ReaderExplorationPanel
+        composerAvailable={composerAvailable}
         isAwake={explorationAwake}
         onExplore={onExplore}
         pendingAction={pendingExplorationAction}
@@ -5709,24 +5750,33 @@ function ReadModeNote({
 }
 
 function ReaderExplorationPanel({
+  composerAvailable,
   isAwake,
   onExplore,
   pendingAction,
 }: {
+  composerAvailable: boolean
   isAwake: boolean
   onExplore: (action: ReaderExplorationAction) => void
   pendingAction: ReaderExplorationAction | null
 }) {
+  const isLocked = !composerAvailable
+
   return (
-    <section className={`reader-depth ${isAwake ? 'reader-depth--awake' : ''}`} aria-label="Continue exploring">
+    <section
+      className={`reader-depth ${isAwake ? 'reader-depth--awake' : ''} ${isLocked ? 'reader-depth--locked' : ''}`}
+      aria-label="Continue exploring"
+    >
       <div className="reader-depth__threshold" aria-hidden="true">
         <span />
       </div>
       <div className="reader-depth__copy">
-        <span className="reader-depth__eyebrow">You have reached the edge of this thought.</span>
-        <h2>Continue deeper?</h2>
+        <span className="reader-depth__eyebrow">{isLocked ? 'Invite-only Composer' : 'You have reached the edge of this thought.'}</span>
+        <h2>{isLocked ? 'Sign in to use Composer.' : 'Continue deeper?'}</h2>
         <p>
-          Ask Essence Composer to extend the argument, test it, or turn the ending into a research path.
+          {isLocked
+            ? 'Local mode keeps reading and writing private to this browser. AI actions are reserved for approved accounts.'
+            : 'Ask Essence Composer to extend the argument, test it, or turn the ending into a research path.'}
         </p>
       </div>
 
@@ -5740,9 +5790,9 @@ function ReaderExplorationPanel({
               type="button"
               className="reader-depth__action"
               onClick={() => onExplore(action.action)}
-              disabled={pendingAction !== null}
+              disabled={isLocked || pendingAction !== null}
             >
-              <span>{isPending ? 'Thinking...' : action.label}</span>
+              <span>{isLocked ? 'Locked' : isPending ? 'Thinking...' : action.label}</span>
               <small>{action.description}</small>
             </button>
           )
@@ -6308,7 +6358,7 @@ function AuthScreen({
               <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
                 Use this device only
               </button>
-              <p>Stores notes in this browser. Sign in later to sync them.</p>
+              <p>Stores notes in this browser. Composer and sync unlock after invite sign-in.</p>
             </div>
           </section>
         </div>
@@ -6503,23 +6553,28 @@ function QuickSwitcher({
 
 function RailButton({
   children,
+  disabled = false,
   isActive,
   label,
   onClick,
+  title,
 }: {
   children: ReactNode
+  disabled?: boolean
   isActive: boolean
   label: string
   onClick: () => void
+  title?: string
 }) {
   return (
     <button
       type="button"
-      className={`rail__button ${isActive ? 'rail__button--active' : ''}`}
+      className={`rail__button ${isActive ? 'rail__button--active' : ''} ${disabled ? 'rail__button--disabled' : ''}`}
+      disabled={disabled}
       onClick={onClick}
       aria-label={label}
       aria-current={isActive ? 'page' : undefined}
-      title={label}
+      title={title ?? label}
     >
       <span className="rail__buttonGlyph" aria-hidden="true">
         {children}
@@ -6723,6 +6778,14 @@ function Icon({ name }: { name: string }) {
           <path d="M9.5 14.5 14.5 9.5" />
           <path d="M11 6.5 12.6 5A4.2 4.2 0 0 1 18.5 11l-1.5 1.5" />
           <path d="M13 17.5 11.4 19A4.2 4.2 0 0 1 5.5 13l1.5-1.5" />
+        </Glyph>
+      )
+    case 'lock':
+      return (
+        <Glyph>
+          <rect x="5" y="10" width="14" height="10" rx="2" />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          <path d="M12 14v2" />
         </Glyph>
       )
     case 'more':
