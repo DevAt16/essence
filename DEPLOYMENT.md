@@ -30,6 +30,8 @@ npm run check
 
 `npm start` runs the production API entrypoint. `npm run check` runs lint, API tests, and the production web build.
 
+For the full role and safety classification of every environment variable, see [ENVIRONMENT.md](ENVIRONMENT.md).
+
 ## Required Production Environment
 
 Set these on the API host:

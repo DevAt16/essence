@@ -122,47 +122,7 @@ npm run auth:approve -- user@example.com --invite
 
 The older `/api/auth/login` email-only flow is now a development helper. It requires both `AUTH_DEV_EMAIL_LOGIN=true` on the API and `VITE_AUTH_DEV_EMAIL_LOGIN=true` in the browser build. Keep both off for production deployments.
 
-Environment variables:
-
-- `DATABASE_URL`
-- `RESTORE_DATABASE_URL`
-- `DATABASE_SSL`
-- `NODE_ENV`
-- `PORT`
-- `SERVE_WEB`
-- `LOG_LEVEL`
-- `REQUEST_LOGGING`
-- `CORS_ALLOWED_ORIGINS`
-- `CORS_ALLOW_CREDENTIALS`
-- `CORS_MAX_AGE_SECONDS`
-- `SECURITY_CSP`
-- `SECURITY_HSTS`
-- `SMOKE_BASE_URL`
-- `SMOKE_ORIGIN`
-- `SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_JWT_AUDIENCE`
-- `AUTH_INVITE_REDIRECT_URL`
-- `AUTH_ALLOWED_REDIRECT_ORIGINS`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
-- `VITE_API_BASE_URL`
-- `VITE_API_CREDENTIALS`
-- `VITE_AUTH_DEV_EMAIL_LOGIN`
-- `VITE_WAITLIST_URL`
-- `AUTH_COOKIE_NAME`
-- `AUTH_SESSION_DAYS`
-- `AUTH_COOKIE_SECURE`
-- `AUTH_DEV_EMAIL_LOGIN` enables the API side of the old email-only development login. Leave it off in production.
-- `AUTH_RATE_LIMIT_MAX`
-- `AUTH_RATE_LIMIT_WINDOW_MS`
-- `AI_ENABLED` set to `false` to disable Composer API calls without disabling manual notes or account login.
-- `AI_RATE_LIMIT_MAX`
-- `AI_RATE_LIMIT_WINDOW_MS`
-- `TRUST_PROXY`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL`
+Environment variables are documented in [ENVIRONMENT.md](ENVIRONMENT.md). That reference explains each field, whether it is browser-visible, and which values should stay server-only.
 
 Current API endpoints:
 
