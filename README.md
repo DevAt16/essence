@@ -145,4 +145,6 @@ The app is built with React, TypeScript, and Vite on the client, plus a Node/Exp
 
 For product positioning, roadmap, and messaging, see [PRODUCT.md](PRODUCT.md).
 
+For the current production, desktop, and revenue sequencing plan, see [STRATEGY.md](STRATEGY.md).
+
 For the visual language, interaction principles, and the Material-vs-editorial design stance, see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).

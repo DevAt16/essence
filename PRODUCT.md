@@ -36,6 +36,8 @@ That means:
 
 For the visual and interaction rules that support this promise, see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
 
+For production sequencing, desktop direction, and revenue strategy, see [STRATEGY.md](STRATEGY.md).
+
 ## Current Product Pillars
 
 - rich block editing for long-form thinking
