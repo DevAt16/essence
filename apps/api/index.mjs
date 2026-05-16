@@ -383,7 +383,12 @@ async function shutdown(signal) {
 }
 
 if (isMainModule()) {
-  await startServer()
+  try {
+    await startServer()
+  } catch (error) {
+    logStartupFailure(error)
+    process.exit(1)
+  }
 
   process.on('SIGINT', () => {
     void shutdown('SIGINT')
@@ -426,6 +431,41 @@ function configureStaticWeb(expressApp) {
 
 function shouldServeWeb() {
   return process.env.SERVE_WEB === 'true'
+}
+
+function logStartupFailure(error) {
+  console.error(
+    JSON.stringify({
+      event: 'startup_failed',
+      error: normalizeStartupError(error),
+      node: process.version,
+      nodeEnv: process.env.NODE_ENV ?? '',
+      port: process.env.PORT ?? '',
+      serveWeb: process.env.SERVE_WEB ?? '',
+    }),
+  )
+}
+
+function normalizeStartupError(error) {
+  if (error instanceof Error) {
+    return {
+      message: redactStartupSecrets(error.message),
+      name: error.name,
+      stack: redactStartupSecrets(error.stack ?? ''),
+    }
+  }
+
+  return {
+    message: redactStartupSecrets(String(error)),
+    name: typeof error,
+    stack: '',
+  }
+}
+
+function redactStartupSecrets(value) {
+  return String(value)
+    .replace(/postgres(?:ql)?:\/\/[^@\s]+@/gi, 'postgresql://<redacted>@')
+    .replace(/\b(?:DATABASE_URL|RESTORE_DATABASE_URL|GEMINI_API_KEY|SUPABASE_SERVICE_ROLE_KEY)=\S+/gi, '$1=<redacted>')
 }
 
 function validateRuntimeConfig() {
