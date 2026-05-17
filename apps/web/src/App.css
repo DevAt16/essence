@@ -4188,11 +4188,13 @@
 }
 
 .editor-layout {
+  min-width: 0;
   width: min(100%, var(--editor-width));
   margin: 0 auto;
 }
 
 .editor-layout--history {
+  min-width: 0;
   width: min(100%, calc(var(--editor-width) + 356px + 28px));
   display: grid;
   grid-template-columns: minmax(0, var(--editor-width)) 356px;
@@ -4201,16 +4203,19 @@
 }
 
 .editor-layout--history .editor-column {
+  min-width: 0;
   width: auto;
   margin: 0;
 }
 
 .editor-column {
+  min-width: 0;
   width: min(100%, var(--editor-width));
   margin: 0 auto;
 }
 
 .reader-column {
+  min-width: 0;
   width: min(100%, var(--editor-width));
   margin: 0 auto;
 }
@@ -5521,6 +5526,7 @@
   position: relative;
   overflow: visible;
   display: flex;
+  min-width: 0;
   min-height: min(68vh, 680px);
   border: 1px solid rgba(255, 255, 255, 0.075);
   border-radius: 18px;
@@ -7190,6 +7196,20 @@ textarea:focus-visible {
   .library-footer nav {
     flex-wrap: wrap;
     justify-content: center;
+  }
+
+  .editor-more__menu {
+    top: calc(100% + 8px);
+    right: 18px;
+    bottom: auto;
+    left: 18px;
+    width: auto;
+    max-height: max(280px, calc(100vh - 300px));
+    overflow-y: auto;
+  }
+
+  .topbar--editor .editor-more {
+    position: static;
   }
 }
 
