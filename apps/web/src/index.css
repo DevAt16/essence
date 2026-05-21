@@ -1,23 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
 
 :root {
-  --paper: rgba(6, 7, 10, 0.76);
-  --paper-panel: rgba(14, 16, 21, 0.88);
-  --paper-soft: rgba(255, 255, 255, 0.055);
-  --ink: #f3eee4;
-  --ink-strong: #fffaf0;
-  --ink-subtle: #cfc5b4;
-  --ink-muted: #8e877b;
-  --line: rgba(255, 255, 255, 0.105);
-  --line-strong: rgba(255, 255, 255, 0.17);
-  --line-dark: rgba(255, 255, 255, 0.3);
-  --focus: #a8c7ff;
-  --focus-soft: rgba(168, 199, 255, 0.18);
-  --night-base: #050608;
-  --night-glow: rgba(199, 214, 255, 0.11);
-  --night-warm-glow: rgba(245, 226, 184, 0.08);
-  --body-star-breath-low: 0.22;
-  --body-star-breath-high: 0.36;
+  --paper: rgba(20, 22, 25, 0.76);
+  --paper-panel: rgba(28, 30, 34, 0.86);
+  --paper-soft: rgba(255, 248, 232, 0.07);
+  --ink: #f4eddf;
+  --ink-strong: #fff8e8;
+  --ink-subtle: #d8cdbd;
+  --ink-muted: #9d9488;
+  --line: rgba(247, 236, 213, 0.13);
+  --line-strong: rgba(247, 236, 213, 0.22);
+  --line-dark: rgba(247, 236, 213, 0.34);
+  --focus: #b9d6ff;
+  --focus-soft: rgba(185, 214, 255, 0.18);
+  --night-base: #111214;
+  --night-glow: rgba(184, 211, 255, 0.12);
+  --night-warm-glow: rgba(250, 224, 177, 0.1);
+  --body-star-breath-low: 0.14;
+  --body-star-breath-high: 0.24;
   --editor-width: 800px;
   --font-serif: 'Newsreader', Georgia, serif;
   --font-sans: 'Instrument Sans', 'Segoe UI', sans-serif;
@@ -52,8 +52,9 @@ body {
   overflow: hidden;
   background:
     radial-gradient(circle at 18% 12%, var(--night-glow), transparent 31rem),
-    radial-gradient(circle at 86% 18%, rgba(126, 162, 255, 0.08), transparent 28rem),
-    radial-gradient(circle at 58% 92%, var(--night-warm-glow), transparent 32rem),
+    radial-gradient(circle at 84% 16%, rgba(146, 188, 165, 0.065), transparent 29rem),
+    radial-gradient(circle at 58% 92%, var(--night-warm-glow), transparent 34rem),
+    linear-gradient(180deg, rgba(24, 25, 28, 0.92), rgba(14, 15, 17, 0.96)),
     var(--night-base);
 }
 
@@ -67,11 +68,11 @@ body::after {
 }
 
 body::before {
-  opacity: 0.34;
+  opacity: 0.23;
   background-image:
-    radial-gradient(circle, rgba(255, 255, 255, 0.88) 0 1px, transparent 1.6px),
-    radial-gradient(circle, rgba(205, 220, 255, 0.72) 0 1px, transparent 1.4px),
-    radial-gradient(circle, rgba(255, 238, 205, 0.56) 0 1px, transparent 1.45px);
+    radial-gradient(circle, rgba(255, 252, 244, 0.82) 0 1px, transparent 1.6px),
+    radial-gradient(circle, rgba(204, 223, 255, 0.58) 0 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(255, 232, 190, 0.5) 0 1px, transparent 1.45px);
   background-position:
     18px 34px,
     120px 96px,
@@ -84,12 +85,12 @@ body::before {
 }
 
 body::after {
-  opacity: 0.5;
+  opacity: 0.3;
   background:
-    radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.18), transparent 1.7px),
-    radial-gradient(circle at 68% 16%, rgba(213, 225, 255, 0.16), transparent 1.4px),
-    radial-gradient(circle at 78% 72%, rgba(255, 234, 195, 0.12), transparent 1.5px),
-    linear-gradient(115deg, rgba(255, 255, 255, 0.03), transparent 28%, rgba(168, 199, 255, 0.035) 56%, transparent 72%);
+    radial-gradient(circle at 18% 24%, rgba(255, 252, 244, 0.14), transparent 1.7px),
+    radial-gradient(circle at 68% 16%, rgba(213, 225, 255, 0.12), transparent 1.4px),
+    radial-gradient(circle at 78% 72%, rgba(255, 234, 195, 0.1), transparent 1.5px),
+    linear-gradient(115deg, rgba(255, 248, 232, 0.022), transparent 28%, rgba(185, 214, 255, 0.026) 56%, transparent 72%);
   background-size: 420px 420px, 560px 560px, 680px 680px, 100% 100%;
   animation: star-breath 8s ease-in-out infinite;
 }
@@ -101,25 +102,25 @@ body::after {
 }
 
 :root[data-essence-ambience='subtle'] body::before {
-  opacity: 0.16;
+  opacity: 0.11;
   animation-duration: 140s;
 }
 
 :root[data-essence-ambience='subtle'] body::after {
-  --body-star-breath-low: 0.11;
-  --body-star-breath-high: 0.2;
-  opacity: 0.2;
+  --body-star-breath-low: 0.08;
+  --body-star-breath-high: 0.15;
+  opacity: 0.16;
   animation-duration: 11s;
 }
 
 :root[data-essence-ambience='cosmic'] body::before {
-  opacity: 0.34;
+  opacity: 0.3;
 }
 
 :root[data-essence-ambience='cosmic'] body::after {
-  --body-star-breath-low: 0.26;
-  --body-star-breath-high: 0.44;
-  opacity: 0.44;
+  --body-star-breath-low: 0.19;
+  --body-star-breath-high: 0.32;
+  opacity: 0.36;
 }
 
 ::selection {
@@ -127,7 +128,7 @@ body::after {
 }
 
 * {
-  scrollbar-color: rgba(255, 255, 255, 0.22) rgba(255, 255, 255, 0.04);
+  scrollbar-color: rgba(247, 236, 213, 0.22) rgba(247, 236, 213, 0.04);
 }
 
 *::-webkit-scrollbar {
@@ -136,18 +137,18 @@ body::after {
 }
 
 *::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(247, 236, 213, 0.04);
 }
 
 *::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(247, 236, 213, 0.22);
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.34);
+  background: rgba(247, 236, 213, 0.34);
   background-clip: padding-box;
 }
 

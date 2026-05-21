@@ -269,7 +269,7 @@ app.post('/api/ai/draft', async (request, response, next) => {
     }
 
     const rawDraft = await generateGeminiJson(
-      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta),
+      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext),
       geminiDraftResponseSchema,
       { temperature: 0.72 },
     )
@@ -1001,6 +1001,7 @@ function normalizeAiDraftRequest(body) {
   const topic = typeof body?.topic === 'string' ? body.topic.trim().replace(/\s+/g, ' ') : ''
   const category = typeof body?.category === 'string' ? body.category.trim() : ''
   const meta = aiDraftCategoryMeta[category]
+  const composerContext = normalizeComposerRequestContext(body?.context)
 
   if (topic.length < 3) {
     return { ok: false, error: 'Enter a topic with at least 3 characters.' }
@@ -1017,6 +1018,7 @@ function normalizeAiDraftRequest(body) {
   return {
     ok: true,
     category,
+    composerContext,
     meta,
     topic,
   }
@@ -1026,6 +1028,7 @@ function normalizeAiAssistRequest(body) {
   const action = typeof body?.action === 'string' ? body.action.trim() : ''
   const meta = aiAssistActionMeta[action]
   const note = body?.note && typeof body.note === 'object' ? body.note : {}
+  const composerContext = normalizeComposerRequestContext(body?.context)
   const title = normalizeDraftString(note.title, 'Untitled Note', 180)
   const status = normalizeDraftString(note.status, '', 60)
   const text = normalizeDraftString(note.text, '', 12000)
@@ -1045,6 +1048,7 @@ function normalizeAiAssistRequest(body) {
   return {
     ok: true,
     action,
+    composerContext,
     meta,
     note: {
       selectedText,
@@ -1056,12 +1060,46 @@ function normalizeAiAssistRequest(body) {
   }
 }
 
-function buildGeminiDraftPrompt(topic, meta) {
+function normalizeComposerRequestContext(value) {
+  const recent = Array.isArray(value?.recent)
+    ? value.recent.map(normalizeComposerContextItem).filter((entry) => entry !== null).slice(0, 3)
+    : []
+
+  return { recent }
+}
+
+function normalizeComposerContextItem(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const mode = value.mode === 'draft' || value.mode === 'assist' ? value.mode : 'draft'
+  const title = normalizeDraftString(value.title, '', 160)
+  const blocksPreview = normalizeDraftString(value.blocksPreview, '', 700)
+
+  if (!title && !blocksPreview) {
+    return null
+  }
+
+  return {
+    actionLabel: normalizeDraftString(value.actionLabel, '', 80),
+    blocksPreview,
+    createdAt: normalizeDraftString(value.createdAt, '', 40),
+    mode,
+    prompt: normalizeDraftString(value.prompt, '', 180),
+    sourceTitle: normalizeDraftString(value.sourceTitle, '', 160),
+    summary: normalizeDraftString(value.summary, '', 260),
+    title,
+  }
+}
+
+function buildGeminiDraftPrompt(topic, meta, composerContext) {
   return [
     'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
     `Topic: ${topic}`,
     `Requested note type: ${meta.label}`,
     meta.guidance,
+    formatComposerContextForPrompt(composerContext),
     'Create original prose suitable for a minimalist note-taking app.',
     'Do not invent citations, studies, URLs, books, or source names. If the topic requires sources, include a short verification note instead of pretending sources were checked.',
     'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
@@ -1084,12 +1122,37 @@ function buildGeminiAssistPrompt(context) {
     context.note.status ? `Note status: ${context.note.status}` : '',
     context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
     selectedSection,
+    formatComposerContextForPrompt(context.composerContext),
     'Full note context:',
     context.note.text,
     'Return only JSON matching the schema.',
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function formatComposerContextForPrompt(composerContext) {
+  const recent = Array.isArray(composerContext?.recent) ? composerContext.recent : []
+
+  if (recent.length === 0) {
+    return ''
+  }
+
+  return [
+    'Prior Composer context. Use this only when it helps preserve continuity. Do not copy it verbatim, do not treat it as verified source material, and let the current request override it.',
+    ...recent.map((entry, index) =>
+      [
+        `${index + 1}. ${entry.mode === 'draft' ? 'Draft' : 'Assist'}: ${entry.title}`,
+        entry.actionLabel ? `Action: ${entry.actionLabel}` : '',
+        entry.sourceTitle ? `Source: ${entry.sourceTitle}` : '',
+        entry.prompt ? `Prompt: ${entry.prompt}` : '',
+        entry.summary ? `Summary: ${entry.summary}` : '',
+        entry.blocksPreview ? `Excerpt: ${entry.blocksPreview}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    ),
+  ].join('\n\n')
 }
 
 async function generateGeminiJson(prompt, schema, options = {}) {

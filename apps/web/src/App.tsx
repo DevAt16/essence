@@ -7,7 +7,7 @@ import './App.css'
 const ModernRichEditor = lazy(() => import('./editor/ModernRichEditor'))
 const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
-type ViewMode = 'library' | 'collections' | 'search' | 'favorites' | 'archive' | 'editor'
+type ViewMode = 'library' | 'collections' | 'favorites' | 'archive' | 'editor'
 type NavMode = Exclude<ViewMode, 'editor'>
 type CollectionId = 'work' | 'personal' | 'research' | 'ideas'
 type CollectionIcon = 'briefcase' | 'person' | 'flask' | 'bulb'
@@ -236,6 +236,21 @@ interface ComposerHistoryEntry {
   title: string
 }
 
+interface ComposerContextItem {
+  actionLabel?: string
+  blocksPreview: string
+  createdAt: string
+  mode: AiComposerMode
+  prompt: string
+  sourceTitle: string
+  summary: string
+  title: string
+}
+
+interface ComposerRequestContext {
+  recent: ComposerContextItem[]
+}
+
 type AppDialogState =
   | {
       confirmLabel: string
@@ -285,8 +300,11 @@ interface QuickSwitcherItem {
 const storageKey = 'lucid-notes-state'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
+const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
 const historyLimit = 120
 const composerHistoryLimit = 18
+const composerRequestContextLimit = 3
+const composerRequestContextPreviewLength = 700
 const apiBaseUrl = normalizeApiBaseUrl(getViteEnvString('VITE_API_BASE_URL'))
 const apiFetchCredentials = getApiFetchCredentials()
 const supabaseClient = createSupabaseBrowserClient()
@@ -481,10 +499,6 @@ const browseViewMeta: Record<NavMode, { heading: string; description: string }> 
   collections: {
     heading: 'Collections',
     description: 'Collections, nested folders, and tags.',
-  },
-  search: {
-    heading: 'Search',
-    description: 'Find a phrase, a block, or a hidden draft.',
   },
   favorites: {
     heading: 'Starred',
@@ -828,6 +842,7 @@ function App() {
   const [dialogState, setDialogState] = useState<AppDialogState | null>(null)
   const [editorActionsOpen, setEditorActionsOpen] = useState(false)
   const [editorSidebarOpen, setEditorSidebarOpen] = useState(true)
+  const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -876,6 +891,7 @@ function App() {
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
+  const topbarSearchInputRef = useRef<HTMLInputElement | null>(null)
   const editorScreenRef = useRef<HTMLElement | null>(null)
   const historyInitializedRef = useRef(false)
   const historyRef = useRef<{ future: HistorySnapshot[]; past: HistorySnapshot[] }>({
@@ -1186,6 +1202,17 @@ function App() {
     window.localStorage.setItem(ambienceStorageKey, ambienceMode)
     document.documentElement.dataset.essenceAmbience = ambienceMode
   }, [ambienceMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(
+      navigationSidebarStorageKey,
+      navigationSidebarVisible ? 'visible' : 'hidden',
+    )
+  }, [navigationSidebarVisible])
 
   useEffect(() => {
     if (!remoteSyncReady) {
@@ -1606,14 +1633,6 @@ function App() {
         target: { type: 'navigate', view: 'library' },
       },
       {
-        id: 'action-search',
-        kind: 'action',
-        title: 'Go to Search',
-        subtitle: 'Search notes, blocks, tags, and folders.',
-        keywords: 'search find discover command palette',
-        target: { type: 'navigate', view: 'search' },
-      },
-      {
         id: 'action-collections',
         kind: 'action',
         title: 'Go to Collections',
@@ -1869,6 +1888,13 @@ function App() {
     setDialogState(null)
   }
 
+  const moveToLibrarySearchSurface = () => {
+    setActiveCollectionId(null)
+    setActiveFolderId(null)
+    setActiveTag(null)
+    startTransition(() => setView('library'))
+  }
+
   const toggleNoteHistory = () => {
     if (!activeNote || view !== 'editor') {
       return
@@ -1887,11 +1913,16 @@ function App() {
     setAiComposerOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
-    setActiveCollectionId(null)
-    setActiveFolderId(null)
-    setActiveTag(null)
-    startTransition(() => setView('search'))
+    moveToLibrarySearchSurface()
     setSearchFocusSignal((currentValue) => currentValue + 1)
+  }
+
+  const updateGlobalSearchQuery = (value: string) => {
+    setSearchQuery(value)
+
+    if (view === 'collections') {
+      moveToLibrarySearchSurface()
+    }
   }
 
   const applyHistorySnapshot = (snapshot: HistorySnapshot, message: string) => {
@@ -2311,6 +2342,7 @@ function App() {
     try {
       const draft = await generateRemoteAiDraft({
         category: aiDraftCategory,
+        context: buildComposerRequestContext(composerHistory, { targetText: topic }),
         topic,
       })
 
@@ -2408,6 +2440,10 @@ function App() {
     try {
       const result = await generateRemoteAiAssist({
         action: effectiveAction,
+        context: buildComposerRequestContext(composerHistory, {
+          activeNoteTitle: activeNote.title,
+          targetText: `${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
+        }),
         note: {
           selectedText,
           status: activeNote.status,
@@ -2748,9 +2784,7 @@ function App() {
 
     startTransition(() => {
       setView(nextView)
-      if (nextView !== 'search') {
-        setSearchQuery('')
-      }
+      setSearchQuery('')
       if (nextView !== 'library') {
         setActiveCollectionId(null)
         setActiveFolderId(null)
@@ -2794,11 +2828,6 @@ function App() {
         createNote()
         return
       case 'navigate':
-        if (item.target.view === 'search') {
-          openSearchView()
-          return
-        }
-
         navigate(item.target.view)
         return
       case 'note':
@@ -3264,9 +3293,21 @@ function App() {
       : activeTag
         ? `#${activeTag}`
         : null
-  const showEditorToolbar = view === 'editor' && Boolean(activeNote) && noteViewMode === 'edit'
+  const showGlobalTopbarTools = view !== 'editor'
+  const showEditorHeaderLayout = view === 'editor'
+  const editorHeaderModeLabel = noteViewMode === 'edit' ? 'Editing' : 'Reading'
+  const navigationSidebarToggleLabel = navigationSidebarVisible ? 'Hide navigation sidebar' : 'Show navigation sidebar'
   const showAuthScreen = !remoteSyncReady || ((!currentUser || currentUser.isLocal) && !authGateDismissed)
   const readingProgressPercent = Math.round(readingProgress * 100)
+
+  useEffect(() => {
+    if (searchFocusSignal <= 0 || !showGlobalTopbarTools) {
+      return
+    }
+
+    topbarSearchInputRef.current?.focus()
+    topbarSearchInputRef.current?.select()
+  }, [searchFocusSignal, showGlobalTopbarTools])
 
   if (showAuthScreen) {
     return (
@@ -3289,7 +3330,11 @@ function App() {
   }
 
   return (
-    <div className={`app-shell app-shell--ambience-${ambienceMode} ${zenMode ? 'is-zen' : ''}`}>
+    <div
+      className={`app-shell app-shell--ambience-${ambienceMode} ${
+        navigationSidebarVisible ? '' : 'app-shell--navigationHidden'
+      } ${zenMode ? 'is-zen' : ''}`}
+    >
       <div className="cosmic-sky" aria-hidden="true">
         <span className="cosmic-sky__meteor" />
         <span className="cosmic-sky__meteor" />
@@ -3306,8 +3351,8 @@ function App() {
         onChange={handleImportFileChange}
       />
 
-      {!zenMode && (
-        <aside className="rail">
+      {!zenMode && navigationSidebarVisible && (
+        <aside className={`rail ${showGlobalTopbarTools ? 'rail--globalToolsVisible' : ''}`}>
           <div className="rail__brand" aria-label="Essence">
             <EssenceMark framed compact />
           </div>
@@ -3326,23 +3371,11 @@ function App() {
           </div>
 
           <nav className="rail__nav" aria-label="Primary">
-            <RailButton
-              isActive={aiComposerOpen}
-              label="Composer"
-              disabled={!remoteAccountActive}
-              onClick={toggleComposerPanel}
-              title={remoteAccountActive ? 'Composer' : 'Sign in with an approved invite to use Composer'}
-            >
-              <Icon name={remoteAccountActive ? 'spark' : 'lock'} />
-            </RailButton>
             <RailButton isActive={view === 'library'} label="Library" onClick={() => navigate('library')}>
               <Icon name="library" />
             </RailButton>
             <RailButton isActive={view === 'collections'} label="Collections" onClick={() => navigate('collections')}>
               <Icon name="grid" />
-            </RailButton>
-            <RailButton isActive={view === 'search'} label="Search" onClick={() => navigate('search')}>
-              <Icon name="search" />
             </RailButton>
             <RailButton isActive={view === 'favorites'} label="Favorites" onClick={() => navigate('favorites')}>
               <Icon name="star" />
@@ -3411,17 +3444,33 @@ function App() {
 
       <div className="workspace">
         {!zenMode && (
-          <header className={`topbar ${showEditorToolbar ? 'topbar--editor' : ''}`}>
+          <header
+            className={`topbar ${showEditorHeaderLayout ? 'topbar--editor' : ''} ${showGlobalTopbarTools ? 'topbar--dashboard' : ''}`}
+          >
             {view === 'editor' ? (
               <>
-                <button type="button" className="text-action" onClick={() => navigate(editorContext)}>
-                  <Icon name="arrowLeft" />
-                  <span>{`Back to ${browseViewMeta[editorContext].heading}`}</span>
-                </button>
+                <div className="topbar__leading">
+                  <button
+                    type="button"
+                    className={`icon-button topbar__sidebarToggle ${
+                      navigationSidebarVisible ? 'icon-button--active' : ''
+                    }`}
+                    onClick={() => setNavigationSidebarVisible((currentValue) => !currentValue)}
+                    aria-label={navigationSidebarToggleLabel}
+                    aria-pressed={navigationSidebarVisible}
+                    title={navigationSidebarToggleLabel}
+                  >
+                    <Icon name={navigationSidebarVisible ? 'panelLeftClose' : 'panelLeftOpen'} />
+                  </button>
+                  <button type="button" className="text-action" onClick={() => navigate(editorContext)}>
+                    <Icon name="arrowLeft" />
+                    <span>{`Back to ${browseViewMeta[editorContext].heading}`}</span>
+                  </button>
+                </div>
 
-                {showEditorToolbar && activeNote ? (
+                {activeNote ? (
                   <div className="topbar__context topbar__context--editorMode" aria-label="Current editor note">
-                    <span>Editing</span>
+                    <span>{editorHeaderModeLabel}</span>
                     <strong>{activeNote.title || 'Untitled note'}</strong>
                   </div>
                 ) : !activeNote ? (
@@ -3467,15 +3516,6 @@ function App() {
                         </button>
                         <button
                           type="button"
-                          className="utility-button"
-                          onClick={openQuickSwitcher}
-                          title="Jump anywhere"
-                        >
-                          <Icon name="search" />
-                          <span>Jump</span>
-                        </button>
-                        <button
-                          type="button"
                           className={`utility-button ${zenMode ? 'utility-button--active' : ''}`}
                           onClick={toggleFocusMode}
                           aria-pressed={zenMode}
@@ -3503,6 +3543,7 @@ function App() {
                           onClose={() => setEditorActionsOpen(false)}
                           onDelete={() => deleteNote(activeNote.id)}
                           onExportMarkdown={exportActiveNoteAsMarkdown}
+                          onOpenQuickSwitcher={openQuickSwitcher}
                           onMoveToDraft={moveActiveNoteToDraft}
                           onPublish={publishActiveNote}
                           onToggleFavorite={toggleFavorite}
@@ -3523,6 +3564,18 @@ function App() {
             ) : (
               <>
                 <div className="topbar__browseHeading">
+                  <button
+                    type="button"
+                    className={`icon-button topbar__sidebarToggle ${
+                      navigationSidebarVisible ? 'icon-button--active' : ''
+                    }`}
+                    onClick={() => setNavigationSidebarVisible((currentValue) => !currentValue)}
+                    aria-label={navigationSidebarToggleLabel}
+                    aria-pressed={navigationSidebarVisible}
+                    title={navigationSidebarToggleLabel}
+                  >
+                    <Icon name={navigationSidebarVisible ? 'panelLeftClose' : 'panelLeftOpen'} />
+                  </button>
                   {view === 'library' ? (
                     <div className="topbar__browseContext">
                       <span>Workspace</span>
@@ -3532,18 +3585,63 @@ function App() {
                     <div className="topbar__browseTitle">{browseViewMeta[view].heading}</div>
                   )}
                 </div>
-                <div className="topbar__actions topbar__actions--browser">
-                  <span className="topbar__context">{browseViewMeta[view].description}</span>
-                  <div className="topbar__actionGroup topbar__actionGroup--browser">
-                    <button type="button" className="utility-button" onClick={openQuickSwitcher}>
+                {showGlobalTopbarTools && (
+                  <div className="topbar__dashboardTools" aria-label="Library tools">
+                    <label className="topbar-search">
                       <Icon name="search" />
-                      <span>Jump</span>
-                    </button>
-                    <button type="button" className="utility-button" onClick={openImportDialog}>
-                      <Icon name="upload" />
-                      <span>Import</span>
-                    </button>
-                    <button type="button" className="utility-button" onClick={exportLibraryAsJson}>
+                      <input
+                        ref={topbarSearchInputRef}
+                        type="search"
+                        value={searchQuery}
+                        onChange={(event) => updateGlobalSearchQuery(event.target.value)}
+                        placeholder="Search notes, blocks, and tags"
+                        aria-label="Search notes, blocks, and tags"
+                      />
+                    </label>
+
+                    <div className="topbar__dashboardActions">
+                      <button
+                        type="button"
+                        className="topbar-toolButton topbar-toolButton--primary"
+                        onClick={createNote}
+                        aria-label="Create new note"
+                        title="Create new note"
+                      >
+                        <Icon name="plus" />
+                        <span>New note</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="topbar-toolButton"
+                        onClick={openImportDialog}
+                        aria-label="Import notes"
+                        title="Import notes"
+                      >
+                        <Icon name="upload" />
+                        <span>Import</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="topbar-toolButton"
+                        onClick={toggleComposerPanel}
+                        aria-label="Open Composer"
+                        title={remoteAccountActive ? 'Open Composer' : 'Sign in with an approved invite to use Composer'}
+                      >
+                        <Icon name={remoteAccountActive ? 'spark' : 'lock'} />
+                        <span>Composer</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="topbar__actions topbar__actions--browser">
+                  <div className="topbar__actionGroup topbar__actionGroup--browser">
+                    <button
+                      type="button"
+                      className="utility-button"
+                      onClick={exportLibraryAsJson}
+                      aria-label="Export library as JSON"
+                      title="Export library as JSON"
+                    >
                       <Icon name="download" />
                       <span>Export JSON</span>
                     </button>
@@ -3571,19 +3669,21 @@ function App() {
             />
           )}
 
-          {(view === 'library' || view === 'search' || view === 'favorites' || view === 'archive') && (
+          {(view === 'library' || view === 'favorites' || view === 'archive') && (
             <LibraryScreen
               activeCollectionId={activeCollectionId}
               activeFilterLabel={activeFilterLabel}
               activeFolderId={activeFolderId}
               cards={filteredNotes}
+              collectionCounts={collectionCounts}
               foldersById={foldersById}
               onClearFilters={clearFilters}
+              onCreateNote={createNote}
               onOpenCollection={openCollection}
+              onOpenComposer={toggleComposerPanel}
               onOpenFolder={openFolder}
+              onOpenImport={openImportDialog}
               onOpenNote={openNote}
-              onSearchChange={setSearchQuery}
-              focusSearchSignal={searchFocusSignal}
               searchQuery={searchQuery}
               viewMode={browseContext}
             />
@@ -3943,13 +4043,15 @@ function LibraryScreen({
   activeFilterLabel,
   activeFolderId,
   cards,
+  collectionCounts,
   foldersById,
   onClearFilters,
+  onCreateNote,
   onOpenCollection,
+  onOpenComposer,
   onOpenFolder,
+  onOpenImport,
   onOpenNote,
-  onSearchChange,
-  focusSearchSignal,
   searchQuery,
   viewMode,
 }: {
@@ -3957,37 +4059,37 @@ function LibraryScreen({
   activeFilterLabel: string | null
   activeFolderId: string | null
   cards: Note[]
+  collectionCounts: Record<CollectionId, number>
   foldersById: Record<string, Folder>
   onClearFilters: () => void
+  onCreateNote: () => void
   onOpenCollection: (collectionId: CollectionId) => void
+  onOpenComposer: () => void
   onOpenFolder: (folderId: string) => void
+  onOpenImport: () => void
   onOpenNote: (noteId: string) => void
-  onSearchChange: (value: string) => void
-  focusSearchSignal: number
   searchQuery: string
   viewMode: NavMode
 }) {
-  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [displayMode, setDisplayMode] = useState<LibraryDisplayMode>('cards')
   const [quickFilter, setQuickFilter] = useState<LibraryQuickFilter>('all')
+  const normalizedSearchQuery = searchQuery.trim()
   const visibleCards = useMemo(() => filterLibraryCards(cards, quickFilter), [cards, quickFilter])
   const visibleNoteCountLabel = `${formatCount(visibleCards.length, 'note')} in view`
-  const isHomeView = viewMode === 'library' && searchQuery.trim().length === 0 && !activeFilterLabel && quickFilter === 'all'
+  const isHomeView = viewMode === 'library' && normalizedSearchQuery.length === 0 && !activeFilterLabel && quickFilter === 'all'
   const homeSections = useMemo(() => buildLibraryHomeSections(visibleCards), [visibleCards])
   const emptyState = getLibraryEmptyState(viewMode, searchQuery, activeFilterLabel, quickFilter)
-  const viewHeading = browseViewMeta[viewMode].heading
-  const viewDescription = activeFilterLabel
+  const searchScopeLabel = activeFilterLabel ?? browseViewMeta[viewMode].heading
+  const viewHeading = normalizedSearchQuery ? 'Search results' : browseViewMeta[viewMode].heading
+  const viewDescription = normalizedSearchQuery
+    ? `Searching ${searchScopeLabel.toLowerCase()} for "${normalizedSearchQuery}".`
+    : activeFilterLabel
     ? `Filtered to ${activeFilterLabel.toLowerCase()}.`
     : browseViewMeta[viewMode].description
 
   useEffect(() => {
-    if (focusSearchSignal <= 0) {
-      return
-    }
-
-    searchInputRef.current?.focus()
-    searchInputRef.current?.select()
-  }, [focusSearchSignal])
+    setQuickFilter('all')
+  }, [activeFilterLabel, normalizedSearchQuery, viewMode])
 
   return (
     <section className="library-screen">
@@ -4008,31 +4110,18 @@ function LibraryScreen({
           )}
         </div>
 
-        <div className="library-hero__controls">
-          <label className="search-field">
-            <Icon name="search" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={searchQuery}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Search notes, blocks, and tags"
-            />
-          </label>
-
-          {activeFilterLabel && (
-            <button type="button" className="ghost-button" onClick={onClearFilters}>
-              <span>{activeFilterLabel}</span>
-              <Icon name="close" />
-            </button>
-          )}
-        </div>
-
         <div className="library-spaces" aria-label="Collections">
           {collections.map((collection) => (
-            <button key={collection.id} type="button" className="library-space" onClick={() => onOpenCollection(collection.id)}>
+            <button
+              key={collection.id}
+              type="button"
+              className={`library-space ${activeCollectionId === collection.id ? 'library-space--active' : ''}`}
+              onClick={() => onOpenCollection(collection.id)}
+              aria-pressed={activeCollectionId === collection.id}
+            >
               <CollectionGlyph icon={collection.icon} />
               <span>{collection.name}</span>
+              <small>{collectionCounts[collection.id] ?? 0}</small>
             </button>
           ))}
         </div>
@@ -4058,25 +4147,34 @@ function LibraryScreen({
           })}
         </div>
 
-        <div className="library-viewToggle" role="tablist" aria-label="Library view">
-          <button
-            type="button"
-            className={displayMode === 'cards' ? 'library-viewToggle__button--active' : ''}
-            onClick={() => setDisplayMode('cards')}
-            role="tab"
-            aria-selected={displayMode === 'cards'}
-          >
-            Cards
-          </button>
-          <button
-            type="button"
-            className={displayMode === 'list' ? 'library-viewToggle__button--active' : ''}
-            onClick={() => setDisplayMode('list')}
-            role="tab"
-            aria-selected={displayMode === 'list'}
-          >
-            List
-          </button>
+        <div className="library-toolbar__actions">
+          {activeFilterLabel && (
+            <button type="button" className="library-clearFilter" onClick={onClearFilters}>
+              <span>{activeFilterLabel}</span>
+              <Icon name="close" />
+            </button>
+          )}
+
+          <div className="library-viewToggle" role="tablist" aria-label="Library view">
+            <button
+              type="button"
+              className={displayMode === 'cards' ? 'library-viewToggle__button--active' : ''}
+              onClick={() => setDisplayMode('cards')}
+              role="tab"
+              aria-selected={displayMode === 'cards'}
+            >
+              Cards
+            </button>
+            <button
+              type="button"
+              className={displayMode === 'list' ? 'library-viewToggle__button--active' : ''}
+              onClick={() => setDisplayMode('list')}
+              role="tab"
+              aria-selected={displayMode === 'list'}
+            >
+              List
+            </button>
+          </div>
         </div>
       </div>
 
@@ -4084,6 +4182,20 @@ function LibraryScreen({
         <div className="empty-state">
           <h2>{emptyState.title}</h2>
           <p>{emptyState.description}</p>
+          <div className="empty-state__actions">
+            <button type="button" className="primary-button" onClick={onCreateNote}>
+              <Icon name="plus" />
+              <span>New note</span>
+            </button>
+            <button type="button" className="ghost-button" onClick={onOpenImport}>
+              <Icon name="upload" />
+              <span>Import</span>
+            </button>
+            <button type="button" className="ghost-button" onClick={onOpenComposer}>
+              <Icon name="spark" />
+              <span>Composer</span>
+            </button>
+          </div>
         </div>
       ) : isHomeView ? (
         <div className="library-home">
@@ -4128,11 +4240,6 @@ function LibraryScreen({
       )}
 
       <footer className="library-footer">
-        <nav>
-          <button type="button">Privacy</button>
-          <button type="button">Terms</button>
-          <button type="button">Support</button>
-        </nav>
         <p>Copyright 2026 Essence. A lucid space for thought.</p>
       </footer>
     </section>
@@ -4179,13 +4286,6 @@ function getLibraryEmptyState(
     return {
       title: 'Archive is empty',
       description: 'Archived notes will live here when you want them out of the main flow.',
-    }
-  }
-
-  if (viewMode === 'search') {
-    return {
-      title: 'Search is ready',
-      description: 'Start typing above to find notes by title, block text, folder, or tag.',
     }
   }
 
@@ -6145,6 +6245,7 @@ function EditorActionsMenu({
   onClose,
   onDelete,
   onExportMarkdown,
+  onOpenQuickSwitcher,
   onMoveToDraft,
   onPublish,
   onToggleFavorite,
@@ -6158,6 +6259,7 @@ function EditorActionsMenu({
   onClose: () => void
   onDelete: () => void
   onExportMarkdown: () => void
+  onOpenQuickSwitcher: () => void
   onMoveToDraft: () => void
   onPublish: () => void
   onToggleFavorite: () => void
@@ -6209,6 +6311,14 @@ function EditorActionsMenu({
             <span>Note actions</span>
             <strong>{note.title}</strong>
           </div>
+
+          <button type="button" role="menuitem" className="editor-more__item" onClick={() => runAction(onOpenQuickSwitcher)}>
+            <Icon name="search" />
+            <span>
+              <strong>Quick switcher</strong>
+              <small>Jump to notes, folders, collections, or tags</small>
+            </span>
+          </button>
 
           {noteIsDraft && (
             <button type="button" role="menuitem" className="editor-more__item editor-more__item--positive" onClick={() => runAction(onPublish)}>
@@ -6796,6 +6906,22 @@ function Icon({ name }: { name: string }) {
           <circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none" />
         </Glyph>
       )
+    case 'panelLeftClose':
+      return (
+        <Glyph>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <path d="M9 5v14" />
+          <path d="m15 9-3 3 3 3" />
+        </Glyph>
+      )
+    case 'panelLeftOpen':
+      return (
+        <Glyph>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <path d="M9 5v14" />
+          <path d="m12 9 3 3-3 3" />
+        </Glyph>
+      )
     case 'plus':
       return (
         <Glyph>
@@ -6976,6 +7102,14 @@ function loadStoredAmbienceMode(): AmbienceMode {
   const raw = window.localStorage.getItem(ambienceStorageKey)
 
   return isAmbienceMode(raw) ? raw : 'subtle'
+}
+
+function loadStoredNavigationSidebarVisible() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  return window.localStorage.getItem(navigationSidebarStorageKey) !== 'hidden'
 }
 
 function isAmbienceMode(value: unknown): value is AmbienceMode {
@@ -7189,6 +7323,7 @@ async function fetchRemoteSearchResults(query: string, limit = 24): Promise<Sear
 
 async function generateRemoteAiDraft(request: {
   category: AiDraftCategory
+  context: ComposerRequestContext
   topic: string
 }): Promise<AiDraft> {
   const authHeaders = await getRemoteAuthHeaders()
@@ -7213,6 +7348,7 @@ async function generateRemoteAiDraft(request: {
 
 async function generateRemoteAiAssist(request: {
   action: AiAssistAction
+  context: ComposerRequestContext
   note: {
     selectedText: string
     status: string
@@ -7445,6 +7581,108 @@ function cloneAiDraftBlocks(blocks: AiDraftBlock[]) {
     items: block.items ? [...block.items] : undefined,
     citation: block.citation,
   }))
+}
+
+function buildComposerRequestContext(
+  history: ComposerHistoryEntry[],
+  options: { activeNoteTitle?: string | null; targetText: string },
+): ComposerRequestContext {
+  const targetTerms = getComposerContextTerms(options.targetText)
+  const normalizedActiveTitle = normalizeComposerContextText(options.activeNoteTitle ?? '')
+  const byId = new Map<string, ComposerHistoryEntry>()
+
+  history
+    .map((entry, index) => ({
+      entry,
+      index,
+      score: scoreComposerHistoryEntry(entry, targetTerms, normalizedActiveTitle),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, composerRequestContextLimit)
+    .forEach(({ entry }) => {
+      byId.set(entry.id, entry)
+    })
+
+  for (const entry of history) {
+    if (byId.size >= composerRequestContextLimit) {
+      break
+    }
+
+    byId.set(entry.id, entry)
+  }
+
+  return {
+    recent: [...byId.values()].slice(0, composerRequestContextLimit).map(createComposerContextItem),
+  }
+}
+
+function scoreComposerHistoryEntry(
+  entry: ComposerHistoryEntry,
+  targetTerms: Set<string>,
+  normalizedActiveTitle: string,
+) {
+  let score = 0
+
+  if (normalizedActiveTitle && normalizeComposerContextText(entry.sourceTitle) === normalizedActiveTitle) {
+    score += 8
+  }
+
+  const entryTerms = getComposerContextTerms(
+    `${entry.title} ${entry.summary} ${entry.prompt} ${entry.sourceTitle} ${getPlainTextFromAiDraftBlocks(entry.blocks)}`,
+  )
+
+  for (const term of targetTerms) {
+    if (entryTerms.has(term)) {
+      score += 1
+    }
+  }
+
+  return score
+}
+
+function createComposerContextItem(entry: ComposerHistoryEntry): ComposerContextItem {
+  return {
+    actionLabel: entry.assist?.actionLabel,
+    blocksPreview: summarizeInlineText(getPlainTextFromAiDraftBlocks(entry.blocks), composerRequestContextPreviewLength),
+    createdAt: entry.createdAt,
+    mode: entry.mode,
+    prompt: summarizeInlineText(entry.prompt, 180),
+    sourceTitle: summarizeInlineText(entry.sourceTitle, 160),
+    summary: summarizeInlineText(entry.summary, 260),
+    title: summarizeInlineText(entry.title, 160),
+  }
+}
+
+function getPlainTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
+  return blocks
+    .map((block) => {
+      if (block.type === 'bullet-list') {
+        return (block.items ?? []).join(' ')
+      }
+
+      return `${block.text ?? ''} ${block.citation ?? ''}`.trim()
+    })
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getComposerContextTerms(value: string) {
+  return new Set(
+    normalizeComposerContextText(value)
+      .split(/\s+/)
+      .filter((term) => term.length >= 4)
+      .slice(0, 80),
+  )
+}
+
+function normalizeComposerContextText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 async function signInRemote(email: string, state: PersistedAppState): Promise<RemoteSignInResult> {
@@ -8224,7 +8462,7 @@ function buildLibraryHomeSections(notes: Note[]) {
   const availableNotes = notes.filter((note) => !note.isArchived)
   const usedIds = new Set<string>()
   const continuablePool = availableNotes.filter(isContinuableNote)
-  const continueWriting = sortNotesForDailyUse(continuablePool.length > 0 ? continuablePool : availableNotes).slice(0, 3)
+  const continueWriting = sortNotesForContinuation(continuablePool.length > 0 ? continuablePool : availableNotes).slice(0, 3)
   continueWriting.forEach((note) => usedIds.add(note.id))
 
   const pinnedNotes = sortNotesForDailyUse(
@@ -8265,6 +8503,19 @@ function buildLibraryHomeSections(notes: Note[]) {
   ]
 
   return sections.filter((section) => section.notes.length > 0)
+}
+
+function sortNotesForContinuation(notes: Note[]) {
+  return [...notes].sort((left, right) => {
+    const leftDraftScore = isDraftNote(left) ? 1 : 0
+    const rightDraftScore = isDraftNote(right) ? 1 : 0
+
+    if (leftDraftScore !== rightDraftScore) {
+      return rightDraftScore - leftDraftScore
+    }
+
+    return compareNotesByUpdatedAt(left, right)
+  })
 }
 
 function filterLibraryCards(notes: Note[], filter: LibraryQuickFilter) {
