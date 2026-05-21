@@ -3445,7 +3445,9 @@ function App() {
       <div className="workspace">
         {!zenMode && (
           <header
-            className={`topbar ${showEditorHeaderLayout ? 'topbar--editor' : ''} ${showGlobalTopbarTools ? 'topbar--dashboard' : ''}`}
+            className={`topbar ${showEditorHeaderLayout ? 'topbar--editor' : ''} ${
+              showGlobalTopbarTools ? 'topbar--dashboard' : ''
+            } ${showGlobalTopbarTools && remoteAccountActive ? 'topbar--signedIn' : ''}`}
           >
             {view === 'editor' ? (
               <>
