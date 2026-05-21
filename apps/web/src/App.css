@@ -6891,13 +6891,14 @@ textarea:focus-visible {
     min-width: 180px;
   }
 
-  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary),
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary, .topbar-toolButton--composer),
   .topbar--dashboard.topbar--signedIn .topbar__actions--browser .utility-button {
     width: 38px;
+    justify-content: center;
     padding: 0;
   }
 
-  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary) span,
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary, .topbar-toolButton--composer) span,
   .topbar--dashboard.topbar--signedIn .topbar__actions--browser .utility-button span {
     position: absolute;
     width: 1px;
