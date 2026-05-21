@@ -3624,7 +3624,7 @@ function App() {
                       </button>
                       <button
                         type="button"
-                        className="topbar-toolButton"
+                        className="topbar-toolButton topbar-toolButton--composer"
                         onClick={toggleComposerPanel}
                         aria-label="Open Composer"
                         title={remoteAccountActive ? 'Open Composer' : 'Sign in with an approved invite to use Composer'}
