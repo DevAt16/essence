@@ -915,6 +915,10 @@
   gap: 16px;
 }
 
+.topbar--dashboard.topbar--signedIn {
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+}
+
 .topbar__leading {
   min-width: 0;
   display: inline-flex;
@@ -946,10 +950,15 @@
 }
 
 .topbar__browseContext {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 9px;
   color: var(--ink-subtle);
+}
+
+.topbar--dashboard.topbar--signedIn .topbar__browseContext {
+  display: none;
 }
 
 .topbar__browseContext span {
@@ -960,9 +969,13 @@
 }
 
 .topbar__browseContext strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink);
   font-size: 0.9rem;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .essence-mark {
@@ -6869,6 +6882,36 @@ textarea:focus-visible {
 }
 
 @media (max-width: 1180px) {
+  .topbar--dashboard.topbar--signedIn {
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .topbar--dashboard.topbar--signedIn .topbar-search {
+    min-width: 180px;
+  }
+
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary),
+  .topbar--dashboard.topbar--signedIn .topbar__actions--browser .utility-button {
+    width: 38px;
+    padding: 0;
+  }
+
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton:not(.topbar-toolButton--primary) span,
+  .topbar--dashboard.topbar--signedIn .topbar__actions--browser .utility-button span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .topbar--dashboard.topbar--signedIn .account-control__identity {
+    max-width: 6rem;
+  }
+
   .editor-workspace {
     grid-template-columns: 300px minmax(0, 1fr);
   }
@@ -6902,6 +6945,22 @@ textarea:focus-visible {
 }
 
 @media (max-width: 1080px) {
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton.topbar-toolButton--primary {
+    width: 38px;
+    padding: 0;
+  }
+
+  .topbar--dashboard.topbar--signedIn .topbar-toolButton.topbar-toolButton--primary span,
+  .topbar--dashboard.topbar--signedIn .account-control__identity {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
   .collections-screen {
     grid-template-columns: 1fr;
   }
