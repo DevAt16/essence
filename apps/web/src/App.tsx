@@ -31,6 +31,7 @@ type AmbienceMode = 'still' | 'subtle' | 'cosmic'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 type LibraryDisplayMode = 'cards' | 'list'
 type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
+type LibrarySortMode = 'updated' | 'pinned' | 'title' | 'collection' | 'status'
 
 interface NoteBlock {
   id: string
@@ -314,6 +315,8 @@ const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
 const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
+const libraryPreferencesStorageKey = 'essence-library-preferences'
+const editorSidebarStorageKey = 'essence-editor-sidebar-open'
 const historyLimit = 120
 const composerHistoryLimit = 18
 const composerRequestContextLimit = 3
@@ -539,6 +542,14 @@ const libraryQuickFilters: Array<{ id: LibraryQuickFilter; label: string }> = [
   { id: 'favorites', label: 'Favorites' },
   { id: 'essays', label: 'Essays' },
   { id: 'topics', label: 'Topics' },
+]
+
+const librarySortOptions: Array<{ id: LibrarySortMode; label: string }> = [
+  { id: 'updated', label: 'Recently edited' },
+  { id: 'pinned', label: 'Pinned first' },
+  { id: 'title', label: 'Title A-Z' },
+  { id: 'collection', label: 'Collection' },
+  { id: 'status', label: 'Status' },
 ]
 
 const slashMenuOptions: SlashMenuItem[] = [
@@ -865,7 +876,7 @@ function App() {
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [dialogState, setDialogState] = useState<AppDialogState | null>(null)
   const [editorActionsOpen, setEditorActionsOpen] = useState(false)
-  const [editorSidebarOpen, setEditorSidebarOpen] = useState(true)
+  const [editorSidebarOpen, setEditorSidebarOpen] = useState(loadStoredEditorSidebarOpen)
   const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -1246,6 +1257,14 @@ function App() {
       navigationSidebarVisible ? 'visible' : 'hidden',
     )
   }, [navigationSidebarVisible])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(editorSidebarStorageKey, editorSidebarOpen ? 'open' : 'closed')
+  }, [editorSidebarOpen])
 
   useEffect(() => {
     if (!remoteSyncReady) {
@@ -2363,6 +2382,60 @@ function App() {
     })
   }
 
+  const toggleNoteFavorite = (noteId: string) => {
+    const targetNote = notes.find((candidate) => candidate.id === noteId)
+
+    if (!targetNote) {
+      return
+    }
+
+    patchNote(
+      noteId,
+      (note) => ({
+        ...note,
+        isFavorite: !note.isFavorite,
+      }),
+      false,
+    )
+    flashSaveFeedback(targetNote.isFavorite ? 'Removed from favorites' : 'Added to favorites')
+  }
+
+  const toggleNotePinned = (noteId: string) => {
+    const targetNote = notes.find((candidate) => candidate.id === noteId)
+
+    if (!targetNote) {
+      return
+    }
+
+    patchNote(
+      noteId,
+      (note) => ({
+        ...note,
+        isPinned: !note.isPinned,
+      }),
+      false,
+    )
+    flashSaveFeedback(targetNote.isPinned ? 'Removed from pinned notes' : 'Pinned note')
+  }
+
+  const toggleNoteArchived = (noteId: string) => {
+    const targetNote = notes.find((candidate) => candidate.id === noteId)
+
+    if (!targetNote) {
+      return
+    }
+
+    patchNote(
+      noteId,
+      (note) => ({
+        ...note,
+        isArchived: !note.isArchived,
+      }),
+      false,
+    )
+    flashSaveFeedback(targetNote.isArchived ? 'Restored note' : 'Archived note')
+  }
+
   const openNote = (noteId: string) => {
     const note = notes.find((candidate) => candidate.id === noteId)
 
@@ -3126,15 +3199,7 @@ function App() {
       return
     }
 
-    patchNote(
-      activeNote.id,
-      (note) => ({
-        ...note,
-        isFavorite: !note.isFavorite,
-      }),
-      false,
-    )
-    setSaveMessage('Saved just now')
+    toggleNoteFavorite(activeNote.id)
   }
 
   const togglePinned = () => {
@@ -3142,15 +3207,7 @@ function App() {
       return
     }
 
-    patchNote(
-      activeNote.id,
-      (note) => ({
-        ...note,
-        isPinned: !note.isPinned,
-      }),
-      false,
-    )
-    flashSaveFeedback(activeNote.isPinned ? 'Removed from pinned notes' : 'Pinned note')
+    toggleNotePinned(activeNote.id)
   }
 
   const publishActiveNote = () => {
@@ -3434,6 +3491,7 @@ function App() {
   const showGlobalTopbarTools = view !== 'editor'
   const showEditorHeaderLayout = view === 'editor'
   const editorHeaderModeLabel = noteViewMode === 'edit' ? 'Editing' : 'Reading'
+  const editorReturnLabel = activeFilterLabel ?? browseViewMeta[editorContext].heading
   const navigationSidebarToggleLabel = navigationSidebarVisible ? 'Hide navigation sidebar' : 'Show navigation sidebar'
   const showAuthScreen = !remoteSyncReady || ((!currentUser || currentUser.isLocal) && !authGateDismissed)
   const readingProgressPercent = Math.round(readingProgress * 100)
@@ -3632,9 +3690,15 @@ function App() {
                   >
                     <Icon name={navigationSidebarVisible ? 'panelLeftClose' : 'panelLeftOpen'} />
                   </button>
-                  <button type="button" className="text-action" onClick={() => navigate(editorContext)}>
+                  <button
+                    type="button"
+                    className="text-action topbar__backButton"
+                    onClick={() => navigate(editorContext)}
+                    aria-label={`Back to ${editorReturnLabel}`}
+                    title={`Back to ${editorReturnLabel}`}
+                  >
                     <Icon name="arrowLeft" />
-                    <span>{`Back to ${browseViewMeta[editorContext].heading}`}</span>
+                    <span>{`Back to ${editorReturnLabel}`}</span>
                   </button>
                 </div>
 
@@ -3664,26 +3728,30 @@ function App() {
                         >
                           <Icon name="library" />
                         </button>
-                        <button
-                          type="button"
-                          className="icon-button"
-                          onClick={undo}
-                          aria-label="Undo last change"
-                          title="Undo last change"
-                          disabled={!historyState.canUndo}
-                        >
-                          <Icon name="undo" />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button"
-                          onClick={redo}
-                          aria-label="Redo change"
-                          title="Redo change"
-                          disabled={!historyState.canRedo}
-                        >
-                          <Icon name="redo" />
-                        </button>
+                        {noteViewMode === 'edit' && (
+                          <>
+                            <button
+                              type="button"
+                              className="icon-button"
+                              onClick={undo}
+                              aria-label="Undo last change"
+                              title="Undo last change"
+                              disabled={!historyState.canUndo}
+                            >
+                              <Icon name="undo" />
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-button"
+                              onClick={redo}
+                              aria-label="Redo change"
+                              title="Redo change"
+                              disabled={!historyState.canRedo}
+                            >
+                              <Icon name="redo" />
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           className={`utility-button ${zenMode ? 'utility-button--active' : ''}`}
@@ -3694,7 +3762,7 @@ function App() {
                           <Icon name="focus" />
                           <span>Focus</span>
                         </button>
-                        {isDraftNote(activeNote) && (
+                        {noteViewMode === 'edit' && isDraftNote(activeNote) && (
                           <button
                             type="button"
                             className="utility-button utility-button--accent"
@@ -3822,6 +3890,13 @@ function App() {
                 </div>
               </>
             )}
+            {view === 'editor' && activeNote && noteViewMode === 'read' && (
+              <div
+                className="topbar__readingProgress"
+                aria-hidden="true"
+                style={{ '--reading-progress': `${readingProgressPercent}%` } as CSSProperties}
+              />
+            )}
           </header>
         )}
 
@@ -3853,6 +3928,9 @@ function App() {
               onOpenFolder={openFolder}
               onOpenImport={openImportDialog}
               onOpenNote={openNote}
+              onToggleArchived={toggleNoteArchived}
+              onToggleFavorite={toggleNoteFavorite}
+              onTogglePinned={toggleNotePinned}
               searchQuery={searchQuery}
               viewMode={browseContext}
             />
@@ -3916,7 +3994,7 @@ function App() {
 
               <section
                 ref={editorScreenRef}
-                className={`editor-screen ${noteViewMode === 'read' ? 'editor-screen--readMode' : ''} ${
+                className={`editor-screen ${noteViewMode === 'read' ? 'editor-screen--readMode' : 'editor-screen--editMode'} ${
                   noteHistoryOpen && activeNote ? 'editor-screen--history' : ''
                 } ${
                   zenMode ? 'editor-screen--focus' : ''
@@ -3924,15 +4002,6 @@ function App() {
                 onScroll={updateReadingProgress}
                 onWheel={handleEditorWheel}
               >
-                {activeNote && noteViewMode === 'read' && !zenMode && (
-                  <div
-                    key={readingProgressPercent}
-                    className="reader-progress"
-                    aria-hidden="true"
-                    style={{ backgroundSize: `${readingProgressPercent}% 100%, auto` }}
-                  />
-                )}
-
                 {activeNote ? (
                   <div className={`editor-layout ${noteHistoryOpen ? 'editor-layout--history' : ''}`}>
                     <div className="editor-column">
@@ -4236,6 +4305,9 @@ function LibraryScreen({
   onOpenFolder,
   onOpenImport,
   onOpenNote,
+  onToggleArchived,
+  onToggleFavorite,
+  onTogglePinned,
   searchQuery,
   viewMode,
 }: {
@@ -4254,15 +4326,31 @@ function LibraryScreen({
   onOpenFolder: (folderId: string) => void
   onOpenImport: () => void
   onOpenNote: (noteId: string) => void
+  onToggleArchived: (noteId: string) => void
+  onToggleFavorite: (noteId: string) => void
+  onTogglePinned: (noteId: string) => void
   searchQuery: string
   viewMode: NavMode
 }) {
-  const [displayMode, setDisplayMode] = useState<LibraryDisplayMode>('cards')
+  const [displayMode, setDisplayMode] = useState<LibraryDisplayMode>(
+    () => loadStoredLibraryPreferences().displayMode,
+  )
   const [quickFilter, setQuickFilter] = useState<LibraryQuickFilter>('all')
+  const [sortMode, setSortMode] = useState<LibrarySortMode>(() => loadStoredLibraryPreferences().sortMode)
+  const [openActionNoteId, setOpenActionNoteId] = useState<string | null>(null)
   const normalizedSearchQuery = searchQuery.trim()
-  const visibleCards = useMemo(() => filterLibraryCards(cards, quickFilter), [cards, quickFilter])
+  const filteredCards = useMemo(() => filterLibraryCards(cards, quickFilter), [cards, quickFilter])
+  const visibleCards = useMemo(
+    () => sortLibraryCards(filteredCards, sortMode, collectionNameById),
+    [collectionNameById, filteredCards, sortMode],
+  )
   const visibleNoteCountLabel = `${formatCount(visibleCards.length, 'note')} in view`
-  const isHomeView = viewMode === 'library' && normalizedSearchQuery.length === 0 && !activeFilterLabel && quickFilter === 'all'
+  const isHomeView =
+    viewMode === 'library' &&
+    normalizedSearchQuery.length === 0 &&
+    !activeFilterLabel &&
+    quickFilter === 'all' &&
+    sortMode === 'updated'
   const homeSections = useMemo(() => buildLibraryHomeSections(visibleCards), [visibleCards])
   const emptyState = getLibraryEmptyState(viewMode, searchQuery, activeFilterLabel, quickFilter)
   const searchScopeLabel = activeFilterLabel ?? browseViewMeta[viewMode].heading
@@ -4276,6 +4364,33 @@ function LibraryScreen({
   useEffect(() => {
     setQuickFilter('all')
   }, [activeFilterLabel, normalizedSearchQuery, viewMode])
+
+  useEffect(() => {
+    persistLibraryPreferences({ displayMode, sortMode })
+  }, [displayMode, sortMode])
+
+  useEffect(() => {
+    setOpenActionNoteId(null)
+  }, [activeFilterLabel, displayMode, normalizedSearchQuery, quickFilter, sortMode, viewMode])
+
+  useEffect(() => {
+    if (!openActionNoteId) {
+      return undefined
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+
+      if (target instanceof Element && target.closest('.note-quickActions')) {
+        return
+      }
+
+      setOpenActionNoteId(null)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    return () => window.removeEventListener('pointerdown', handlePointerDown)
+  }, [openActionNoteId])
 
   return (
     <section className="library-screen">
@@ -4342,6 +4457,22 @@ function LibraryScreen({
             </button>
           )}
 
+          <label className="library-sortControl">
+            <span>Sort</span>
+            <select
+              value={sortMode}
+              onChange={(event) => setSortMode(event.target.value as LibrarySortMode)}
+              aria-label="Sort notes"
+            >
+              {librarySortOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <Icon name="chevronDown" />
+          </label>
+
           <div className="library-viewToggle" role="tablist" aria-label="Library view">
             <button
               type="button"
@@ -4405,6 +4536,14 @@ function LibraryScreen({
                       note={note}
                       foldersById={foldersById}
                       onOpenNote={onOpenNote}
+                      actionsOpen={openActionNoteId === note.id}
+                      onCloseActions={() => setOpenActionNoteId(null)}
+                      onToggleActions={() =>
+                        setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
+                      }
+                      onToggleArchived={onToggleArchived}
+                      onToggleFavorite={onToggleFavorite}
+                      onTogglePinned={onTogglePinned}
                     />
                   ))}
                 </div>
@@ -4417,6 +4556,14 @@ function LibraryScreen({
                       note={note}
                       foldersById={foldersById}
                       onOpenNote={onOpenNote}
+                      actionsOpen={openActionNoteId === note.id}
+                      onCloseActions={() => setOpenActionNoteId(null)}
+                      onToggleActions={() =>
+                        setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
+                      }
+                      onToggleArchived={onToggleArchived}
+                      onToggleFavorite={onToggleFavorite}
+                      onTogglePinned={onTogglePinned}
                     />
                   ))}
                 </div>
@@ -4433,6 +4580,14 @@ function LibraryScreen({
               note={note}
               foldersById={foldersById}
               onOpenNote={onOpenNote}
+              actionsOpen={openActionNoteId === note.id}
+              onCloseActions={() => setOpenActionNoteId(null)}
+              onToggleActions={() =>
+                setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
+              }
+              onToggleArchived={onToggleArchived}
+              onToggleFavorite={onToggleFavorite}
+              onTogglePinned={onTogglePinned}
             />
           ))}
         </div>
@@ -4445,6 +4600,14 @@ function LibraryScreen({
               note={note}
               foldersById={foldersById}
               onOpenNote={onOpenNote}
+              actionsOpen={openActionNoteId === note.id}
+              onCloseActions={() => setOpenActionNoteId(null)}
+              onToggleActions={() =>
+                setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
+              }
+              onToggleArchived={onToggleArchived}
+              onToggleFavorite={onToggleFavorite}
+              onTogglePinned={onTogglePinned}
             />
           ))}
         </div>
@@ -4507,15 +4670,27 @@ function getLibraryEmptyState(
 }
 
 function NoteCard({
+  actionsOpen,
   collectionNameById,
   note,
   foldersById,
+  onCloseActions,
   onOpenNote,
+  onToggleActions,
+  onToggleArchived,
+  onToggleFavorite,
+  onTogglePinned,
 }: {
+  actionsOpen: boolean
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onCloseActions: () => void
   onOpenNote: (noteId: string) => void
+  onToggleActions: () => void
+  onToggleArchived: (noteId: string) => void
+  onToggleFavorite: (noteId: string) => void
+  onTogglePinned: (noteId: string) => void
 }) {
   const excerpt = summarizeBlocks(note.blocks)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
@@ -4525,62 +4700,88 @@ function NoteCard({
     excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
 
   return (
-    <button
-      type="button"
-      className={`note-card note-card--${note.layout} ${note.type === 'quote' ? 'note-card--quote' : ''} ${isCompact ? 'note-card--compact' : ''} ${displayExcerpt.length === 0 ? 'note-card--bare' : ''}`}
-      onClick={() => onOpenNote(note.id)}
+    <article
+      className={`note-card note-card--${note.layout} ${note.type === 'quote' ? 'note-card--quote' : ''} ${isCompact ? 'note-card--compact' : ''} ${displayExcerpt.length === 0 ? 'note-card--bare' : ''} ${actionsOpen ? 'note-card--menuOpen' : ''}`}
     >
-      <div className="note-card__top">
-        <span className="badge">{note.status}</span>
-        <span className="note-card__dateGroup">
-          {note.isPinned && (
-            <span className="note-card__pin" aria-label="Pinned note" title="Pinned note">
-              <Icon name="pin" />
-            </span>
-          )}
-          <span className="note-card__date">{note.previewDate}</span>
-        </span>
-      </div>
+      <button type="button" className="note-card__openButton" onClick={() => onOpenNote(note.id)}>
+        <div className="note-card__top">
+          <span className="badge">{note.status}</span>
+          <span className="note-card__dateGroup">
+            {note.isFavorite && (
+              <span className="note-card__pin note-card__pin--favorite" aria-label="Favorite note" title="Favorite note">
+                <Icon name="star" />
+              </span>
+            )}
+            {note.isPinned && (
+              <span className="note-card__pin" aria-label="Pinned note" title="Pinned note">
+                <Icon name="pin" />
+              </span>
+            )}
+            <span className="note-card__date">{note.previewDate}</span>
+          </span>
+        </div>
 
-      {note.type === 'quote' ? (
-        <>
-          <div className="note-card__body note-card__body--quote">
-            <div className="quote-mark">
-              <Icon name="quote" />
+        {note.type === 'quote' ? (
+          <>
+            <div className="note-card__body note-card__body--quote">
+              <div className="quote-mark">
+                <Icon name="quote" />
+              </div>
+              <p className="quote-text">{excerpt}</p>
             </div>
-            <p className="quote-text">{excerpt}</p>
-          </div>
-          <div className="note-card__bottom">
-            <span className="note-card__footer">{locationLabel}</span>
-            <NoteTagSummary tags={note.tags} className="note-card__meta" />
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="note-card__body">
-            <h2>{note.title}</h2>
-            {displayExcerpt.length > 0 && <p className="note-card__excerpt">{displayExcerpt}</p>}
-          </div>
-          <div className="note-card__bottom">
-            <span className="note-card__footer">{locationLabel}</span>
-            <NoteTagSummary tags={note.tags} className="note-card__meta" />
-          </div>
-        </>
-      )}
-    </button>
+            <div className="note-card__bottom">
+              <span className="note-card__footer">{locationLabel}</span>
+              <NoteTagSummary tags={note.tags} className="note-card__meta" />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="note-card__body">
+              <h2>{note.title}</h2>
+              {displayExcerpt.length > 0 && <p className="note-card__excerpt">{displayExcerpt}</p>}
+            </div>
+            <div className="note-card__bottom">
+              <span className="note-card__footer">{locationLabel}</span>
+              <NoteTagSummary tags={note.tags} className="note-card__meta" />
+            </div>
+          </>
+        )}
+      </button>
+      <NoteQuickActions
+        isOpen={actionsOpen}
+        note={note}
+        onClose={onCloseActions}
+        onToggleOpen={onToggleActions}
+        onToggleArchived={onToggleArchived}
+        onToggleFavorite={onToggleFavorite}
+        onTogglePinned={onTogglePinned}
+      />
+    </article>
   )
 }
 
 function NoteListItem({
+  actionsOpen,
   collectionNameById,
   note,
   foldersById,
+  onCloseActions,
   onOpenNote,
+  onToggleActions,
+  onToggleArchived,
+  onToggleFavorite,
+  onTogglePinned,
 }: {
+  actionsOpen: boolean
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onCloseActions: () => void
   onOpenNote: (noteId: string) => void
+  onToggleActions: () => void
+  onToggleArchived: (noteId: string) => void
+  onToggleFavorite: (noteId: string) => void
+  onTogglePinned: (noteId: string) => void
 }) {
   const excerpt = summarizeBlocks(note.blocks)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
@@ -4590,27 +4791,119 @@ function NoteListItem({
     excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
 
   return (
-    <button type="button" className="note-list-item" onClick={() => onOpenNote(note.id)}>
-      <div className="note-list-item__main">
-        <div className="note-list-item__meta">
-          <span className="badge">{note.status}</span>
-          <span>{note.previewDate}</span>
-          {note.isPinned && (
-            <span className="note-list-item__pin" aria-label="Pinned note" title="Pinned note">
-              <Icon name="pin" />
-            </span>
-          )}
+    <article className={`note-list-item ${actionsOpen ? 'note-list-item--menuOpen' : ''}`}>
+      <button type="button" className="note-list-item__openButton" onClick={() => onOpenNote(note.id)}>
+        <div className="note-list-item__main">
+          <div className="note-list-item__meta">
+            <span className="badge">{note.status}</span>
+            <span>{note.previewDate}</span>
+            {note.isFavorite && (
+              <span className="note-list-item__pin note-list-item__pin--favorite" aria-label="Favorite note" title="Favorite note">
+                <Icon name="star" />
+              </span>
+            )}
+            {note.isPinned && (
+              <span className="note-list-item__pin" aria-label="Pinned note" title="Pinned note">
+                <Icon name="pin" />
+              </span>
+            )}
+          </div>
+          <h3>{note.title}</h3>
+          {displayExcerpt && <p>{displayExcerpt}</p>}
         </div>
-        <h3>{note.title}</h3>
-        {displayExcerpt && <p>{displayExcerpt}</p>}
-      </div>
 
-      <div className="note-list-item__side">
-        <span>{locationLabel}</span>
-        <small>{`${formatCount(wordCount, 'word')} / ${formatCount(note.blocks.length, 'block')}`}</small>
-        <NoteTagSummary tags={note.tags} className="note-list-item__tags" />
-      </div>
-    </button>
+        <div className="note-list-item__side">
+          <span>{locationLabel}</span>
+          <small>{`${formatCount(wordCount, 'word')} / ${formatCount(note.blocks.length, 'block')}`}</small>
+          <NoteTagSummary tags={note.tags} className="note-list-item__tags" />
+        </div>
+      </button>
+      <NoteQuickActions
+        isOpen={actionsOpen}
+        note={note}
+        onClose={onCloseActions}
+        onToggleOpen={onToggleActions}
+        onToggleArchived={onToggleArchived}
+        onToggleFavorite={onToggleFavorite}
+        onTogglePinned={onTogglePinned}
+      />
+    </article>
+  )
+}
+
+function NoteQuickActions({
+  isOpen,
+  note,
+  onClose,
+  onToggleOpen,
+  onToggleArchived,
+  onToggleFavorite,
+  onTogglePinned,
+}: {
+  isOpen: boolean
+  note: Note
+  onClose: () => void
+  onToggleOpen: () => void
+  onToggleArchived: (noteId: string) => void
+  onToggleFavorite: (noteId: string) => void
+  onTogglePinned: (noteId: string) => void
+}) {
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+      onClose()
+    }
+  }
+
+  const handleFavorite = () => {
+    onToggleFavorite(note.id)
+    onClose()
+  }
+
+  const handlePinned = () => {
+    onTogglePinned(note.id)
+    onClose()
+  }
+
+  const handleArchived = () => {
+    onToggleArchived(note.id)
+    onClose()
+  }
+
+  return (
+    <div
+      className={`note-quickActions ${isOpen ? 'note-quickActions--open' : ''}`}
+      aria-label={`Quick actions for ${note.title || 'Untitled note'}`}
+      onKeyDown={handleMenuKeyDown}
+    >
+      <button
+        type="button"
+        className={`note-actionMenuTrigger ${isOpen ? 'note-actionMenuTrigger--active' : ''}`}
+        onClick={onToggleOpen}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label="Note actions"
+        title="Note actions"
+      >
+        <Icon name="more" />
+      </button>
+      {isOpen && (
+        <div className="note-actionMenu" role="menu">
+          <button type="button" className="note-actionMenu__item" onClick={handleFavorite} role="menuitem">
+            <Icon name="star" />
+            <span>{note.isFavorite ? 'Remove favorite' : 'Favorite'}</span>
+          </button>
+          <button type="button" className="note-actionMenu__item" onClick={handlePinned} role="menuitem">
+            <Icon name="pin" />
+            <span>{note.isPinned ? 'Unpin note' : 'Pin note'}</span>
+          </button>
+          <button type="button" className="note-actionMenu__item" onClick={handleArchived} role="menuitem">
+            <Icon name="archive" />
+            <span>{note.isArchived ? 'Restore note' : 'Archive'}</span>
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -4709,16 +5002,20 @@ function EditorSidebar({
               getFolderPathLabel(note.folderId, foldersById) ||
               collectionNameById[note.collectionId] ||
               humanizeCollectionId(note.collectionId)
+            const isActive = note.id === activeNoteId
 
             return (
               <button
                 key={note.id}
                 type="button"
-                className={`note-sidebar__item ${note.id === activeNoteId ? 'note-sidebar__item--active' : ''}`}
+                className={`note-sidebar__item ${isActive ? 'note-sidebar__item--active' : ''}`}
                 onClick={() => onOpenNote(note.id)}
               >
                 <div className="note-sidebar__metaRow">
-                  <span className="note-sidebar__status">{note.status}</span>
+                  <span className="note-sidebar__metaGroup">
+                    <span className="note-sidebar__status">{note.status}</span>
+                    {isActive && <span className="note-sidebar__current">Current</span>}
+                  </span>
                   <span>{note.previewDate}</span>
                 </div>
                 <h3>{note.title}</h3>
@@ -5988,21 +6285,23 @@ function ReadModeNote({
         )}
         <h1 className="reader-title">{note.title}</h1>
         {!isFocusMode && (
-          <div className="reader-stats" aria-label="Reading stats">
-            <span>{`${readingTimeMinutes} min read`}</span>
-            <span>{`${wordCount} words`}</span>
-            <span>{formatCount(note.blocks.length, 'block')}</span>
-          </div>
-        )}
-        {!isFocusMode && note.tags.length > 0 && (
-          <div className="reader-topics" aria-label="Topics">
-            <span>Topics</span>
-            {visibleTags.map((tag) => (
-              <button key={tag} type="button" className="reader-topic" onClick={() => onOpenTag(tag)}>
-                {tag}
-              </button>
-            ))}
-            {hiddenTagCount > 0 && <span className="reader-topic reader-topic--count">{`+${hiddenTagCount}`}</span>}
+          <div className="reader-detailBar">
+            <div className="reader-stats" aria-label="Reading stats">
+              <span>{`${readingTimeMinutes} min read`}</span>
+              <span>{`${wordCount} words`}</span>
+              <span>{formatCount(note.blocks.length, 'block')}</span>
+            </div>
+            {note.tags.length > 0 && (
+              <div className="reader-topics" aria-label="Topics">
+                <span>Topics</span>
+                {visibleTags.map((tag) => (
+                  <button key={tag} type="button" className="reader-topic" onClick={() => onOpenTag(tag)}>
+                    {tag}
+                  </button>
+                ))}
+                {hiddenTagCount > 0 && <span className="reader-topic reader-topic--count">{`+${hiddenTagCount}`}</span>}
+              </div>
+            )}
           </div>
         )}
       </header>
@@ -6062,24 +6361,31 @@ function ReaderExplorationPanel({
         </p>
       </div>
 
-      <div className="reader-depth__actions">
-        {readerExplorationActions.map((action) => {
-          const isPending = pendingAction === action.action
+      {isLocked ? (
+        <div className="reader-depth__lockedNote">
+          <Icon name="lock" />
+          <span>Sign in from the topbar to unlock Composer prompts for this note.</span>
+        </div>
+      ) : (
+        <div className="reader-depth__actions">
+          {readerExplorationActions.map((action) => {
+            const isPending = pendingAction === action.action
 
-          return (
-            <button
-              key={action.action}
-              type="button"
-              className="reader-depth__action"
-              onClick={() => onExplore(action.action)}
-              disabled={isLocked || pendingAction !== null}
-            >
-              <span>{isLocked ? 'Locked' : isPending ? 'Thinking...' : action.label}</span>
-              <small>{action.description}</small>
-            </button>
-          )
-        })}
-      </div>
+            return (
+              <button
+                key={action.action}
+                type="button"
+                className="reader-depth__action"
+                onClick={() => onExplore(action.action)}
+                disabled={pendingAction !== null}
+              >
+                <span>{isPending ? 'Thinking...' : action.label}</span>
+                <small>{action.description}</small>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -7515,6 +7821,54 @@ function loadStoredNavigationSidebarVisible() {
   }
 
   return window.localStorage.getItem(navigationSidebarStorageKey) !== 'hidden'
+}
+
+function loadStoredEditorSidebarOpen() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  return window.localStorage.getItem(editorSidebarStorageKey) !== 'closed'
+}
+
+function loadStoredLibraryPreferences(): { displayMode: LibraryDisplayMode; sortMode: LibrarySortMode } {
+  if (typeof window === 'undefined') {
+    return {
+      displayMode: 'cards',
+      sortMode: 'updated',
+    }
+  }
+
+  try {
+    const raw = window.localStorage.getItem(libraryPreferencesStorageKey)
+    const candidate = raw ? (JSON.parse(raw) as { displayMode?: unknown; sortMode?: unknown }) : {}
+
+    return {
+      displayMode: isLibraryDisplayMode(candidate.displayMode) ? candidate.displayMode : 'cards',
+      sortMode: isLibrarySortMode(candidate.sortMode) ? candidate.sortMode : 'updated',
+    }
+  } catch {
+    return {
+      displayMode: 'cards',
+      sortMode: 'updated',
+    }
+  }
+}
+
+function persistLibraryPreferences(preferences: { displayMode: LibraryDisplayMode; sortMode: LibrarySortMode }) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(libraryPreferencesStorageKey, JSON.stringify(preferences))
+}
+
+function isLibraryDisplayMode(value: unknown): value is LibraryDisplayMode {
+  return value === 'cards' || value === 'list'
+}
+
+function isLibrarySortMode(value: unknown): value is LibrarySortMode {
+  return value === 'updated' || value === 'pinned' || value === 'title' || value === 'collection' || value === 'status'
 }
 
 function isAmbienceMode(value: unknown): value is AmbienceMode {
@@ -9114,6 +9468,32 @@ function filterLibraryCards(notes: Note[], filter: LibraryQuickFilter) {
   return notes.filter((note) => noteMatchesLibraryQuickFilter(note, filter))
 }
 
+function sortLibraryCards(
+  notes: Note[],
+  sortMode: LibrarySortMode,
+  collectionNameById: Record<CollectionId, string>,
+) {
+  return [...notes].sort((left, right) => {
+    switch (sortMode) {
+      case 'pinned':
+        if (left.isPinned !== right.isPinned) {
+          return left.isPinned ? -1 : 1
+        }
+
+        return compareNotesByUpdatedAt(left, right)
+      case 'title':
+        return compareNotesByTitle(left, right)
+      case 'collection':
+        return compareNotesByCollection(left, right, collectionNameById)
+      case 'status':
+        return compareNotesByStatus(left, right)
+      case 'updated':
+      default:
+        return compareNotesByUpdatedAt(left, right)
+    }
+  })
+}
+
 function getLibraryQuickFilterCount(notes: Note[], filter: LibraryQuickFilter) {
   return filter === 'all' ? notes.length : notes.filter((note) => noteMatchesLibraryQuickFilter(note, filter)).length
 }
@@ -9154,6 +9534,29 @@ function compareNotesByUpdatedAt(left: Note, right: Note) {
   }
 
   return left.title.localeCompare(right.title)
+}
+
+function compareNotesByTitle(left: Note, right: Note) {
+  return left.title.localeCompare(right.title) || compareNotesByUpdatedAt(left, right)
+}
+
+function compareNotesByCollection(
+  left: Note,
+  right: Note,
+  collectionNameById: Record<CollectionId, string>,
+) {
+  const leftCollectionName = collectionNameById[left.collectionId] || humanizeCollectionId(left.collectionId)
+  const rightCollectionName = collectionNameById[right.collectionId] || humanizeCollectionId(right.collectionId)
+
+  return (
+    leftCollectionName.localeCompare(rightCollectionName) ||
+    compareNotesByTitle(left, right) ||
+    compareNotesByUpdatedAt(left, right)
+  )
+}
+
+function compareNotesByStatus(left: Note, right: Note) {
+  return left.status.localeCompare(right.status) || compareNotesByUpdatedAt(left, right)
 }
 
 function getNoteTimestampValue(note: Note) {
@@ -9470,6 +9873,10 @@ function getBlockTextValue(block: NoteBlock) {
 }
 
 function getDefaultNoteViewMode(note: Note): NoteViewMode {
+  if (note.isArchived) {
+    return 'read'
+  }
+
   const isDraftLike = isDraftNote(note)
 
   return isDraftLike ? 'edit' : 'read'
