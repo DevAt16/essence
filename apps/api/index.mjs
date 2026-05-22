@@ -24,6 +24,7 @@ import {
   pool,
   saveAppState,
   searchNotes,
+  updateUserProfile,
 } from './db.mjs'
 
 const port = Number(process.env.PORT ?? 4000)
@@ -225,6 +226,17 @@ app.get('/api/state', async (request, response, next) => {
     const user = await requireAccountUser(request)
     const state = await getAppState(user.id)
     response.json({ state, user: serializeUser(user) })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/profile', async (request, response, next) => {
+  try {
+    const user = await requireAccountUser(request)
+    const updatedUser = await updateUserProfile(user.id, request.body ?? {})
+
+    response.json({ user: serializeUser(updatedUser ?? user) })
   } catch (error) {
     next(error)
   }
@@ -790,6 +802,7 @@ function isPersistedAppState(value) {
 
   return (
     (typeof value.activeNoteId === 'string' || value.activeNoteId === null) &&
+    (value.collections === undefined || Array.isArray(value.collections)) &&
     Array.isArray(value.folders) &&
     Array.isArray(value.notes)
   )
@@ -1498,6 +1511,9 @@ function serializeUser(user) {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
+    firstName: user.firstName ?? '',
+    lastName: user.lastName ?? '',
+    username: user.username ?? '',
     isLocal: Boolean(user.isLocal),
   }
 }
@@ -1797,6 +1813,7 @@ function createEmptyPersistedState() {
   return {
     activeNoteId: null,
     composerHistory: [],
+    collections: [],
     folders: [],
     notes: [],
   }
@@ -1809,6 +1826,9 @@ function cloneStateForAccount(state) {
   return {
     activeNoteId: state.activeNoteId ? noteIdMap.get(state.activeNoteId) ?? null : null,
     composerHistory: Array.isArray(state.composerHistory) ? state.composerHistory : [],
+    collections: Array.isArray(state.collections)
+      ? state.collections.map((collection) => ({ ...collection }))
+      : [],
     folders: state.folders.map((folder) => ({
       ...folder,
       id: folderIdMap.get(folder.id),

@@ -1,11 +1,12 @@
 {
   "name": "essence",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.3.0-alpha.0",
   "type": "module",
   "scripts": {
     "dev": "npm run dev:web",
     "dev:web": "vite --config apps/web/vite.config.ts",
+    "dev:desktop": "tauri dev",
     "dev:client": "npm run dev:web",
     "dev:api": "node apps/api/index.mjs",
     "dev:server": "npm run dev:api",
@@ -14,6 +15,7 @@
     "start:api": "node apps/api/start.mjs",
     "smoke:prod": "node apps/api/production-smoke.mjs",
     "build": "tsc -b && vite build --config apps/web/vite.config.ts",
+    "build:desktop": "tauri build",
     "lint": "eslint .",
     "test": "npm run test:api",
     "check": "npm run lint && npm run test:api && npm run build",
@@ -26,7 +28,8 @@
     "db:seed": "node apps/api/seed.mjs",
     "auth:approve": "node apps/api/approved-users.mjs approve",
     "auth:list": "node apps/api/approved-users.mjs list",
-    "auth:revoke": "node apps/api/approved-users.mjs revoke"
+    "auth:revoke": "node apps/api/approved-users.mjs revoke",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
@@ -56,6 +59,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2.11.2",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
