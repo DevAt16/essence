@@ -8,6 +8,32 @@ const { Pool } = pg
 const schemaPath = new URL('./schema.sql', import.meta.url)
 const legacyStateRowId = 'default'
 export const localUserId = 'local'
+const defaultCollections = [
+  {
+    id: 'work',
+    name: 'Work',
+    description: 'Projects, meetings, and strategy.',
+    icon: 'briefcase',
+  },
+  {
+    id: 'personal',
+    name: 'Personal',
+    description: 'Journaling and personal goals.',
+    icon: 'person',
+  },
+  {
+    id: 'research',
+    name: 'Research',
+    description: 'Essays, references, and literature.',
+    icon: 'flask',
+  },
+  {
+    id: 'ideas',
+    name: 'Ideas',
+    description: 'Fleeting thoughts and concepts.',
+    icon: 'bulb',
+  },
+]
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required to run the PostgreSQL API.')
@@ -66,6 +92,9 @@ export async function getUserById(userId) {
         id,
         email,
         display_name as "displayName",
+        username,
+        first_name as "firstName",
+        last_name as "lastName",
         is_local as "isLocal",
         created_at as "createdAt",
         updated_at as "updatedAt"
@@ -206,6 +235,9 @@ export async function getOrCreateUserByEmail(email) {
         id,
         email,
         display_name as "displayName",
+        username,
+        first_name as "firstName",
+        last_name as "lastName",
         is_local as "isLocal",
         created_at as "createdAt",
         updated_at as "updatedAt"
@@ -236,6 +268,9 @@ export async function getOrCreateExternalUser({ displayName, email, provider, su
           users.id,
           users.email,
           users.display_name as "displayName",
+          users.username,
+          users.first_name as "firstName",
+          users.last_name as "lastName",
           users.is_local as "isLocal",
           users.created_at as "createdAt",
           users.updated_at as "updatedAt"
@@ -266,6 +301,9 @@ export async function getOrCreateExternalUser({ displayName, email, provider, su
           id,
           email,
           display_name as "displayName",
+          username,
+          first_name as "firstName",
+          last_name as "lastName",
           is_local as "isLocal",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -288,6 +326,9 @@ export async function getOrCreateExternalUser({ displayName, email, provider, su
             id,
             email,
             display_name as "displayName",
+            username,
+            first_name as "firstName",
+            last_name as "lastName",
             is_local as "isLocal",
             created_at as "createdAt",
             updated_at as "updatedAt"
@@ -351,6 +392,9 @@ export async function getUserBySessionToken(token) {
         users.id,
         users.email,
         users.display_name as "displayName",
+        users.username,
+        users.first_name as "firstName",
+        users.last_name as "lastName",
         users.is_local as "isLocal",
         users.created_at as "createdAt",
         users.updated_at as "updatedAt"
@@ -363,6 +407,50 @@ export async function getUserBySessionToken(token) {
   )
 
   return result.rows[0] ?? null
+}
+
+export async function updateUserProfile(userId, profile = {}) {
+  const existingUser = await getUserById(userId)
+
+  if (!existingUser || existingUser.isLocal) {
+    return existingUser
+  }
+
+  const firstName = normalizeOptionalString(profile.firstName, 80)
+  const lastName = normalizeOptionalString(profile.lastName, 80)
+  const username = normalizeUsername(profile.username)
+  const displayName = normalizeProfileDisplayName(profile.displayName, {
+    email: existingUser.email,
+    firstName,
+    lastName,
+    username,
+  })
+
+  const result = await pool.query(
+    `
+      update users
+      set
+        display_name = $2,
+        username = $3,
+        first_name = $4,
+        last_name = $5,
+        updated_at = now()
+      where id = $1 and is_local = false
+      returning
+        id,
+        email,
+        display_name as "displayName",
+        username,
+        first_name as "firstName",
+        last_name as "lastName",
+        is_local as "isLocal",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `,
+    [userId, displayName, username, firstName, lastName],
+  )
+
+  return result.rows[0] ?? existingUser
 }
 
 export async function deleteUserSession(token) {
@@ -574,12 +662,18 @@ async function migrateLegacySnapshotIfNeeded() {
     const countsResult = await client.query(`
       select
         (select count(*)::int from workspace_state) as "workspaceCount",
+        (select count(*)::int from collections) as "collectionsCount",
         (select count(*)::int from folders) as "foldersCount",
         (select count(*)::int from notes) as "notesCount"
     `)
     const counts = countsResult.rows[0]
 
-    if ((counts?.workspaceCount ?? 0) > 0 || (counts?.foldersCount ?? 0) > 0 || (counts?.notesCount ?? 0) > 0) {
+    if (
+      (counts?.workspaceCount ?? 0) > 0 ||
+      (counts?.collectionsCount ?? 0) > 0 ||
+      (counts?.foldersCount ?? 0) > 0 ||
+      (counts?.notesCount ?? 0) > 0
+    ) {
       await client.query('commit')
       return
     }
@@ -618,6 +712,19 @@ async function readNormalizedState(client, userId = localUserId) {
       limit 1
     `,
     [workspaceIds, userId],
+  )
+  const collectionResult = await client.query(
+    `
+      select
+        id,
+        name,
+        description,
+        icon
+      from collections
+      where user_id = $1
+      order by sort_order asc, id asc
+    `,
+    [userId],
   )
   const folderResult = await client.query(
     `
@@ -702,7 +809,12 @@ async function readNormalizedState(client, userId = localUserId) {
     [userId],
   )
 
-  if (workspaceResult.rowCount === 0 && folderResult.rowCount === 0 && noteResult.rowCount === 0) {
+  if (
+    workspaceResult.rowCount === 0 &&
+    collectionResult.rowCount === 0 &&
+    folderResult.rowCount === 0 &&
+    noteResult.rowCount === 0
+  ) {
     return null
   }
 
@@ -769,6 +881,7 @@ async function readNormalizedState(client, userId = localUserId) {
     composerHistory: Array.isArray(workspaceResult.rows[0]?.composerHistory)
       ? workspaceResult.rows[0].composerHistory
       : [],
+    collections: ensureCollectionsForWorkspace(collectionResult.rows, folderResult.rows, notes),
     folders: folderResult.rows,
     notes,
   }
@@ -816,6 +929,24 @@ async function replaceNormalizedState(client, rawState, options) {
   )
   await client.query('delete from notes where user_id = $1', [userId])
   await client.query('delete from folders where user_id = $1', [userId])
+  await client.query('delete from collections where user_id = $1', [userId])
+
+  for (const [index, collection] of state.collections.entries()) {
+    await client.query(
+      `
+        insert into collections (id, user_id, name, description, icon, sort_order, updated_at)
+        values ($1, $2, $3, $4, $5, $6, now())
+      `,
+      [
+        collection.id,
+        userId,
+        collection.name,
+        collection.description ?? '',
+        collection.icon ?? 'folder',
+        index,
+      ],
+    )
+  }
 
   const validFolderIds = new Set(state.folders.map((folder) => folder.id))
   const sortedFolders = sortFoldersForPersistence(state.folders)
@@ -1082,12 +1213,109 @@ async function upsertLegacySnapshot(client, state, userId = localUserId) {
 }
 
 function normalizePersistedAppState(value) {
+  const folders = Array.isArray(value?.folders) ? value.folders : []
+  const notes = Array.isArray(value?.notes) ? value.notes : []
+
   return {
     activeNoteId: typeof value?.activeNoteId === 'string' || value?.activeNoteId === null ? value.activeNoteId : null,
     composerHistory: Array.isArray(value?.composerHistory) ? value.composerHistory : [],
-    folders: Array.isArray(value?.folders) ? value.folders : [],
-    notes: Array.isArray(value?.notes) ? value.notes : [],
+    collections: ensureCollectionsForWorkspace(Array.isArray(value?.collections) ? value.collections : [], folders, notes),
+    folders,
+    notes,
   }
+}
+
+function ensureCollectionsForWorkspace(collections, folders, notes) {
+  const collectionMap = new Map()
+
+  for (const collection of defaultCollections) {
+    collectionMap.set(collection.id, { ...collection })
+  }
+
+  for (const collection of collections) {
+    const normalizedCollection = normalizeCollection(collection)
+    collectionMap.set(normalizedCollection.id, normalizedCollection)
+  }
+
+  const ensureCollection = (collectionId) => {
+    const normalizedCollectionId = normalizeCollectionId(collectionId)
+
+    if (!normalizedCollectionId || collectionMap.has(normalizedCollectionId)) {
+      return
+    }
+
+    collectionMap.set(normalizedCollectionId, {
+      id: normalizedCollectionId,
+      name: humanizeCollectionId(normalizedCollectionId),
+      description: 'Imported collection.',
+      icon: 'folder',
+    })
+  }
+
+  for (const folder of folders) {
+    ensureCollection(folder?.collectionId)
+  }
+
+  for (const note of notes) {
+    ensureCollection(note?.collectionId)
+  }
+
+  return Array.from(collectionMap.values())
+}
+
+function normalizeCollection(value) {
+  const id = normalizeCollectionId(value?.id)
+  const name = normalizeCollectionName(value?.name) || (id ? humanizeCollectionId(id) : 'Untitled Collection')
+
+  return {
+    id: id ?? createCollectionId(name),
+    name,
+    description: normalizeCollectionDescription(value?.description),
+    icon: normalizeCollectionIcon(value?.icon),
+  }
+}
+
+function normalizeCollectionId(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim().slice(0, 80)
+
+  return normalized ? normalized : null
+}
+
+function normalizeCollectionName(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
+function normalizeCollectionDescription(value) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 180)
+
+  return normalized || 'Custom collection.'
+}
+
+function normalizeCollectionIcon(value) {
+  return ['briefcase', 'person', 'flask', 'bulb', 'folder'].includes(value) ? value : 'folder'
+}
+
+function createCollectionId(name) {
+  return (
+    normalizeCollectionName(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || `collection-${randomBytes(4).toString('hex')}`
+  )
+}
+
+function humanizeCollectionId(collectionId) {
+  const label = String(collectionId ?? '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return label ? label.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 80) : 'Untitled Collection'
 }
 
 function normalizeEmail(value) {
@@ -1112,10 +1340,43 @@ function normalizeOptionalString(value, maxLength) {
   return normalized ? normalized.slice(0, maxLength) : null
 }
 
+function normalizeUsername(value) {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 32)
+
+  return normalized.length >= 2 ? normalized : null
+}
+
 function normalizeDisplayName(value, email) {
   const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
 
   return normalized.length > 0 && normalized.length <= 120 ? normalized : createDisplayName(email)
+}
+
+function normalizeProfileDisplayName(value, { email, firstName, lastName, username }) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
+
+  if (normalized) {
+    return normalized.slice(0, 120)
+  }
+
+  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim()
+
+  if (fullName) {
+    return fullName.slice(0, 120)
+  }
+
+  if (username) {
+    return username
+  }
+
+  return createDisplayName(email)
 }
 
 function createDisplayName(email) {
@@ -1149,6 +1410,7 @@ function isPersistedAppState(value) {
 
   return (
     (typeof value.activeNoteId === 'string' || value.activeNoteId === null) &&
+    (value.collections === undefined || Array.isArray(value.collections)) &&
     Array.isArray(value.folders) &&
     Array.isArray(value.notes)
   )

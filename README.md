@@ -25,6 +25,8 @@ Current product foundations:
 apps/
   web/   React, TypeScript, Vite, TipTap editor, and app styling
   api/   Node.js, Express, PostgreSQL, auth/session, sync, and AI endpoints
+src-tauri/
+  Tauri desktop shell for internal app-feel testing
 ```
 
 Shared package extraction can come later once API contracts and client types need a dedicated home.
@@ -59,6 +61,20 @@ npm run build
 ```
 
 The Vite production build writes to `dist/web`.
+
+Run the internal desktop preview:
+
+```bash
+npm run dev:desktop
+```
+
+Build a local desktop bundle:
+
+```bash
+npm run build:desktop
+```
+
+Desktop builds require Rust via rustup plus Visual Studio Build Tools with the MSVC and Windows SDK components. The desktop shell uses the same React app but stores local-only notes in the desktop webview profile, separate from the browser profile.
 
 Run the production API:
 

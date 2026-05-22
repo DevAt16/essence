@@ -9,8 +9,8 @@ const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
 type ViewMode = 'library' | 'collections' | 'favorites' | 'archive' | 'editor'
 type NavMode = Exclude<ViewMode, 'editor'>
-type CollectionId = 'work' | 'personal' | 'research' | 'ideas'
-type CollectionIcon = 'briefcase' | 'person' | 'flask' | 'bulb'
+type CollectionId = string
+type CollectionIcon = 'briefcase' | 'person' | 'flask' | 'bulb' | 'folder'
 type NoteLayout = 'feature' | 'standard' | 'quote'
 type NoteType = 'quote' | undefined
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
@@ -128,6 +128,7 @@ interface FilterOptions {
 interface PersistedAppState {
   activeNoteId: string | null
   composerHistory: ComposerHistoryEntry[]
+  collections: CollectionSummary[]
   folders: Folder[]
   notes: Note[]
 }
@@ -135,8 +136,18 @@ interface PersistedAppState {
 interface AuthUser {
   displayName: string
   email: string
+  firstName: string
   id: string
   isLocal: boolean
+  lastName: string
+  username: string
+}
+
+interface ProfileDraft {
+  displayName: string
+  firstName: string
+  lastName: string
+  username: string
 }
 
 interface RemoteAppSnapshot {
@@ -158,6 +169,7 @@ interface HistorySnapshot {
   activeFolderId: string | null
   activeNoteId: string | null
   activeTag: string | null
+  collections: CollectionSummary[]
   editorContext: NavMode
   expandedFolderIds: string[]
   folders: Folder[]
@@ -300,6 +312,7 @@ interface QuickSwitcherItem {
 const storageKey = 'lucid-notes-state'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
+const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
 const historyLimit = 120
 const composerHistoryLimit = 18
@@ -330,16 +343,20 @@ function createEmptyPersistedState(): PersistedAppState {
   return {
     activeNoteId: null,
     composerHistory: [],
+    collections: createDefaultCollections(),
     folders: [],
     notes: [],
   }
 }
 
 function hasWorkspaceData(state: PersistedAppState) {
-  return state.notes.length > 0 || state.folders.length > 0 || state.composerHistory.length > 0
+  const defaultCollectionIds = new Set(initialCollections.map((collection) => collection.id))
+  const hasCustomCollections = state.collections.some((collection) => !defaultCollectionIds.has(collection.id))
+
+  return state.notes.length > 0 || state.folders.length > 0 || state.composerHistory.length > 0 || hasCustomCollections
 }
 
-const collections: CollectionSummary[] = [
+const initialCollections: CollectionSummary[] = [
   {
     id: 'work',
     name: 'Work',
@@ -366,13 +383,18 @@ const collections: CollectionSummary[] = [
   },
 ]
 
-const collectionNameById = collections.reduce<Record<CollectionId, string>>(
-  (accumulator, collection) => {
+function createDefaultCollections() {
+  return initialCollections.map((collection) => ({ ...collection }))
+}
+
+function buildCollectionNameLookup(collections: CollectionSummary[]) {
+  return collections.reduce<Record<CollectionId, string>>((accumulator, collection) => {
     accumulator[collection.id] = collection.name
     return accumulator
-  },
-  {} as Record<CollectionId, string>,
-)
+  }, {})
+}
+
+const collectionNameById = buildCollectionNameLookup(initialCollections)
 
 const tagPool = [
   'design-system',
@@ -825,6 +847,7 @@ const initialNotes: Note[] = [
 export const sampleSeedState: PersistedAppState = {
   activeNoteId: initialNotes[0]?.id ?? null,
   composerHistory: [],
+  collections: createDefaultCollections(),
   folders: initialFolders,
   notes: initialNotes,
 }
@@ -832,6 +855,7 @@ export const sampleSeedState: PersistedAppState = {
 function App() {
   const [view, setView] = useState<ViewMode>('library')
   const [editorContext, setEditorContext] = useState<NavMode>('library')
+  const [collections, setCollections] = useState<CollectionSummary[]>(loadStoredCollections)
   const [folders, setFolders] = useState<Folder[]>(loadStoredFolders)
   const [notes, setNotes] = useState<Note[]>(loadStoredNotes)
   const [activeNoteId, setActiveNoteId] = useState<string | null>(loadStoredActiveNoteId)
@@ -843,6 +867,7 @@ function App() {
   const [editorActionsOpen, setEditorActionsOpen] = useState(false)
   const [editorSidebarOpen, setEditorSidebarOpen] = useState(true)
   const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -851,6 +876,8 @@ function App() {
   const [authNotice, setAuthNotice] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
   const [authGateDismissed, setAuthGateDismissed] = useState(loadAuthGateDismissed)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [profileSaving, setProfileSaving] = useState(false)
   const [aiAssistAction, setAiAssistAction] = useState<AiAssistAction>('continue-writing')
   const [aiAssistError, setAiAssistError] = useState<string | null>(null)
   const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
@@ -954,6 +981,7 @@ function App() {
     initialLocalStateRef.current = {
       activeNoteId,
       composerHistory,
+      collections,
       folders,
       notes,
     }
@@ -980,6 +1008,7 @@ function App() {
   }, [])
 
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
+  const collectionNameById = useMemo(() => buildCollectionNameLookup(collections), [collections])
 
   const activeNote = useMemo(
     () => notes.find((note) => note.id === activeNoteId) ?? notes[0] ?? null,
@@ -1003,6 +1032,7 @@ function App() {
       activeFolderId,
       activeNoteId,
       activeTag,
+      collections,
       editorContext,
       expandedFolderIds,
       folders,
@@ -1015,6 +1045,7 @@ function App() {
       activeFolderId,
       activeNoteId,
       activeTag,
+      collections,
       editorContext,
       expandedFolderIds,
       folders,
@@ -1147,6 +1178,7 @@ function App() {
 
         lastRemoteSnapshotRef.current = JSON.stringify(resolvedState)
         setComposerHistory(resolvedState.composerHistory)
+        setCollections(resolvedState.collections)
         setFolders(resolvedState.folders)
         setNotes(resolvedState.notes)
         setActiveNoteId(resolvedState.activeNoteId)
@@ -1188,11 +1220,12 @@ function App() {
       JSON.stringify({
         activeNoteId,
         composerHistory,
+        collections,
         folders,
         notes,
       }),
     )
-  }, [activeNoteId, composerHistory, folders, notes])
+  }, [activeNoteId, composerHistory, collections, folders, notes])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1267,6 +1300,7 @@ function App() {
     const nextState: PersistedAppState = {
       activeNoteId,
       composerHistory,
+      collections,
       folders,
       notes,
     }
@@ -1311,7 +1345,7 @@ function App() {
         window.clearTimeout(remoteSyncTimerRef.current)
       }
     }
-  }, [activeNoteId, composerHistory, folders, handleRemoteAccessEnded, notes, remoteAccountActive, remoteSyncReady])
+  }, [activeNoteId, composerHistory, collections, folders, handleRemoteAccessEnded, notes, remoteAccountActive, remoteSyncReady])
 
   useEffect(() => {
     return () => {
@@ -1400,7 +1434,7 @@ function App() {
       ).length
       return accumulator
     }, {} as Record<CollectionId, number>)
-  }, [notes])
+  }, [collections, notes])
 
   const tagSummaries = useMemo(() => {
     const counts = new Map<string, number>()
@@ -1476,7 +1510,7 @@ function App() {
   const editorPaneTitle = activeFolderId
     ? getFolderPathLabel(activeFolderId, foldersById)
     : activeCollectionId
-      ? collectionNameById[activeCollectionId]
+      ? collectionNameById[activeCollectionId] ?? humanizeCollectionId(activeCollectionId)
       : activeTag
         ? `#${activeTag}`
         : browseViewMeta[editorContext].heading
@@ -1491,7 +1525,7 @@ function App() {
 
   const activeCollectionOptions = useMemo(
     () => collections.map((collection) => ({ value: collection.id, label: collection.name })),
-    [],
+    [collections],
   )
   const notesById = useMemo(
     () =>
@@ -1644,7 +1678,11 @@ function App() {
         id: `note-${note.id}`,
         kind: 'note' as const,
         title: note.title,
-        subtitle: `${note.status} · ${getFolderPathLabel(note.folderId, foldersById) || collectionNameById[note.collectionId]}`,
+        subtitle: `${note.status} · ${
+          getFolderPathLabel(note.folderId, foldersById) ||
+          collectionNameById[note.collectionId] ||
+          humanizeCollectionId(note.collectionId)
+        }`,
         keywords: `${note.title} ${note.status} ${note.tags.join(' ')} ${getPlainTextFromBlocks(note.blocks)} ${getPlainTextFromSources(note.sources)}`.toLowerCase(),
         target: { type: 'note', noteId: note.id } as QuickSwitcherTarget,
       })),
@@ -1665,7 +1703,9 @@ function App() {
           id: `folder-${folder.id}`,
           kind: 'folder' as const,
           title: folder.name,
-          subtitle: `${collectionNameById[folder.collectionId]} · ${getFolderPathLabel(folder.id, foldersById)}`,
+          subtitle: `${
+            collectionNameById[folder.collectionId] ?? humanizeCollectionId(folder.collectionId)
+          } · ${getFolderPathLabel(folder.id, foldersById)}`,
           keywords: `${folder.name} ${getFolderPathLabel(folder.id, foldersById)} ${folder.collectionId}`.toLowerCase(),
           target: { type: 'folder', folderId: folder.id } as QuickSwitcherTarget,
         })),
@@ -1696,7 +1736,7 @@ function App() {
         return haystack.includes(query)
       })
       .slice(0, 14)
-  }, [folders, foldersById, quickSwitcherNotes, quickSwitcherQuery, tagSummaries])
+  }, [collectionNameById, collections, folders, foldersById, quickSwitcherNotes, quickSwitcherQuery, tagSummaries])
 
   const markSaving = () => {
     setSaveMessage('Saving...')
@@ -1757,6 +1797,7 @@ function App() {
 
     startTransition(() => {
       setFolders(normalizedState.folders)
+      setCollections(normalizedState.collections)
       setNotes(normalizedState.notes)
       setActiveNoteId(normalizedState.activeNoteId)
       setComposerHistory(normalizedState.composerHistory)
@@ -1785,6 +1826,7 @@ function App() {
   const getCurrentPersistedState = (): PersistedAppState => ({
     activeNoteId,
     composerHistory,
+    collections,
     folders,
     notes,
   })
@@ -1861,8 +1903,61 @@ function App() {
     setAuthError(null)
     setAuthNotice(null)
     setAiComposerOpen(false)
+    setSettingsOpen(false)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
+  }
+
+  const openSettings = () => {
+    setAiComposerOpen(false)
+    setEditorActionsOpen(false)
+    setQuickSwitcherOpen(false)
+    setNoteHistoryOpen(false)
+    setProfileError(null)
+    setSettingsOpen(true)
+  }
+
+  const closeSettings = () => {
+    if (!profileSaving) {
+      setSettingsOpen(false)
+      setProfileError(null)
+    }
+  }
+
+  const saveProfileSettings = async (draft: ProfileDraft) => {
+    if (!currentUser) {
+      return
+    }
+
+    const nextProfile = normalizeProfileDraft(draft, currentUser)
+    setProfileSaving(true)
+    setProfileError(null)
+
+    try {
+      if (remoteAccountActive) {
+        const updatedUser = await updateRemoteProfile(nextProfile)
+        setCurrentUser(updatedUser)
+      } else {
+        const updatedUser: AuthUser = {
+          ...currentUser,
+          ...nextProfile,
+        }
+        persistLocalProfile(updatedUser)
+        setCurrentUser(updatedUser)
+      }
+
+      flashSaveFeedback('Profile updated')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to update profile.', error)
+      setProfileError(error instanceof Error && error.message ? error.message : 'Profile could not be updated.')
+      flashSaveFeedback('Profile update failed')
+    } finally {
+      setProfileSaving(false)
+    }
   }
 
   const closeQuickSwitcher = () => {
@@ -1931,6 +2026,7 @@ function App() {
     isRestoringHistoryRef.current = true
     setView(restoredSnapshot.view)
     setEditorContext(restoredSnapshot.editorContext)
+    setCollections(restoredSnapshot.collections)
     setFolders(restoredSnapshot.folders)
     setNotes(restoredSnapshot.notes)
     setActiveNoteId(restoredSnapshot.activeNoteId)
@@ -2604,6 +2700,7 @@ function App() {
         {
           activeNoteId,
           composerHistory,
+          collections,
           folders,
           notes,
         },
@@ -2636,6 +2733,13 @@ function App() {
       throw new Error('This JSON file does not contain any notes.')
     }
 
+    setCollections((currentCollections) =>
+      ensureCollectionsForWorkspace(
+        [...currentCollections, ...importedState.collections],
+        [...folders, ...importedState.folders],
+        [...importedState.notes, ...notes],
+      ),
+    )
     setFolders((currentFolders) => [...currentFolders, ...importedState.folders])
     setNotes((currentNotes) => [...importedState.notes, ...currentNotes])
     setComposerHistory((currentHistory) =>
@@ -2652,6 +2756,9 @@ function App() {
       folderId: ensuredFolders.folderId,
     }
 
+    setCollections((currentCollections) =>
+      ensureCollectionsForWorkspace(currentCollections, ensuredFolders.folders, [importedNote, ...notes]),
+    )
     setFolders(ensuredFolders.folders)
     setNotes((currentNotes) => [importedNote, ...currentNotes])
     focusImportedNote(importedNote, 'Imported Markdown note')
@@ -2807,6 +2914,36 @@ function App() {
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusFolderFilter(folderId)
+  }
+
+  const openCollectionInExplorer = (collectionId: CollectionId) => {
+    setZenMode(false)
+    setAiComposerOpen(false)
+    setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
+    setActiveCollectionId(collectionId)
+    setActiveFolderId(null)
+    setActiveTag(null)
+    setSearchQuery('')
+    startTransition(() => setView('collections'))
+  }
+
+  const openFolderInExplorer = (folderId: string) => {
+    const folder = foldersById[folderId]
+
+    if (!folder) {
+      return
+    }
+
+    setZenMode(false)
+    setAiComposerOpen(false)
+    setQuickSwitcherOpen(false)
+    setEditorActionsOpen(false)
+    setActiveCollectionId(folder.collectionId)
+    setActiveFolderId(folder.id)
+    setActiveTag(null)
+    setSearchQuery('')
+    startTransition(() => setView('collections'))
   }
 
   const openTag = (tagName: string) => {
@@ -3203,42 +3340,6 @@ function App() {
     })
   }
 
-  const deleteTag = (tagName: string) => {
-    const affectedNotes = notes.filter((note) => note.tags.includes(tagName))
-
-    if (affectedNotes.length === 0) {
-      return
-    }
-
-    setDialogState({
-      type: 'confirm',
-      tone: 'danger',
-      title: `Delete "${tagName}"?`,
-      message: `"${tagName}" will be removed from ${formatCount(affectedNotes.length, 'note')}. Notes themselves will not be deleted.`,
-      confirmLabel: 'Delete topic',
-      onConfirm: () => {
-        setNotes((currentNotes) =>
-          currentNotes.map((note) =>
-            note.tags.includes(tagName)
-              ? {
-                  ...note,
-                  previewDate: 'Just now',
-                  tags: note.tags.filter((tag) => tag !== tagName),
-                  updatedAt: new Date().toISOString(),
-                }
-              : note,
-          ),
-        )
-
-        if (activeTag === tagName) {
-          setActiveTag(null)
-        }
-
-        markSaving()
-      },
-    })
-  }
-
   const replaceActiveNoteBlocks = (nextBlocks: NoteBlock[], nextEditorDoc: JSONContent) => {
     if (!activeNote) {
       return
@@ -3276,6 +3377,43 @@ function App() {
     setActiveFolderId(newFolder.id)
     setAiComposerOpen(false)
     startTransition(() => setView('collections'))
+    markSaving()
+  }
+
+  const createCollection = () => {
+    setDialogState({
+      type: 'prompt',
+      title: 'New Collection',
+      message: 'Create a top-level space. Folders can live inside it like a file explorer.',
+      label: 'Collection name',
+      initialValue: '',
+      placeholder: 'Reading list',
+      confirmLabel: 'Create collection',
+      onConfirm: (value) => {
+        const name = normalizeCollectionName(value)
+
+        if (!name) {
+          flashSaveFeedback('Collection name was empty')
+          return
+        }
+
+        const newCollection: CollectionSummary = {
+          id: generateCollectionId(name, collections),
+          name,
+          description: 'Custom collection.',
+          icon: 'folder',
+        }
+
+        setCollections((currentCollections) => [...currentCollections, newCollection])
+        setActiveCollectionId(newCollection.id)
+        setActiveFolderId(null)
+        setActiveTag(null)
+        setSearchQuery('')
+        setAiComposerOpen(false)
+        startTransition(() => setView('collections'))
+        flashSaveFeedback('Collection created')
+      },
+    })
   }
 
   const toggleFolderExpanded = (folderId: string) => {
@@ -3289,7 +3427,7 @@ function App() {
   const activeFilterLabel = activeFolderId
     ? getFolderPathLabel(activeFolderId, foldersById)
     : activeCollectionId
-      ? collectionNameById[activeCollectionId]
+      ? collectionNameById[activeCollectionId] ?? humanizeCollectionId(activeCollectionId)
       : activeTag
         ? `#${activeTag}`
         : null
@@ -3299,6 +3437,7 @@ function App() {
   const navigationSidebarToggleLabel = navigationSidebarVisible ? 'Hide navigation sidebar' : 'Show navigation sidebar'
   const showAuthScreen = !remoteSyncReady || ((!currentUser || currentUser.isLocal) && !authGateDismissed)
   const readingProgressPercent = Math.round(readingProgress * 100)
+  const editorStatusLabel = activeNote && noteViewMode === 'read' ? `${readingProgressPercent}% read` : saveMessage
 
   useEffect(() => {
     if (searchFocusSignal <= 0 || !showGlobalTopbarTools) {
@@ -3351,6 +3490,25 @@ function App() {
         onChange={handleImportFileChange}
       />
 
+      {!zenMode && settingsOpen && (
+        <SettingsDialog
+          ambienceMode={ambienceMode}
+          currentUser={currentUser}
+          isSaving={profileSaving}
+          navigationSidebarVisible={navigationSidebarVisible}
+          noteCount={notes.length}
+          folderCount={folders.length}
+          composerHistoryCount={composerHistory.length}
+          error={profileError}
+          onAmbienceChange={setAmbienceMode}
+          onClose={closeSettings}
+          onNavigationSidebarChange={setNavigationSidebarVisible}
+          onOpenAuth={openAuthScreen}
+          onSaveProfile={saveProfileSettings}
+          onSignOut={handleSignOut}
+        />
+      )}
+
       {!zenMode && navigationSidebarVisible && (
         <aside className={`rail ${showGlobalTopbarTools ? 'rail--globalToolsVisible' : ''}`}>
           <div className="rail__brand" aria-label="Essence">
@@ -3386,6 +3544,16 @@ function App() {
           </nav>
 
           <div className="rail__footer">
+            <button
+              type="button"
+              className={`rail__settings ${settingsOpen ? 'icon-button--active' : ''}`}
+              onClick={openSettings}
+              aria-label="Open settings"
+              aria-pressed={settingsOpen}
+              title="Settings"
+            >
+              <Icon name="settings" />
+            </button>
             <AmbienceControl mode={ambienceMode} onChange={setAmbienceMode} />
           </div>
         </aside>
@@ -3480,8 +3648,8 @@ function App() {
                 ) : null}
 
                 <div className="topbar__actions topbar__actions--editor">
-                  <span className="save-state">
-                    {activeNote ? saveMessage : 'Empty library'}
+                  <span className={`save-state ${noteViewMode === 'read' ? 'save-state--reading' : ''}`}>
+                    {activeNote ? editorStatusLabel : 'Empty library'}
                   </span>
                   <div className="topbar__actionGroup">
                     {activeNote ? (
@@ -3578,14 +3746,10 @@ function App() {
                   >
                     <Icon name={navigationSidebarVisible ? 'panelLeftClose' : 'panelLeftOpen'} />
                   </button>
-                  {view === 'library' ? (
-                    <div className="topbar__browseContext">
-                      <span>Workspace</span>
-                      <strong>Essence</strong>
-                    </div>
-                  ) : (
-                    <div className="topbar__browseTitle">{browseViewMeta[view].heading}</div>
-                  )}
+                  <div className="topbar__browseContext">
+                    <span>Workspace</span>
+                    <strong>{view === 'library' ? 'Essence' : browseViewMeta[view].heading}</strong>
+                  </div>
                 </div>
                 {showGlobalTopbarTools && (
                   <div className="topbar__dashboardTools" aria-label="Library tools">
@@ -3651,6 +3815,7 @@ function App() {
                   <AccountControl
                     disabled={authBusy}
                     onOpenAuth={openAuthScreen}
+                    onOpenSettings={openSettings}
                     onSignOut={handleSignOut}
                     user={currentUser}
                   />
@@ -3678,6 +3843,8 @@ function App() {
               activeFolderId={activeFolderId}
               cards={filteredNotes}
               collectionCounts={collectionCounts}
+              collectionNameById={collectionNameById}
+              collections={collections}
               foldersById={foldersById}
               onClearFilters={clearFilters}
               onCreateNote={createNote}
@@ -3697,22 +3864,21 @@ function App() {
               activeFolder={activeFolder}
               activeFolderId={activeFolderId}
               collectionCounts={collectionCounts}
+              collectionNameById={collectionNameById}
               collections={collections}
               expandedFolderIds={expandedFolderIds}
               folders={folders}
               foldersById={foldersById}
               notes={notes}
+              onCreateCollection={createCollection}
               onCreateFolder={createFolder}
               onDeleteFolder={deleteFolder}
-              onDeleteTag={deleteTag}
-              onOpenCollection={openCollection}
-              onOpenFolder={openFolder}
-              onOpenTag={openTag}
+              onOpenCollection={openCollectionInExplorer}
+              onOpenFolder={openFolderInExplorer}
               onRenameFolder={renameFolder}
               onRequestRenameFolder={requestRenameFolder}
               onToggleFolderExpanded={toggleFolderExpanded}
               onMoveFolder={moveFolder}
-              tags={tagSummaries}
             />
           )}
 
@@ -3726,6 +3892,7 @@ function App() {
                 <EditorSidebar
                   activeNoteId={activeNoteId}
                   caption={editorPaneCaption}
+                  collectionNameById={collectionNameById}
                   foldersById={foldersById}
                   headingLabel={activeFolderId ? 'Folder' : activeCollectionId ? 'Collection' : browseViewMeta[editorContext].heading}
                   notes={editorSidebarNotes}
@@ -3749,19 +3916,30 @@ function App() {
 
               <section
                 ref={editorScreenRef}
-                className={`editor-screen ${noteHistoryOpen && activeNote ? 'editor-screen--history' : ''} ${
+                className={`editor-screen ${noteViewMode === 'read' ? 'editor-screen--readMode' : ''} ${
+                  noteHistoryOpen && activeNote ? 'editor-screen--history' : ''
+                } ${
                   zenMode ? 'editor-screen--focus' : ''
                 }`}
                 onScroll={updateReadingProgress}
                 onWheel={handleEditorWheel}
-                style={{ '--reading-progress': `${readingProgressPercent}%` } as CSSProperties}
               >
+                {activeNote && noteViewMode === 'read' && !zenMode && (
+                  <div
+                    key={readingProgressPercent}
+                    className="reader-progress"
+                    aria-hidden="true"
+                    style={{ backgroundSize: `${readingProgressPercent}% 100%, auto` }}
+                  />
+                )}
+
                 {activeNote ? (
                   <div className={`editor-layout ${noteHistoryOpen ? 'editor-layout--history' : ''}`}>
                     <div className="editor-column">
                       {!zenMode && noteViewMode === 'edit' && (
                         <Breadcrumbs
                           collectionId={activeNote.collectionId}
+                          collectionNameById={collectionNameById}
                           folderId={activeNote.folderId}
                           foldersById={foldersById}
                           onOpenCollection={(collectionId) => focusCollectionFilter(collectionId, true)}
@@ -3775,6 +3953,7 @@ function App() {
                             <EditorContextPanel
                               activeCollectionOptions={activeCollectionOptions}
                               activeFolderOptions={activeFolderOptions}
+                              collectionNameById={collectionNameById}
                               key={activeNote.id}
                               note={activeNote}
                               onAddSource={addSourceToActiveNote}
@@ -3819,6 +3998,7 @@ function App() {
                       ) : (
                         <ReadModeNote
                           backlinks={activeBacklinks}
+                          collectionNameById={collectionNameById}
                           foldersById={foldersById}
                           linkedNotes={activeLinkedNotes}
                           note={activeNote}
@@ -4046,6 +4226,8 @@ function LibraryScreen({
   activeFolderId,
   cards,
   collectionCounts,
+  collectionNameById,
+  collections,
   foldersById,
   onClearFilters,
   onCreateNote,
@@ -4062,6 +4244,8 @@ function LibraryScreen({
   activeFolderId: string | null
   cards: Note[]
   collectionCounts: Record<CollectionId, number>
+  collectionNameById: Record<CollectionId, string>
+  collections: CollectionSummary[]
   foldersById: Record<string, Folder>
   onClearFilters: () => void
   onCreateNote: () => void
@@ -4104,6 +4288,7 @@ function LibraryScreen({
           {(activeCollectionId || activeFolderId) && (
             <Breadcrumbs
               collectionId={activeCollectionId}
+              collectionNameById={collectionNameById}
               folderId={activeFolderId}
               foldersById={foldersById}
               onOpenCollection={onOpenCollection}
@@ -4214,13 +4399,25 @@ function LibraryScreen({
               {displayMode === 'list' || section.id === 'recent' ? (
                 <div className="note-list">
                   {section.notes.map((note) => (
-                    <NoteListItem key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+                    <NoteListItem
+                      key={note.id}
+                      collectionNameById={collectionNameById}
+                      note={note}
+                      foldersById={foldersById}
+                      onOpenNote={onOpenNote}
+                    />
                   ))}
                 </div>
               ) : (
                 <div className={`note-grid ${section.emphasize ? 'note-grid--hero' : ''}`}>
                   {section.notes.map((note) => (
-                    <NoteCard key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+                    <NoteCard
+                      key={note.id}
+                      collectionNameById={collectionNameById}
+                      note={note}
+                      foldersById={foldersById}
+                      onOpenNote={onOpenNote}
+                    />
                   ))}
                 </div>
               )}
@@ -4230,13 +4427,25 @@ function LibraryScreen({
       ) : displayMode === 'list' ? (
         <div className="note-list">
           {visibleCards.map((note) => (
-            <NoteListItem key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+            <NoteListItem
+              key={note.id}
+              collectionNameById={collectionNameById}
+              note={note}
+              foldersById={foldersById}
+              onOpenNote={onOpenNote}
+            />
           ))}
         </div>
       ) : (
         <div className="note-grid">
           {visibleCards.map((note) => (
-            <NoteCard key={note.id} note={note} foldersById={foldersById} onOpenNote={onOpenNote} />
+            <NoteCard
+              key={note.id}
+              collectionNameById={collectionNameById}
+              note={note}
+              foldersById={foldersById}
+              onOpenNote={onOpenNote}
+            />
           ))}
         </div>
       )}
@@ -4298,17 +4507,19 @@ function getLibraryEmptyState(
 }
 
 function NoteCard({
+  collectionNameById,
   note,
   foldersById,
   onOpenNote,
 }: {
+  collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
   onOpenNote: (noteId: string) => void
 }) {
   const excerpt = summarizeBlocks(note.blocks)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
-  const locationLabel = folderPath || collectionNameById[note.collectionId]
+  const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const isCompact = note.layout === 'standard' && excerpt.length < 90
   const displayExcerpt =
     excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
@@ -4361,17 +4572,19 @@ function NoteCard({
 }
 
 function NoteListItem({
+  collectionNameById,
   note,
   foldersById,
   onOpenNote,
 }: {
+  collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
   onOpenNote: (noteId: string) => void
 }) {
   const excerpt = summarizeBlocks(note.blocks)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
-  const locationLabel = folderPath || collectionNameById[note.collectionId]
+  const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const wordCount = countWordsFromBlocks(note.blocks)
   const displayExcerpt =
     excerpt.length > 0 ? excerpt : note.status.toLowerCase() === 'draft' ? 'A fresh page waiting for a first line.' : ''
@@ -4421,12 +4634,14 @@ function NoteTagSummary({ className, tags }: { className: string; tags: string[]
 
 function Breadcrumbs({
   collectionId,
+  collectionNameById,
   folderId,
   foldersById,
   onOpenCollection,
   onOpenFolder,
 }: {
   collectionId: CollectionId | null
+  collectionNameById: Record<CollectionId, string>
   folderId: string | null
   foldersById: Record<string, Folder>
   onOpenCollection: (collectionId: CollectionId) => void
@@ -4442,7 +4657,7 @@ function Breadcrumbs({
     <nav className="breadcrumbs" aria-label="Folder path">
       {collectionId && (
         <button type="button" className="breadcrumbs__segment" onClick={() => onOpenCollection(collectionId)}>
-          {collectionNameById[collectionId]}
+          {collectionNameById[collectionId] ?? humanizeCollectionId(collectionId)}
         </button>
       )}
 
@@ -4461,6 +4676,7 @@ function Breadcrumbs({
 function EditorSidebar({
   activeNoteId,
   caption,
+  collectionNameById,
   foldersById,
   headingLabel,
   notes,
@@ -4469,6 +4685,7 @@ function EditorSidebar({
 }: {
   activeNoteId: string | null
   caption: string
+  collectionNameById: Record<CollectionId, string>
   foldersById: Record<string, Folder>
   headingLabel: string
   notes: Note[]
@@ -4488,7 +4705,10 @@ function EditorSidebar({
           <div className="note-sidebar__empty">No notes in this view yet.</div>
         ) : (
           notes.map((note) => {
-            const location = getFolderPathLabel(note.folderId, foldersById) || collectionNameById[note.collectionId]
+            const location =
+              getFolderPathLabel(note.folderId, foldersById) ||
+              collectionNameById[note.collectionId] ||
+              humanizeCollectionId(note.collectionId)
 
             return (
               <button
@@ -4515,6 +4735,7 @@ function EditorSidebar({
 
 function FolderInspector({
   activeFolder,
+  collections,
   folders,
   foldersById,
   onDeleteFolder,
@@ -4522,6 +4743,7 @@ function FolderInspector({
   onRenameFolder,
 }: {
   activeFolder: Folder | null
+  collections: CollectionSummary[]
   folders: Folder[]
   foldersById: Record<string, Folder>
   onDeleteFolder: (folderId: string) => void
@@ -4642,248 +4864,189 @@ function CollectionsScreen({
   activeFolder,
   activeFolderId,
   collectionCounts,
+  collectionNameById,
   collections,
   expandedFolderIds,
   folders,
   foldersById,
   notes,
+  onCreateCollection,
   onCreateFolder,
   onDeleteFolder,
-  onDeleteTag,
   onOpenCollection,
   onOpenFolder,
-  onOpenTag,
   onRenameFolder,
   onRequestRenameFolder,
   onToggleFolderExpanded,
   onMoveFolder,
-  tags,
 }: {
   activeCollectionId: CollectionId | null
   activeFolder: Folder | null
   activeFolderId: string | null
   collectionCounts: Record<CollectionId, number>
+  collectionNameById: Record<CollectionId, string>
   collections: CollectionSummary[]
   expandedFolderIds: string[]
   folders: Folder[]
   foldersById: Record<string, Folder>
   notes: Note[]
+  onCreateCollection: () => void
   onCreateFolder: (collectionId: CollectionId, parentId: string | null) => void
   onDeleteFolder: (folderId: string) => void
-  onDeleteTag: (tagName: string) => void
   onOpenCollection: (collectionId: CollectionId) => void
   onOpenFolder: (folderId: string) => void
-  onOpenTag: (tagName: string) => void
   onRenameFolder: (folderId: string, nextName: string) => void
   onRequestRenameFolder: (folderId: string) => void
   onToggleFolderExpanded: (folderId: string) => void
   onMoveFolder: (folderId: string, nextCollectionId: CollectionId, nextParentId: string | null) => void
-  tags: Array<{ name: string; count: number }>
 }) {
-  const [showAllTags, setShowAllTags] = useState(false)
-  const [tagQuery, setTagQuery] = useState('')
-  const deferredTagQuery = useDeferredValue(tagQuery)
-  const sortedTags = useMemo(
-    () =>
-      [...tags].sort(
-        (left, right) => right.count - left.count || left.name.localeCompare(right.name),
-      ),
-    [tags],
-  )
-  const normalizedTagQuery = deferredTagQuery.trim().toLowerCase()
-  const filteredTags = useMemo(() => {
-    if (!normalizedTagQuery) {
-      return sortedTags
-    }
-
-    return sortedTags.filter((tag) => tag.name.toLowerCase().includes(normalizedTagQuery))
-  }, [normalizedTagQuery, sortedTags])
-  const tagPreviewLimit = 8
-  const visibleTags = showAllTags ? filteredTags : filteredTags.slice(0, tagPreviewLimit)
-  const hiddenTagCount = Math.max(filteredTags.length - visibleTags.length, 0)
+  const selectedCollection =
+    collections.find((collection) => collection.id === activeCollectionId) ?? collections[0] ?? null
+  const selectedCollectionId = selectedCollection?.id ?? null
+  const selectedCollectionFolders = selectedCollectionId
+    ? folders.filter((folder) => folder.collectionId === selectedCollectionId)
+    : []
+  const rootFolders = selectedCollectionFolders
+    .filter((folder) => folder.parentId === null)
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const selectedCollectionNotes = selectedCollectionId
+    ? notes.filter((note) => !note.isArchived && note.collectionId === selectedCollectionId)
+    : []
+  const rootNoteCount = selectedCollectionNotes.filter((note) => note.folderId === null).length
+  const selectedFolderPath = activeFolder ? getFolderPathLabel(activeFolder.id, foldersById) : null
 
   return (
-    <section className="collections-screen">
-      <div className="collections-panel">
-        <div className="panel-header">
-          <div>
-            <h1>Collections & Folders</h1>
-            <p>Nested structure for projects, journals, research, and ideas.</p>
-
-            {(activeCollectionId || activeFolderId) && (
-              <Breadcrumbs
-                collectionId={activeCollectionId}
-                folderId={activeFolderId}
-                foldersById={foldersById}
-                onOpenCollection={onOpenCollection}
-                onOpenFolder={onOpenFolder}
-              />
-            )}
-          </div>
-        </div>
-
-        <div className="section-divider" />
-
-        <div className="collections-grid">
-          {collections.map((collection) => (
+    <section className="collections-screen collections-screen--explorer">
+      <div className="collections-explorer">
+        <aside className="collections-explorer__sidebar" aria-label="Collections">
+          <div className="collections-explorer__sidebarHeader">
+            <div>
+              <span className="section-heading__meta">Spaces</span>
+              <h1>Collections</h1>
+            </div>
             <button
-              key={collection.id}
               type="button"
-              className={`collection-card ${activeCollectionId === collection.id ? 'collection-card--active' : ''}`}
-              onClick={() => onOpenCollection(collection.id)}
+              className="collections-explorer__add"
+              onClick={onCreateCollection}
+              aria-label="Create collection"
+              title="Create collection"
             >
-              <div className="collection-card__top">
-                <span className="collection-card__icon">
-                  <CollectionGlyph icon={collection.icon} />
-                </span>
-                <span className="count-pill">{collectionCounts[collection.id]} notes</span>
-              </div>
-              <h2>{collection.name}</h2>
-              <p>{collection.description}</p>
+              <Icon name="plus" />
             </button>
-          ))}
-        </div>
+          </div>
 
-        <div className="section-divider" />
+          <div className="collections-explorer__list">
+            {collections.map((collection) => {
+              const isActive = collection.id === selectedCollectionId
+              const folderCount = folders.filter((folder) => folder.collectionId === collection.id).length
 
-        <div className="folder-sections">
-          {collections.map((collection) => (
-            <FolderSection
-              key={collection.id}
-              activeFolderId={activeFolderId}
-              collection={collection}
-              expandedFolderIds={expandedFolderIds}
-              folders={folders}
+              return (
+                <button
+                  key={collection.id}
+                  type="button"
+                  className={`collection-explorer__item ${isActive ? 'collection-explorer__item--active' : ''}`}
+                  onClick={() => onOpenCollection(collection.id)}
+                  aria-pressed={isActive}
+                >
+                  <span className="collection-explorer__glyph">
+                    <CollectionGlyph icon={collection.icon} />
+                  </span>
+                  <span className="collection-explorer__copy">
+                    <strong>{collection.name}</strong>
+                    <small>{`${formatCount(collectionCounts[collection.id] ?? 0, 'note')} / ${formatCount(folderCount, 'folder')}`}</small>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </aside>
+
+        <section className="collections-explorer__main" aria-label="Folders">
+          <header className="collections-explorer__header">
+            <div>
+              <span className="section-heading__meta">Folder tree</span>
+              <h1>{selectedCollection?.name ?? 'Collections'}</h1>
+              <p>
+                {selectedFolderPath
+                  ? selectedFolderPath
+                  : `${formatCount(selectedCollectionNotes.length, 'note')} in this collection, ${formatCount(rootNoteCount, 'note')} at the root.`}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="primary-button collections-explorer__newFolder"
+              onClick={() => selectedCollectionId && onCreateFolder(selectedCollectionId, null)}
+              disabled={!selectedCollectionId}
+            >
+              <Icon name="plus" />
+              <span>New folder</span>
+            </button>
+          </header>
+
+          {selectedCollectionId && (
+            <Breadcrumbs
+              collectionId={selectedCollectionId}
+              collectionNameById={collectionNameById}
+              folderId={activeFolderId}
               foldersById={foldersById}
-              notes={notes}
-              onCreateFolder={onCreateFolder}
-              onDeleteFolder={onDeleteFolder}
               onOpenCollection={onOpenCollection}
               onOpenFolder={onOpenFolder}
-              onRenameFolder={onRenameFolder}
-              onRequestRenameFolder={onRequestRenameFolder}
-              onToggleFolderExpanded={onToggleFolderExpanded}
             />
-          ))}
-        </div>
+          )}
+
+          <div className="section-divider" />
+
+          <div className="folder-tree folder-tree--explorer">
+            {rootFolders.length > 0 ? (
+              rootFolders.map((folder) => (
+                <FolderBranch
+                  key={folder.id}
+                  activeFolderId={activeFolderId}
+                  depth={0}
+                  expandedFolderIds={expandedFolderIds}
+                  folder={folder}
+                  folders={folders}
+                  foldersById={foldersById}
+                  notes={notes}
+                  onCreateFolder={onCreateFolder}
+                  onDeleteFolder={onDeleteFolder}
+                  onOpenFolder={onOpenFolder}
+                  onRenameFolder={onRenameFolder}
+                  onRequestRenameFolder={onRequestRenameFolder}
+                  onToggleFolderExpanded={onToggleFolderExpanded}
+                />
+              ))
+            ) : (
+              <div className="collections-explorer__empty">
+                <Icon name="folder" />
+                <strong>No folders yet</strong>
+                <span>Create the first folder inside this collection.</span>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => selectedCollectionId && onCreateFolder(selectedCollectionId, null)}
+                  disabled={!selectedCollectionId}
+                >
+                  <Icon name="plus" />
+                  <span>New folder</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
 
-      <aside className="tags-panel">
+      <aside className="collections-inspector">
         <FolderInspector
           activeFolder={activeFolder}
+          collections={collections}
           folders={folders}
           foldersById={foldersById}
           onDeleteFolder={onDeleteFolder}
           onMoveFolder={onMoveFolder}
           onRenameFolder={onRenameFolder}
         />
-
-        <section className="tags-panel__section">
-          <div className="panel-header">
-            <div>
-              <h1>Tags</h1>
-              <p>Cross-cutting themes that move across folders.</p>
-            </div>
-          </div>
-
-          <div className="section-divider" />
-
-          {sortedTags.length > 0 && (
-            <div className="tag-list-toolbar">
-              <div className="tag-list-toolbar__summary">
-                <span className="tag-list-toolbar__eyebrow">Top topics</span>
-                <span>
-                  {showAllTags
-                    ? `Showing ${formatCount(filteredTags.length, 'topic')}`
-                    : `Showing ${formatCount(visibleTags.length, 'topic')}`}
-                </span>
-                {normalizedTagQuery && (
-                  <span className="tag-list-toolbar__filter">Filtered by “{tagQuery.trim()}”</span>
-                )}
-                {!showAllTags && hiddenTagCount > 0 && (
-                  <span className="tag-list-toolbar__more">+{hiddenTagCount} more</span>
-                )}
-              </div>
-
-              {sortedTags.length > tagPreviewLimit && (
-                <button
-                  type="button"
-                  className="tag-list-toolbar__toggle"
-                  onClick={() => setShowAllTags((currentValue) => !currentValue)}
-                  aria-expanded={showAllTags}
-                >
-                  {showAllTags ? 'Show less' : 'Show all tags'}
-                </button>
-              )}
-            </div>
-          )}
-
-          {sortedTags.length > tagPreviewLimit && (
-            <label className="tag-list-search" htmlFor="tag-browser-search">
-              <Icon name="search" />
-              <input
-                id="tag-browser-search"
-                type="search"
-                value={tagQuery}
-                onChange={(event) => setTagQuery(event.target.value)}
-                placeholder="Search topics"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              {tagQuery.trim() && (
-                <button
-                  type="button"
-                  className="tag-list-search__clear"
-                  onClick={() => setTagQuery('')}
-                  aria-label="Clear topic search"
-                >
-                  <Icon name="close" />
-                </button>
-              )}
-            </label>
-          )}
-
-          <div className={`tag-list ${showAllTags ? 'tag-list--expanded' : ''}`}>
-            {visibleTags.map((tag) => (
-              <div key={tag.name} className="tag-row">
-                <button type="button" className="tag-row__main" onClick={() => onOpenTag(tag.name)}>
-                  <span className="tag-row__name">
-                    <Icon name="hash" />
-                    <span>{tag.name}</span>
-                  </span>
-                  <span className="tag-row__count">{tag.count}</span>
-                </button>
-                <button
-                  type="button"
-                  className="tag-row__delete"
-                  onClick={() => onDeleteTag(tag.name)}
-                  aria-label={`Delete topic ${tag.name}`}
-                  title="Delete topic"
-                >
-                  <Icon name="trash" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {filteredTags.length === 0 && (
-            <div className="tag-list-empty">
-              <strong>No matching topics</strong>
-              <span>Try a broader keyword or clear the filter to see the full field.</span>
-            </div>
-          )}
-
-          {!showAllTags && hiddenTagCount > 0 && (
-            <button
-              type="button"
-              className="tag-list-more-card"
-              onClick={() => setShowAllTags(true)}
-            >
-              <span className="tag-list-more-card__count">+{hiddenTagCount}</span>
-              <span className="tag-list-more-card__label">Reveal the rest of the topic field</span>
-            </button>
-          )}
-        </section>
       </aside>
     </section>
   )
@@ -4992,7 +5155,9 @@ function FolderBranch({
   onRequestRenameFolder: (folderId: string) => void
   onToggleFolderExpanded: (folderId: string) => void
 }) {
-  const children = folders.filter((candidate) => candidate.parentId === folder.id)
+  const children = folders
+    .filter((candidate) => candidate.parentId === folder.id)
+    .sort((left, right) => left.name.localeCompare(right.name))
   const isExpanded = expandedFolderIds.includes(folder.id)
   const branchCount = notes.filter(
     (note) => !note.isArchived && isNoteInFolderBranch(note.folderId, folder.id, foldersById),
@@ -5361,6 +5526,7 @@ function InlineFormatToolbar({ onApplyFormat }: { onApplyFormat: (format: Inline
 function EditorContextPanel({
   activeCollectionOptions,
   activeFolderOptions,
+  collectionNameById,
   note,
   onAddSource,
   onAddTag,
@@ -5373,6 +5539,7 @@ function EditorContextPanel({
 }: {
   activeCollectionOptions: Array<{ label: string; value: CollectionId }>
   activeFolderOptions: Array<{ label: string; value: string }>
+  collectionNameById: Record<CollectionId, string>
   note: Note
   onAddSource: () => void
   onAddTag: () => void
@@ -5389,7 +5556,7 @@ function EditorContextPanel({
     sources: false,
     topics: false,
   })
-  const collectionLabel = collectionNameById[note.collectionId]
+  const collectionLabel = collectionNameById[note.collectionId] ?? humanizeCollectionId(note.collectionId)
   const folderLabel = activeFolderOptions.find((option) => option.value === note.folderId)?.label ?? 'No folder'
   const hasSources = note.sources.length > 0
   const topicSummary = note.tags.length > 0 ? formatCount(note.tags.length, 'topic') : 'No topics'
@@ -5769,6 +5936,7 @@ function FocusModeBar({
 
 function ReadModeNote({
   backlinks,
+  collectionNameById,
   composerAvailable,
   explorationAwake,
   foldersById,
@@ -5783,6 +5951,7 @@ function ReadModeNote({
   wordCount,
 }: {
   backlinks: Note[]
+  collectionNameById: Record<CollectionId, string>
   composerAvailable: boolean
   explorationAwake: boolean
   foldersById: Record<string, Folder>
@@ -5797,9 +5966,13 @@ function ReadModeNote({
   wordCount: number
 }) {
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
-  const locationLabel = [collectionNameById[note.collectionId], folderPath].filter(Boolean).join(' / ')
+  const locationLabel = [
+    collectionNameById[note.collectionId] ?? humanizeCollectionId(note.collectionId),
+    folderPath,
+  ].filter(Boolean).join(' / ')
   const visibleTags = note.tags.slice(0, 2)
   const hiddenTagCount = Math.max(note.tags.length - visibleTags.length, 0)
+  const readingTimeMinutes = Math.max(1, Math.round(wordCount / 220))
 
   return (
     <div className={`reader-column ${isFocusMode ? 'reader-column--focus' : ''}`}>
@@ -5814,6 +5987,13 @@ function ReadModeNote({
           </div>
         )}
         <h1 className="reader-title">{note.title}</h1>
+        {!isFocusMode && (
+          <div className="reader-stats" aria-label="Reading stats">
+            <span>{`${readingTimeMinutes} min read`}</span>
+            <span>{`${wordCount} words`}</span>
+            <span>{formatCount(note.blocks.length, 'block')}</span>
+          </div>
+        )}
         {!isFocusMode && note.tags.length > 0 && (
           <div className="reader-topics" aria-label="Topics">
             <span>Topics</span>
@@ -6492,11 +6672,13 @@ function AuthScreen({
 function AccountControl({
   disabled,
   onOpenAuth,
+  onOpenSettings,
   onSignOut,
   user,
 }: {
   disabled: boolean
   onOpenAuth: () => void
+  onOpenSettings: () => void
   onSignOut: () => void
   user: AuthUser | null
 }) {
@@ -6505,10 +6687,12 @@ function AccountControl({
   if (!isLocal) {
     return (
       <div className="account-control account-control--signedIn" title={`Signed in as ${user.email}`}>
-        <span className="account-control__avatar" aria-hidden="true">
-          {getAccountInitials(user.displayName || user.email)}
-        </span>
-        <span className="account-control__identity">{user.displayName}</span>
+        <button type="button" className="account-control__profileButton" onClick={onOpenSettings} disabled={disabled}>
+          <span className="account-control__avatar" aria-hidden="true">
+            {getAccountInitials(user.displayName || user.email)}
+          </span>
+          <span className="account-control__identity">{user.displayName}</span>
+        </button>
         <button type="button" className="account-control__button" onClick={onSignOut} disabled={disabled}>
           Sign out
         </button>
@@ -6521,6 +6705,219 @@ function AccountControl({
       <Icon name="user" />
       <span>Sign in</span>
     </button>
+  )
+}
+
+function SettingsDialog({
+  ambienceMode,
+  composerHistoryCount,
+  currentUser,
+  error,
+  folderCount,
+  isSaving,
+  navigationSidebarVisible,
+  noteCount,
+  onAmbienceChange,
+  onClose,
+  onNavigationSidebarChange,
+  onOpenAuth,
+  onSaveProfile,
+  onSignOut,
+}: {
+  ambienceMode: AmbienceMode
+  composerHistoryCount: number
+  currentUser: AuthUser | null
+  error: string | null
+  folderCount: number
+  isSaving: boolean
+  navigationSidebarVisible: boolean
+  noteCount: number
+  onAmbienceChange: (mode: AmbienceMode) => void
+  onClose: () => void
+  onNavigationSidebarChange: (visible: boolean) => void
+  onOpenAuth: () => void
+  onSaveProfile: (draft: ProfileDraft) => void
+  onSignOut: () => void
+}) {
+  const [draft, setDraft] = useState<ProfileDraft>(() => getProfileDraftFromUser(currentUser))
+  const isLocal = !currentUser || currentUser.isLocal
+
+  useEffect(() => {
+    setDraft(getProfileDraftFromUser(currentUser))
+  }, [currentUser])
+
+  const updateDraft = (field: keyof ProfileDraft, value: string) => {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: field === 'username' ? value.replace(/^@+/, '') : value,
+    }))
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onSaveProfile(draft)
+  }
+
+  const accountStatus = currentUser && !currentUser.isLocal ? currentUser.email : 'Local-only workspace'
+
+  return (
+    <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section className="settings-dialog__panel">
+        <header className="settings-dialog__header">
+          <div className="settings-dialog__titleGroup">
+            <span className="settings-dialog__eyebrow">Settings</span>
+            <h2 id="settings-title">Essence preferences</h2>
+            <p>{accountStatus}</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close settings" title="Close settings">
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <div className="settings-dialog__body">
+          <form className="settings-section settings-section--profile" onSubmit={handleSubmit}>
+            <div className="settings-section__header">
+              <div>
+                <span>Profile</span>
+                <strong>{currentUser?.displayName ?? 'This device'}</strong>
+              </div>
+              <span className="settings-accountBadge">{isLocal ? 'Local' : 'Signed in'}</span>
+            </div>
+
+            <div className="settings-profileGrid">
+              <label className="settings-field">
+                <span>First name</span>
+                <input
+                  autoComplete="given-name"
+                  value={draft.firstName}
+                  onChange={(event) => updateDraft('firstName', event.target.value)}
+                  placeholder="First"
+                />
+              </label>
+              <label className="settings-field">
+                <span>Last name</span>
+                <input
+                  autoComplete="family-name"
+                  value={draft.lastName}
+                  onChange={(event) => updateDraft('lastName', event.target.value)}
+                  placeholder="Last"
+                />
+              </label>
+              <label className="settings-field">
+                <span>Username</span>
+                <input
+                  autoComplete="username"
+                  value={draft.username}
+                  onChange={(event) => updateDraft('username', event.target.value)}
+                  placeholder="essence-user"
+                />
+              </label>
+              <label className="settings-field">
+                <span>Display name</span>
+                <input
+                  value={draft.displayName}
+                  onChange={(event) => updateDraft('displayName', event.target.value)}
+                  placeholder="How your name appears"
+                />
+              </label>
+            </div>
+
+            {error && <div className="settings-error">{error}</div>}
+
+            <div className="settings-section__actions">
+              <button type="submit" className="primary-button" disabled={isSaving}>
+                <Icon name="check" />
+                <span>{isSaving ? 'Saving...' : 'Save profile'}</span>
+              </button>
+            </div>
+          </form>
+
+          <section className="settings-section" aria-label="Appearance settings">
+            <div className="settings-section__header">
+              <div>
+                <span>Appearance</span>
+                <strong>Workspace feel</strong>
+              </div>
+            </div>
+
+            <div className="settings-choiceGrid" role="radiogroup" aria-label="Background ambience">
+              {ambienceOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`settings-choice ${ambienceMode === option.value ? 'settings-choice--active' : ''}`}
+                  onClick={() => onAmbienceChange(option.value)}
+                  role="radio"
+                  aria-checked={ambienceMode === option.value}
+                >
+                  <span className={`settings-choice__dot settings-choice__dot--${option.value}`} aria-hidden="true" />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={navigationSidebarVisible}
+                onChange={(event) => onNavigationSidebarChange(event.target.checked)}
+              />
+              <span>
+                <strong>Navigation sidebar</strong>
+                <small>Keep the left rail visible for library, collections, favorites, and settings.</small>
+              </span>
+            </label>
+          </section>
+
+          <section className="settings-section" aria-label="Data and account settings">
+            <div className="settings-section__header">
+              <div>
+                <span>Data</span>
+                <strong>{isLocal ? 'Device storage' : 'Synced account'}</strong>
+              </div>
+            </div>
+
+            <div className="settings-metrics" aria-label="Workspace totals">
+              <span>
+                <strong>{noteCount}</strong>
+                Notes
+              </span>
+              <span>
+                <strong>{folderCount}</strong>
+                Folders
+              </span>
+              <span>
+                <strong>{composerHistoryCount}</strong>
+                Composer
+              </span>
+            </div>
+
+            <p className="settings-note">
+              {isLocal
+                ? 'Local-only notes stay in this browser or desktop profile. Sign in when you want sync, Composer, and history.'
+                : 'Your profile and workspace sync through the Essence API. Local exports remain available from the global topbar.'}
+            </p>
+
+            <div className="settings-section__actions">
+              {isLocal ? (
+                <button type="button" className="ghost-button" onClick={onOpenAuth}>
+                  <Icon name="user" />
+                  <span>Sign in</span>
+                </button>
+              ) : (
+                <button type="button" className="ghost-button" onClick={onSignOut}>
+                  <Icon name="user" />
+                  <span>Sign out</span>
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -7073,7 +7470,13 @@ function CollectionGlyph({ icon }: { icon: CollectionIcon }) {
           <path d="M8.5 14.5A6 6 0 1 1 15.5 14.5c-.8.8-1.2 1.3-1.4 2H9.9c-.2-.7-.6-1.2-1.4-2Z" />
         </Glyph>
       )
+    case 'folder':
+      return <Icon name="folder" />
   }
+}
+
+function loadStoredCollections() {
+  return loadStoredCacheState().collections
 }
 
 function loadStoredFolders() {
@@ -7766,6 +8169,32 @@ async function signOutRemote(): Promise<RemoteAppSnapshot> {
   return normalizeRemoteAppSnapshot(await response.json())
 }
 
+async function updateRemoteProfile(profile: ProfileDraft): Promise<AuthUser> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/profile'), {
+    method: 'PUT',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(profile),
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to update profile: ${response.status}`)
+  }
+
+  const payload = await response.json().catch(() => ({})) as { user?: unknown }
+  const user = normalizeAuthUser(payload.user)
+
+  if (!user) {
+    throw new Error('Profile updated, but the API returned an invalid user.')
+  }
+
+  return user
+}
+
 function normalizeRemoteAppSnapshot(payload: unknown): RemoteAppSnapshot {
   const candidate = (payload ?? {}) as { state?: unknown | null; user?: unknown | null }
 
@@ -7773,6 +8202,100 @@ function normalizeRemoteAppSnapshot(payload: unknown): RemoteAppSnapshot {
     state: candidate.state ? normalizePersistedAppState(candidate.state) : null,
     user: normalizeAuthUser(candidate.user),
   }
+}
+
+function getProfileDraftFromUser(user: AuthUser | null): ProfileDraft {
+  return {
+    displayName: user?.displayName ?? '',
+    firstName: user?.firstName ?? '',
+    lastName: user?.lastName ?? '',
+    username: user?.username ?? '',
+  }
+}
+
+function normalizeProfileDraft(draft: ProfileDraft, fallbackUser: AuthUser): ProfileDraft {
+  const firstName = normalizeProfileText(draft.firstName, 80)
+  const lastName = normalizeProfileText(draft.lastName, 80)
+  const username = normalizeProfileUsername(draft.username)
+  const displayName =
+    normalizeProfileText(draft.displayName, 120) ||
+    [firstName, lastName].filter(Boolean).join(' ').trim() ||
+    username ||
+    fallbackUser.displayName ||
+    'This device'
+
+  return {
+    displayName,
+    firstName,
+    lastName,
+    username,
+  }
+}
+
+function loadLocalProfile(): ProfileDraft {
+  if (typeof window === 'undefined') {
+    return getEmptyProfileDraft()
+  }
+
+  try {
+    const rawProfile = window.localStorage.getItem(localProfileStorageKey)
+
+    if (!rawProfile) {
+      return getEmptyProfileDraft()
+    }
+
+    return normalizeProfileDraft(JSON.parse(rawProfile) as ProfileDraft, {
+      displayName: 'This device',
+      email: 'local@essence.local',
+      firstName: '',
+      id: 'local',
+      isLocal: true,
+      lastName: '',
+      username: '',
+    })
+  } catch {
+    return getEmptyProfileDraft()
+  }
+}
+
+function persistLocalProfile(profile: Pick<AuthUser, 'displayName' | 'firstName' | 'lastName' | 'username'>) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(
+    localProfileStorageKey,
+    JSON.stringify({
+      displayName: profile.displayName,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      username: profile.username,
+    }),
+  )
+}
+
+function getEmptyProfileDraft(): ProfileDraft {
+  return {
+    displayName: '',
+    firstName: '',
+    lastName: '',
+    username: '',
+  }
+}
+
+function normalizeProfileText(value: string, maxLength: number) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function normalizeProfileUsername(value: string) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 32)
 }
 
 function normalizeAuthUser(rawUser: unknown): AuthUser | null {
@@ -7792,16 +8315,24 @@ function normalizeAuthUser(rawUser: unknown): AuthUser | null {
     id,
     email,
     displayName: typeof candidate.displayName === 'string' ? candidate.displayName : email,
+    firstName: typeof candidate.firstName === 'string' ? candidate.firstName : '',
+    lastName: typeof candidate.lastName === 'string' ? candidate.lastName : '',
+    username: typeof candidate.username === 'string' ? candidate.username : '',
     isLocal: Boolean(candidate.isLocal),
   }
 }
 
 function createLocalAuthUser(): AuthUser {
+  const localProfile = loadLocalProfile()
+
   return {
-    displayName: 'This device',
+    displayName: localProfile.displayName || 'This device',
     email: 'local@essence.local',
+    firstName: localProfile.firstName,
     id: 'local',
     isLocal: true,
+    lastName: localProfile.lastName,
+    username: localProfile.username,
   }
 }
 
@@ -7857,9 +8388,13 @@ function normalizePersistedAppState(rawState: unknown): PersistedAppState {
   const candidate = (rawState ?? {}) as Partial<PersistedAppState> & {
     activeNoteId?: unknown
     composerHistory?: unknown[]
+    collections?: unknown[]
     folders?: unknown[]
     notes?: unknown[]
   }
+  const rawCollections = Array.isArray(candidate.collections)
+    ? candidate.collections.map(normalizeStoredCollection)
+    : []
   const folders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeStoredFolder) : []
   const notes = Array.isArray(candidate.notes) ? candidate.notes.map(normalizeStoredNote) : []
   const composerHistory = Array.isArray(candidate.composerHistory)
@@ -7876,14 +8411,65 @@ function normalizePersistedAppState(rawState: unknown): PersistedAppState {
   return {
     activeNoteId,
     composerHistory,
+    collections: ensureCollectionsForWorkspace(rawCollections, folders, notes),
     folders,
     notes,
   }
 }
 
+function normalizeStoredCollection(rawCollection: unknown): CollectionSummary {
+  const candidate = (rawCollection ?? {}) as Partial<CollectionSummary>
+  const id = normalizeCollectionIdValue(candidate.id)
+  const name = normalizeCollectionName(candidate.name ?? '') || (id ? humanizeCollectionId(id) : 'Untitled Collection')
+
+  return {
+    id: id ?? generateCollectionId(name, []),
+    name,
+    description:
+      typeof candidate.description === 'string' && candidate.description.trim()
+        ? candidate.description.replace(/\s+/g, ' ').trim().slice(0, 180)
+        : 'Custom collection.',
+    icon: isCollectionIcon(candidate.icon) ? candidate.icon : 'folder',
+  }
+}
+
+function ensureCollectionsForWorkspace(
+  collections: CollectionSummary[],
+  folders: Folder[],
+  notes: Note[],
+): CollectionSummary[] {
+  const collectionMap = new Map<CollectionId, CollectionSummary>()
+
+  for (const collection of createDefaultCollections()) {
+    collectionMap.set(collection.id, collection)
+  }
+
+  for (const collection of collections) {
+    collectionMap.set(collection.id, collection)
+  }
+
+  const ensureCollection = (collectionId: CollectionId) => {
+    if (collectionMap.has(collectionId)) {
+      return
+    }
+
+    collectionMap.set(collectionId, {
+      id: collectionId,
+      name: humanizeCollectionId(collectionId),
+      description: 'Imported collection.',
+      icon: 'folder',
+    })
+  }
+
+  folders.forEach((folder) => ensureCollection(folder.collectionId))
+  notes.forEach((note) => ensureCollection(note.collectionId))
+
+  return Array.from(collectionMap.values())
+}
+
 function normalizeStoredFolder(rawFolder: unknown): Folder {
   const candidate = (rawFolder ?? {}) as Partial<Folder>
-  const collectionId = isCollectionId(candidate.collectionId) ? candidate.collectionId : 'ideas'
+  const collectionId = normalizeCollectionIdValue(candidate.collectionId) ?? 'ideas'
 
   return {
     id: typeof candidate.id === 'string' ? candidate.id : generateId('folder'),
@@ -7900,7 +8486,7 @@ function normalizeStoredNote(rawNote: unknown): Note {
     editorDoc?: unknown
     sources?: unknown[]
   }
-  const collectionId = isCollectionId(candidate.collectionId) ? candidate.collectionId : 'ideas'
+  const collectionId = normalizeCollectionIdValue(candidate.collectionId) ?? 'ideas'
   const blocks = Array.isArray(candidate.blocks)
     ? candidate.blocks.map(normalizeStoredBlock)
     : createBlocksFromHtml(typeof candidate.content === 'string' ? candidate.content : '<p></p>')
@@ -9077,6 +9663,7 @@ function parseImportedJsonState(rawText: string) {
 function cloneImportedStateWithFreshIds(state: PersistedAppState): PersistedAppState {
   const folderIdMap = new Map<string, string>()
   const noteIdMap = new Map<string, string>()
+  const collections = state.collections.map((collection) => ({ ...collection }))
 
   const folders = state.folders.map((folder) => {
     const nextId = generateId('folder')
@@ -9137,6 +9724,7 @@ function cloneImportedStateWithFreshIds(state: PersistedAppState): PersistedAppS
         : undefined,
       assist: entry.assist ? { ...entry.assist } : undefined,
     })),
+    collections: ensureCollectionsForWorkspace(collections, normalizedFolders, notes),
     folders: normalizedFolders,
     notes,
   }
@@ -9636,6 +10224,52 @@ function normalizeTopicTag(value: string) {
     .slice(0, 36)
 }
 
+function normalizeCollectionName(value: string) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
+function normalizeCollectionIdValue(value: unknown): CollectionId | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim().slice(0, 80)
+
+  return normalized.length > 0 ? normalized : null
+}
+
+function generateCollectionId(name: string, existingCollections: CollectionSummary[]) {
+  const base =
+    normalizeCollectionName(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'collection'
+  const existingIds = new Set(existingCollections.map((collection) => collection.id))
+  let nextId = base
+  let suffix = 2
+
+  while (existingIds.has(nextId)) {
+    nextId = `${base}-${suffix}`
+    suffix += 1
+  }
+
+  return nextId
+}
+
+function humanizeCollectionId(collectionId: CollectionId) {
+  const label = collectionId
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!label) {
+    return 'Untitled Collection'
+  }
+
+  return label.replace(/\b\w/g, (character) => character.toUpperCase()).slice(0, 80)
+}
+
 function formatMarkdownFrontmatterValue(value: string) {
   return JSON.stringify(value)
 }
@@ -9685,6 +10319,7 @@ function cloneHistorySnapshot(snapshot: HistorySnapshot): HistorySnapshot {
     activeFolderId: snapshot.activeFolderId,
     activeNoteId: snapshot.activeNoteId,
     activeTag: snapshot.activeTag,
+    collections: snapshot.collections.map((collection) => ({ ...collection })),
     editorContext: snapshot.editorContext,
     expandedFolderIds: [...snapshot.expandedFolderIds],
     folders: snapshot.folders.map((folder) => ({ ...folder })),
@@ -9851,7 +10486,11 @@ function isBlockType(value: unknown): value is BlockType {
 }
 
 function isCollectionId(value: unknown): value is CollectionId {
-  return value === 'work' || value === 'personal' || value === 'research' || value === 'ideas'
+  return normalizeCollectionIdValue(value) !== null
+}
+
+function isCollectionIcon(value: unknown): value is CollectionIcon {
+  return value === 'briefcase' || value === 'person' || value === 'flask' || value === 'bulb' || value === 'folder'
 }
 
 function isAiDraftCategory(value: unknown): value is AiDraftCategory {
@@ -9881,6 +10520,7 @@ function isNoteSourceKind(value: unknown): value is NoteSourceKind {
 }
 
 // Keep the previous block editor path rollback-safe while the Tiptap surface is validated.
+void FolderSection
 void BlockRow
 void getMarkdownBlockShortcut
 void getMatchingLinkNotes

@@ -86,6 +86,16 @@ These values are public because Vite embeds `VITE_*` variables into browser Java
 | `VITE_AUTH_DEV_EMAIL_LOGIN` | Web | No | Enables the old browser-side development login helper only when the API helper is also enabled. Keep `false` in production. |
 | `VITE_WAITLIST_URL` | Web | No | Optional waitlist URL shown on the sign-in page. |
 
+## Desktop Preview
+
+The internal desktop app is a Tauri shell around the same Vite/React UI.
+
+- `npm run dev:desktop` starts Tauri and the Vite dev server on `http://localhost:5173`.
+- `npm run build:desktop` builds the web app and then asks Tauri to create native desktop artifacts.
+- Native desktop builds require Rust via rustup and Visual Studio Build Tools with MSVC plus the Windows SDK.
+- Desktop local-only notes are stored in the desktop webview profile, separate from browser `localStorage`.
+- Composer, sync, and signed-in features still use the same API and Supabase environment values listed above.
+
 ## AI Composer
 
 | Field | Scope | Secret | Role |

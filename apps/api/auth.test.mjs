@@ -145,6 +145,7 @@ test('workspace endpoints reject unauthenticated requests', async () => {
     ['GET', '/api/state'],
     ['GET', '/api/search?q=test'],
     ['GET', '/api/notes/note-test/revisions'],
+    ['PUT', '/api/profile', { displayName: 'Test User' }],
     ['POST', '/api/ai/draft', { category: 'essay', topic: 'consciousness' }],
     ['POST', '/api/ai/assist', {
       action: 'continue-writing',

@@ -26,12 +26,21 @@ try {
 }
 
 function mergeSeedState(currentState, seedState) {
+  const seedCollections = Array.isArray(seedState.collections) ? seedState.collections : []
+  const currentCollections = Array.isArray(currentState.collections) ? currentState.collections : []
   const seedFolders = Array.isArray(seedState.folders) ? seedState.folders : []
   const currentFolders = Array.isArray(currentState.folders) ? currentState.folders : []
   const seedNotes = Array.isArray(seedState.notes) ? seedState.notes : []
   const currentNotes = Array.isArray(currentState.notes) ? currentState.notes : []
+  const collectionsById = new Map(seedCollections.map((collection) => [collection.id, collection]))
   const foldersById = new Map(seedFolders.map((folder) => [folder.id, folder]))
   const notesById = new Map(seedNotes.map((note) => [note.id, note]))
+
+  for (const collection of currentCollections) {
+    if (!collectionsById.has(collection.id)) {
+      collectionsById.set(collection.id, collection)
+    }
+  }
 
   for (const folder of currentFolders) {
     if (!foldersById.has(folder.id)) {
@@ -48,6 +57,7 @@ function mergeSeedState(currentState, seedState) {
   return {
     activeNoteId: seedState.activeNoteId ?? currentState.activeNoteId ?? seedNotes[0]?.id ?? currentNotes[0]?.id ?? null,
     composerHistory: Array.isArray(currentState.composerHistory) ? currentState.composerHistory : [],
+    collections: Array.from(collectionsById.values()),
     folders: Array.from(foldersById.values()),
     notes: Array.from(notesById.values()),
   }

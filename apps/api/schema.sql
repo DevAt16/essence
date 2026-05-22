@@ -2,10 +2,17 @@ create table if not exists users (
   id text primary key,
   email text not null unique,
   display_name text not null,
+  username text null,
+  first_name text null,
+  last_name text null,
   is_local boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table users add column if not exists username text null;
+alter table users add column if not exists first_name text null;
+alter table users add column if not exists last_name text null;
 
 insert into users (id, email, display_name, is_local)
 values ('local', 'local@essence.local', 'Local Workspace', true)
@@ -60,6 +67,19 @@ create table if not exists workspace_state (
 );
 
 alter table workspace_state add column if not exists composer_history jsonb not null default '[]'::jsonb;
+
+create table if not exists collections (
+  id text not null,
+  user_id text not null default 'local' references users(id) on delete cascade,
+  name text not null,
+  description text not null default '',
+  icon text not null default 'folder',
+  sort_order integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id)
+);
+
+create index if not exists collections_user_id_idx on collections(user_id);
 
 create table if not exists folders (
   id text primary key,

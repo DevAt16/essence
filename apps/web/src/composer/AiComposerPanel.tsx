@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
-type CollectionId = 'work' | 'personal' | 'research' | 'ideas'
+type CollectionId = string
 type NoteLayout = 'feature' | 'standard' | 'quote'
 type NoteType = 'quote' | undefined
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
@@ -102,6 +102,19 @@ const collectionNameById: Record<CollectionId, string> = {
   personal: 'Personal',
   research: 'Research',
   ideas: 'Ideas',
+}
+
+function getCollectionName(collectionId: CollectionId) {
+  return collectionNameById[collectionId] ?? humanizeCollectionId(collectionId)
+}
+
+function humanizeCollectionId(collectionId: CollectionId) {
+  const label = collectionId
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return label ? label.replace(/\b\w/g, (character) => character.toUpperCase()).slice(0, 80) : 'Untitled Collection'
 }
 
 const aiDraftCategories: Array<{ description: string; label: string; value: AiDraftCategory }> = [
@@ -337,7 +350,7 @@ export default function AiComposerPanel({
                   ) : (
                     <div className="ai-composer__insertPlan">
                       <span>Insert plan</span>
-                      <h3>{`Create a ${collectionNameById[draft.collectionId]} note`}</h3>
+                      <h3>{`Create a ${getCollectionName(draft.collectionId)} note`}</h3>
                       <p>
                         Essence will create a new note named "{draft.title}" with{' '}
                         {formatCount(draft.blocks.length, 'block')} and keep it editable in the block editor.
