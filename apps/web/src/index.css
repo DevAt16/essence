@@ -186,6 +186,56 @@ body::after {
   opacity: 0.36;
 }
 
+:root[data-essence-theme='starlight'][data-essence-ambience='cosmic'] body::before {
+  opacity: 0.24;
+}
+
+:root[data-essence-theme='starlight'][data-essence-ambience='cosmic'] body::after {
+  --body-star-breath-low: 0.16;
+  --body-star-breath-high: 0.27;
+  opacity: 0.3;
+}
+
+:root[data-essence-theme='moonlit'][data-essence-ambience='subtle'] body::before {
+  opacity: 0.085;
+}
+
+:root[data-essence-theme='moonlit'][data-essence-ambience='subtle'] body::after {
+  --body-star-breath-low: 0.055;
+  --body-star-breath-high: 0.12;
+  opacity: 0.11;
+}
+
+:root[data-essence-theme='moonlit'][data-essence-ambience='cosmic'] body::before {
+  opacity: 0.2;
+}
+
+:root[data-essence-theme='moonlit'][data-essence-ambience='cosmic'] body::after {
+  --body-star-breath-low: 0.12;
+  --body-star-breath-high: 0.23;
+  opacity: 0.24;
+}
+
+:root[data-essence-theme='daylight'][data-essence-ambience='subtle'] body::before {
+  opacity: 0.026;
+}
+
+:root[data-essence-theme='daylight'][data-essence-ambience='subtle'] body::after {
+  --body-star-breath-low: 0.032;
+  --body-star-breath-high: 0.06;
+  opacity: 0.04;
+}
+
+:root[data-essence-theme='daylight'][data-essence-ambience='cosmic'] body::before {
+  opacity: 0.04;
+}
+
+:root[data-essence-theme='daylight'][data-essence-ambience='cosmic'] body::after {
+  --body-star-breath-low: 0.045;
+  --body-star-breath-high: 0.075;
+  opacity: 0.06;
+}
+
 ::selection {
   background: var(--focus-soft);
 }
