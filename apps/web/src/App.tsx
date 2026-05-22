@@ -28,6 +28,7 @@ type AiAssistAction =
 type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
 type AmbienceMode = 'still' | 'subtle' | 'cosmic'
+type ColorTheme = 'starlight' | 'moonlit' | 'daylight'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 type LibraryDisplayMode = 'cards' | 'list'
 type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
@@ -313,6 +314,7 @@ interface QuickSwitcherItem {
 const storageKey = 'lucid-notes-state'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
+const colorThemeStorageKey = 'essence-color-theme'
 const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
 const libraryPreferencesStorageKey = 'essence-library-preferences'
@@ -331,6 +333,12 @@ const ambienceOptions: Array<{ description: string; label: string; value: Ambien
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
   { description: 'Quiet stars with rare motion.', label: 'Subtle', value: 'subtle' },
   { description: 'Full cosmic field with shooting stars.', label: 'Cosmic', value: 'cosmic' },
+]
+
+const colorThemeOptions: Array<{ description: string; label: string; value: ColorTheme }> = [
+  { description: 'Warm night, cream ink, and soft starfield glow.', label: 'Starlight', value: 'starlight' },
+  { description: 'Cooler night tones with silver-blue focus accents.', label: 'Moonlit', value: 'moonlit' },
+  { description: 'A bright reading room for daytime writing.', label: 'Daylight', value: 'daylight' },
 ]
 
 const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
@@ -901,6 +909,7 @@ function App() {
   const [aiDraftTopic, setAiDraftTopic] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
   const [ambienceMode, setAmbienceMode] = useState<AmbienceMode>(loadStoredAmbienceMode)
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(loadStoredColorTheme)
   const [zenMode, setZenMode] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>('edit')
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
@@ -1246,6 +1255,15 @@ function App() {
     window.localStorage.setItem(ambienceStorageKey, ambienceMode)
     document.documentElement.dataset.essenceAmbience = ambienceMode
   }, [ambienceMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(colorThemeStorageKey, colorTheme)
+    document.documentElement.dataset.essenceTheme = colorTheme
+  }, [colorTheme])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3528,7 +3546,7 @@ function App() {
 
   return (
     <div
-      className={`app-shell app-shell--ambience-${ambienceMode} ${
+      className={`app-shell app-shell--theme-${colorTheme} app-shell--ambience-${ambienceMode} ${
         navigationSidebarVisible ? '' : 'app-shell--navigationHidden'
       } ${zenMode ? 'is-zen' : ''}`}
     >
@@ -3549,17 +3567,19 @@ function App() {
       />
 
       {!zenMode && settingsOpen && (
-        <SettingsDialog
-          ambienceMode={ambienceMode}
-          currentUser={currentUser}
+          <SettingsDialog
+            ambienceMode={ambienceMode}
+            colorTheme={colorTheme}
+            currentUser={currentUser}
           isSaving={profileSaving}
           navigationSidebarVisible={navigationSidebarVisible}
           noteCount={notes.length}
           folderCount={folders.length}
           composerHistoryCount={composerHistory.length}
           error={profileError}
-          onAmbienceChange={setAmbienceMode}
-          onClose={closeSettings}
+            onAmbienceChange={setAmbienceMode}
+            onColorThemeChange={setColorTheme}
+            onClose={closeSettings}
           onNavigationSidebarChange={setNavigationSidebarVisible}
           onOpenAuth={openAuthScreen}
           onSaveProfile={saveProfileSettings}
@@ -3612,7 +3632,6 @@ function App() {
             >
               <Icon name="settings" />
             </button>
-            <AmbienceControl mode={ambienceMode} onChange={setAmbienceMode} />
           </div>
         </aside>
       )}
@@ -7016,6 +7035,7 @@ function AccountControl({
 
 function SettingsDialog({
   ambienceMode,
+  colorTheme,
   composerHistoryCount,
   currentUser,
   error,
@@ -7024,6 +7044,7 @@ function SettingsDialog({
   navigationSidebarVisible,
   noteCount,
   onAmbienceChange,
+  onColorThemeChange,
   onClose,
   onNavigationSidebarChange,
   onOpenAuth,
@@ -7031,6 +7052,7 @@ function SettingsDialog({
   onSignOut,
 }: {
   ambienceMode: AmbienceMode
+  colorTheme: ColorTheme
   composerHistoryCount: number
   currentUser: AuthUser | null
   error: string | null
@@ -7039,6 +7061,7 @@ function SettingsDialog({
   navigationSidebarVisible: boolean
   noteCount: number
   onAmbienceChange: (mode: AmbienceMode) => void
+  onColorThemeChange: (theme: ColorTheme) => void
   onClose: () => void
   onNavigationSidebarChange: (visible: boolean) => void
   onOpenAuth: () => void
@@ -7146,23 +7169,48 @@ function SettingsDialog({
               </div>
             </div>
 
-            <div className="settings-choiceGrid" role="radiogroup" aria-label="Background ambience">
-              {ambienceOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`settings-choice ${ambienceMode === option.value ? 'settings-choice--active' : ''}`}
-                  onClick={() => onAmbienceChange(option.value)}
-                  role="radio"
-                  aria-checked={ambienceMode === option.value}
-                >
-                  <span className={`settings-choice__dot settings-choice__dot--${option.value}`} aria-hidden="true" />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </button>
-              ))}
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Color theme</span>
+              <div className="settings-choiceGrid settings-choiceGrid--themes" role="radiogroup" aria-label="Color theme">
+                {colorThemeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`settings-choice ${colorTheme === option.value ? 'settings-choice--active' : ''}`}
+                    onClick={() => onColorThemeChange(option.value)}
+                    role="radio"
+                    aria-checked={colorTheme === option.value}
+                  >
+                    <span className={`settings-choice__dot settings-choice__dot--theme-${option.value}`} aria-hidden="true" />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Background ambience</span>
+              <div className="settings-choiceGrid" role="radiogroup" aria-label="Background ambience">
+                {ambienceOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`settings-choice ${ambienceMode === option.value ? 'settings-choice--active' : ''}`}
+                    onClick={() => onAmbienceChange(option.value)}
+                    role="radio"
+                    aria-checked={ambienceMode === option.value}
+                  >
+                    <span className={`settings-choice__dot settings-choice__dot--${option.value}`} aria-hidden="true" />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <label className="settings-toggle">
@@ -7396,38 +7444,6 @@ function RailButton({
       </span>
       <span className="rail__buttonLabel">{label}</span>
     </button>
-  )
-}
-
-function AmbienceControl({
-  mode,
-  onChange,
-}: {
-  mode: AmbienceMode
-  onChange: (mode: AmbienceMode) => void
-}) {
-  return (
-    <div className="rail__ambience" aria-label="Background ambience">
-      <span className="rail__ambienceLabel">Ambience</span>
-      <div className="rail__ambienceToggle" role="radiogroup" aria-label="Background ambience">
-        {ambienceOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={`rail__ambienceButton ${
-              mode === option.value ? 'rail__ambienceButton--active' : ''
-            } rail__ambienceButton--${option.value}`}
-            onClick={() => onChange(option.value)}
-            role="radio"
-            aria-checked={mode === option.value}
-            aria-label={option.label}
-            title={`${option.label}: ${option.description}`}
-          >
-            <span className="rail__ambienceDot" aria-hidden="true" />
-          </button>
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -7815,6 +7831,16 @@ function loadStoredAmbienceMode(): AmbienceMode {
   return isAmbienceMode(raw) ? raw : 'subtle'
 }
 
+function loadStoredColorTheme(): ColorTheme {
+  if (typeof window === 'undefined') {
+    return 'starlight'
+  }
+
+  const raw = window.localStorage.getItem(colorThemeStorageKey)
+
+  return isColorTheme(raw) ? raw : 'starlight'
+}
+
 function loadStoredNavigationSidebarVisible() {
   if (typeof window === 'undefined') {
     return true
@@ -7873,6 +7899,10 @@ function isLibrarySortMode(value: unknown): value is LibrarySortMode {
 
 function isAmbienceMode(value: unknown): value is AmbienceMode {
   return value === 'still' || value === 'subtle' || value === 'cosmic'
+}
+
+function isColorTheme(value: unknown): value is ColorTheme {
+  return value === 'starlight' || value === 'moonlit' || value === 'daylight'
 }
 
 function loadAuthGateDismissed() {

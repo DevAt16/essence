@@ -34,6 +34,42 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-essence-theme='moonlit'] {
+  --paper: rgba(16, 22, 31, 0.78);
+  --paper-panel: rgba(23, 30, 42, 0.88);
+  --paper-soft: rgba(196, 218, 255, 0.075);
+  --ink: #eaf1ff;
+  --ink-strong: #f8fbff;
+  --ink-subtle: #c8d4e8;
+  --ink-muted: #8997ad;
+  --line: rgba(203, 222, 255, 0.13);
+  --line-strong: rgba(203, 222, 255, 0.23);
+  --line-dark: rgba(203, 222, 255, 0.36);
+  --focus: #9fc6ff;
+  --focus-soft: rgba(159, 198, 255, 0.2);
+  --night-base: #0d1118;
+  --night-glow: rgba(123, 171, 255, 0.15);
+  --night-warm-glow: rgba(206, 220, 255, 0.07);
+}
+
+:root[data-essence-theme='daylight'] {
+  --paper: rgba(250, 247, 239, 0.82);
+  --paper-panel: rgba(255, 252, 244, 0.94);
+  --paper-soft: rgba(28, 35, 46, 0.055);
+  --ink: #25221d;
+  --ink-strong: #0f1115;
+  --ink-subtle: #524b41;
+  --ink-muted: #7b7267;
+  --line: rgba(48, 42, 34, 0.13);
+  --line-strong: rgba(48, 42, 34, 0.22);
+  --line-dark: rgba(48, 42, 34, 0.34);
+  --focus: #3f6fae;
+  --focus-soft: rgba(63, 111, 174, 0.16);
+  --night-base: #eee7d8;
+  --night-glow: rgba(97, 132, 185, 0.12);
+  --night-warm-glow: rgba(215, 167, 87, 0.13);
+}
+
 *,
 *::before,
 *::after {
@@ -93,6 +129,33 @@ body::after {
     linear-gradient(115deg, rgba(255, 248, 232, 0.022), transparent 28%, rgba(185, 214, 255, 0.026) 56%, transparent 72%);
   background-size: 420px 420px, 560px 560px, 680px 680px, 100% 100%;
   animation: star-breath 8s ease-in-out infinite;
+}
+
+:root[data-essence-theme='moonlit'] body {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(123, 171, 255, 0.14), transparent 31rem),
+    radial-gradient(circle at 84% 16%, rgba(178, 204, 255, 0.065), transparent 29rem),
+    radial-gradient(circle at 58% 92%, rgba(137, 154, 190, 0.08), transparent 34rem),
+    linear-gradient(180deg, rgba(16, 22, 31, 0.94), rgba(8, 12, 18, 0.98)),
+    var(--night-base);
+}
+
+:root[data-essence-theme='daylight'] body {
+  background:
+    radial-gradient(circle at 16% 10%, rgba(255, 255, 255, 0.7), transparent 28rem),
+    radial-gradient(circle at 84% 16%, rgba(190, 209, 239, 0.22), transparent 30rem),
+    radial-gradient(circle at 52% 94%, rgba(235, 197, 126, 0.14), transparent 34rem),
+    linear-gradient(180deg, rgba(249, 245, 236, 0.98), rgba(238, 232, 220, 0.98)),
+    var(--night-base);
+}
+
+:root[data-essence-theme='daylight'] body::before {
+  opacity: 0.026;
+  filter: sepia(0.28);
+}
+
+:root[data-essence-theme='daylight'] body::after {
+  opacity: 0.04;
 }
 
 :root[data-essence-ambience='still'] body::before,
