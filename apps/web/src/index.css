@@ -35,39 +35,39 @@
 }
 
 :root[data-essence-theme='moonlit'] {
-  --paper: rgba(16, 22, 31, 0.78);
-  --paper-panel: rgba(23, 30, 42, 0.88);
-  --paper-soft: rgba(196, 218, 255, 0.075);
-  --ink: #eaf1ff;
+  --paper: rgba(11, 17, 26, 0.82);
+  --paper-panel: rgba(17, 25, 37, 0.9);
+  --paper-soft: rgba(176, 204, 244, 0.075);
+  --ink: #e8f1fb;
   --ink-strong: #f8fbff;
-  --ink-subtle: #c8d4e8;
-  --ink-muted: #8997ad;
-  --line: rgba(203, 222, 255, 0.13);
-  --line-strong: rgba(203, 222, 255, 0.23);
-  --line-dark: rgba(203, 222, 255, 0.36);
-  --focus: #9fc6ff;
-  --focus-soft: rgba(159, 198, 255, 0.2);
-  --night-base: #0d1118;
-  --night-glow: rgba(123, 171, 255, 0.15);
-  --night-warm-glow: rgba(206, 220, 255, 0.07);
+  --ink-subtle: #c0ccdc;
+  --ink-muted: #8290a4;
+  --line: rgba(185, 211, 247, 0.13);
+  --line-strong: rgba(185, 211, 247, 0.23);
+  --line-dark: rgba(185, 211, 247, 0.34);
+  --focus: #94c0ff;
+  --focus-soft: rgba(148, 192, 255, 0.19);
+  --night-base: #090d14;
+  --night-glow: rgba(100, 145, 220, 0.14);
+  --night-warm-glow: rgba(183, 201, 235, 0.06);
 }
 
 :root[data-essence-theme='daylight'] {
-  --paper: rgba(250, 247, 239, 0.82);
-  --paper-panel: rgba(255, 252, 244, 0.94);
-  --paper-soft: rgba(28, 35, 46, 0.055);
-  --ink: #25221d;
-  --ink-strong: #0f1115;
-  --ink-subtle: #524b41;
-  --ink-muted: #7b7267;
-  --line: rgba(48, 42, 34, 0.13);
-  --line-strong: rgba(48, 42, 34, 0.22);
-  --line-dark: rgba(48, 42, 34, 0.34);
-  --focus: #3f6fae;
-  --focus-soft: rgba(63, 111, 174, 0.16);
-  --night-base: #eee7d8;
-  --night-glow: rgba(97, 132, 185, 0.12);
-  --night-warm-glow: rgba(215, 167, 87, 0.13);
+  --paper: rgba(247, 248, 246, 0.86);
+  --paper-panel: rgba(255, 255, 252, 0.96);
+  --paper-soft: rgba(31, 43, 58, 0.06);
+  --ink: #25272a;
+  --ink-strong: #111419;
+  --ink-subtle: #505863;
+  --ink-muted: #7b828c;
+  --line: rgba(31, 39, 50, 0.12);
+  --line-strong: rgba(31, 39, 50, 0.21);
+  --line-dark: rgba(31, 39, 50, 0.32);
+  --focus: #3d6fa8;
+  --focus-soft: rgba(61, 111, 168, 0.16);
+  --night-base: #f2f0e8;
+  --night-glow: rgba(94, 132, 188, 0.12);
+  --night-warm-glow: rgba(208, 169, 92, 0.1);
 }
 
 *,
@@ -133,29 +133,29 @@ body::after {
 
 :root[data-essence-theme='moonlit'] body {
   background:
-    radial-gradient(circle at 18% 12%, rgba(123, 171, 255, 0.14), transparent 31rem),
-    radial-gradient(circle at 84% 16%, rgba(178, 204, 255, 0.065), transparent 29rem),
-    radial-gradient(circle at 58% 92%, rgba(137, 154, 190, 0.08), transparent 34rem),
-    linear-gradient(180deg, rgba(16, 22, 31, 0.94), rgba(8, 12, 18, 0.98)),
+    radial-gradient(circle at 18% 12%, rgba(100, 145, 220, 0.13), transparent 31rem),
+    radial-gradient(circle at 84% 16%, rgba(176, 204, 244, 0.055), transparent 29rem),
+    radial-gradient(circle at 58% 92%, rgba(91, 106, 136, 0.075), transparent 34rem),
+    linear-gradient(180deg, rgba(12, 18, 27, 0.96), rgba(6, 10, 16, 0.99)),
     var(--night-base);
 }
 
 :root[data-essence-theme='daylight'] body {
   background:
-    radial-gradient(circle at 16% 10%, rgba(255, 255, 255, 0.7), transparent 28rem),
-    radial-gradient(circle at 84% 16%, rgba(190, 209, 239, 0.22), transparent 30rem),
-    radial-gradient(circle at 52% 94%, rgba(235, 197, 126, 0.14), transparent 34rem),
-    linear-gradient(180deg, rgba(249, 245, 236, 0.98), rgba(238, 232, 220, 0.98)),
+    radial-gradient(circle at 16% 10%, rgba(255, 255, 255, 0.78), transparent 28rem),
+    radial-gradient(circle at 84% 16%, rgba(188, 211, 242, 0.18), transparent 30rem),
+    radial-gradient(circle at 54% 94%, rgba(218, 180, 103, 0.1), transparent 34rem),
+    linear-gradient(180deg, rgba(250, 249, 245, 0.99), rgba(235, 234, 227, 0.99)),
     var(--night-base);
 }
 
 :root[data-essence-theme='daylight'] body::before {
-  opacity: 0.026;
-  filter: sepia(0.28);
+  opacity: 0.018;
+  filter: sepia(0.16) saturate(0.72);
 }
 
 :root[data-essence-theme='daylight'] body::after {
-  opacity: 0.04;
+  opacity: 0.03;
 }
 
 :root[data-essence-ambience='still'] body::before,
@@ -262,6 +262,42 @@ body::after {
 
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(247, 236, 213, 0.34);
+  background-clip: padding-box;
+}
+
+:root[data-essence-theme='moonlit'] * {
+  scrollbar-color: rgba(185, 211, 247, 0.2) rgba(185, 211, 247, 0.04);
+}
+
+:root[data-essence-theme='moonlit'] *::-webkit-scrollbar-track {
+  background: rgba(185, 211, 247, 0.04);
+}
+
+:root[data-essence-theme='moonlit'] *::-webkit-scrollbar-thumb {
+  background: rgba(185, 211, 247, 0.2);
+  background-clip: padding-box;
+}
+
+:root[data-essence-theme='moonlit'] *::-webkit-scrollbar-thumb:hover {
+  background: rgba(185, 211, 247, 0.32);
+  background-clip: padding-box;
+}
+
+:root[data-essence-theme='daylight'] * {
+  scrollbar-color: rgba(31, 39, 50, 0.2) rgba(31, 39, 50, 0.04);
+}
+
+:root[data-essence-theme='daylight'] *::-webkit-scrollbar-track {
+  background: rgba(31, 39, 50, 0.04);
+}
+
+:root[data-essence-theme='daylight'] *::-webkit-scrollbar-thumb {
+  background: rgba(31, 39, 50, 0.2);
+  background-clip: padding-box;
+}
+
+:root[data-essence-theme='daylight'] *::-webkit-scrollbar-thumb:hover {
+  background: rgba(31, 39, 50, 0.3);
   background-clip: padding-box;
 }
 

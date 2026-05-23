@@ -4537,7 +4537,7 @@ function LibraryScreen({
       ) : isHomeView ? (
         <div className="library-home">
           {homeSections.map((section) => (
-            <section key={section.id} className="library-home__section">
+            <section key={section.id} className={`library-home__section library-home__section--${section.id}`}>
               <div className="library-home__header">
                 <div>
                   <span className="library-home__eyebrow">{section.eyebrow}</span>
@@ -4547,7 +4547,7 @@ function LibraryScreen({
               </div>
 
               {displayMode === 'list' || section.id === 'recent' ? (
-                <div className="note-list">
+                <div className={`note-list note-list--home note-list--${section.id}`}>
                   {section.notes.map((note) => (
                     <NoteListItem
                       key={note.id}
@@ -4567,7 +4567,11 @@ function LibraryScreen({
                   ))}
                 </div>
               ) : (
-                <div className={`note-grid ${section.emphasize ? 'note-grid--hero' : ''}`}>
+                <div
+                  className={`note-grid note-grid--home note-grid--${section.id} ${
+                    section.emphasize ? 'note-grid--spotlight' : ''
+                  }`}
+                >
                   {section.notes.map((note) => (
                     <NoteCard
                       key={note.id}
@@ -5054,17 +5058,27 @@ function FolderInspector({
   collections,
   folders,
   foldersById,
+  onCreateFolder,
   onDeleteFolder,
   onMoveFolder,
   onRenameFolder,
+  rootNoteCount,
+  selectedCollection,
+  selectedCollectionFolderCount,
+  selectedCollectionNoteCount,
 }: {
   activeFolder: Folder | null
   collections: CollectionSummary[]
   folders: Folder[]
   foldersById: Record<string, Folder>
+  onCreateFolder: (collectionId: CollectionId, parentId: string | null) => void
   onDeleteFolder: (folderId: string) => void
   onMoveFolder: (folderId: string, nextCollectionId: CollectionId, nextParentId: string | null) => void
   onRenameFolder: (folderId: string, nextName: string) => void
+  rootNoteCount: number
+  selectedCollection: CollectionSummary | null
+  selectedCollectionFolderCount: number
+  selectedCollectionNoteCount: number
 }) {
   const [draftName, setDraftName] = useState(activeFolder?.name ?? '')
 
@@ -5095,22 +5109,59 @@ function FolderInspector({
 
   if (!activeFolder) {
     return (
-      <section className="folder-inspector">
-        <div className="panel-header">
+      <section className="folder-inspector folder-inspector--empty">
+        <span className="folder-inspector__emptyIcon" aria-hidden="true">
+          <Icon name="folder" />
+        </span>
+        <div className="panel-header folder-inspector__header">
           <div>
-            <h1>Selected Folder</h1>
-            <p>Choose a folder to rename it, move it, or delete it safely.</p>
+            <span className="section-heading__meta">Inspector</span>
+            <h1>No folder selected</h1>
+            <p>
+              {selectedCollection
+                ? `Choose a folder in ${selectedCollection.name}, or create one to start organizing this space.`
+                : 'Choose a collection to inspect its folders.'}
+            </p>
           </div>
         </div>
+
+        {selectedCollection && (
+          <>
+            <div className="folder-inspector__summary" aria-label={`${selectedCollection.name} summary`}>
+              <span>
+                <strong>{selectedCollectionNoteCount}</strong>
+                Notes
+              </span>
+              <span>
+                <strong>{selectedCollectionFolderCount}</strong>
+                Folders
+              </span>
+              <span>
+                <strong>{rootNoteCount}</strong>
+                Root
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="ghost-button folder-inspector__primaryAction"
+              onClick={() => onCreateFolder(selectedCollection.id, null)}
+            >
+              <Icon name="plus" />
+              <span>{`Create folder in ${selectedCollection.name}`}</span>
+            </button>
+          </>
+        )}
       </section>
     )
   }
 
   return (
-    <section className="folder-inspector">
-      <div className="panel-header">
+    <section className="folder-inspector folder-inspector--selected">
+      <div className="panel-header folder-inspector__header">
         <div>
-          <h1>Selected Folder</h1>
+          <span className="section-heading__meta">Selected folder</span>
+          <h1>{draftName.trim() || activeFolder.name}</h1>
           <p>Rename, reposition, or remove this branch without losing descendants.</p>
         </div>
       </div>
@@ -5335,9 +5386,11 @@ function CollectionsScreen({
               ))
             ) : (
               <div className="collections-explorer__empty">
-                <Icon name="folder" />
+                <span className="collections-explorer__emptyIcon" aria-hidden="true">
+                  <Icon name="folder" />
+                </span>
                 <strong>No folders yet</strong>
-                <span>Create the first folder inside this collection.</span>
+                <span>{`Create a folder inside ${selectedCollection?.name ?? 'this collection'} to start shaping the tree.`}</span>
                 <button
                   type="button"
                   className="ghost-button"
@@ -5345,7 +5398,7 @@ function CollectionsScreen({
                   disabled={!selectedCollectionId}
                 >
                   <Icon name="plus" />
-                  <span>New folder</span>
+                  <span>{selectedCollection ? `Create folder in ${selectedCollection.name}` : 'New folder'}</span>
                 </button>
               </div>
             )}
@@ -5359,9 +5412,14 @@ function CollectionsScreen({
           collections={collections}
           folders={folders}
           foldersById={foldersById}
+          onCreateFolder={onCreateFolder}
           onDeleteFolder={onDeleteFolder}
           onMoveFolder={onMoveFolder}
           onRenameFolder={onRenameFolder}
+          rootNoteCount={rootNoteCount}
+          selectedCollection={selectedCollection}
+          selectedCollectionFolderCount={selectedCollectionFolders.length}
+          selectedCollectionNoteCount={selectedCollectionNotes.length}
         />
       </aside>
     </section>
@@ -7676,7 +7734,7 @@ function Icon({ name }: { name: string }) {
     case 'settings':
       return (
         <Glyph>
-          <path d="M12 3.5 14 4l1 2 2 .5 1.5 2-1 2 1 2-1.5 2-2 .5-1 2-2 .5-2-.5-1-2-2-.5-1.5-2 1-2-1-2L7 6.5 9 6l1-2Z" />
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.52a2 2 0 0 1-1 1.73l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.73v-.52a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
           <circle cx="12" cy="12" r="3" />
         </Glyph>
       )
