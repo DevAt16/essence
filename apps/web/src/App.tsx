@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js'
 import type { JSONContent } from '@tiptap/core'
 import './App.css'
 
+declare const __ESSENCE_APP_VERSION__: string
+
 const ModernRichEditor = lazy(() => import('./editor/ModernRichEditor'))
 const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
@@ -319,6 +321,7 @@ const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
 const libraryPreferencesStorageKey = 'essence-library-preferences'
 const editorSidebarStorageKey = 'essence-editor-sidebar-open'
+const appVersion = __ESSENCE_APP_VERSION__
 const historyLimit = 120
 const composerHistoryLimit = 18
 const composerRequestContextLimit = 3
@@ -7326,6 +7329,22 @@ function SettingsDialog({
                 </button>
               )}
             </div>
+          </section>
+
+          <section className="settings-section settings-section--about" aria-label="About Essence">
+            <div className="settings-section__header">
+              <div>
+                <span>About</span>
+                <strong>Essence</strong>
+              </div>
+            </div>
+
+            <dl className="settings-about">
+              <div>
+                <dt>Version</dt>
+                <dd>{appVersion}</dd>
+              </div>
+            </dl>
           </section>
         </div>
       </section>

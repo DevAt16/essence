@@ -2789,6 +2789,43 @@
   text-transform: none;
 }
 
+.settings-section--about {
+  gap: 12px;
+}
+
+.settings-about {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-about div {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+}
+
+.settings-about dt {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-about dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: right;
+}
+
 .main {
   position: relative;
   isolation: isolate;
@@ -8198,7 +8235,8 @@ textarea:focus-visible {
 
 :root[data-essence-theme='moonlit'] .settings-section,
 :root[data-essence-theme='moonlit'] .settings-choice,
-:root[data-essence-theme='moonlit'] .settings-field input {
+:root[data-essence-theme='moonlit'] .settings-field input,
+:root[data-essence-theme='moonlit'] .settings-about div {
   background:
     linear-gradient(180deg, rgba(20, 31, 46, 0.76), rgba(9, 15, 24, 0.64));
   border-color: rgba(185, 211, 247, 0.12);
@@ -8578,7 +8616,8 @@ textarea:focus-visible {
 
 :root[data-essence-theme='daylight'] .settings-section,
 :root[data-essence-theme='daylight'] .settings-choice,
-:root[data-essence-theme='daylight'] .settings-field input {
+:root[data-essence-theme='daylight'] .settings-field input,
+:root[data-essence-theme='daylight'] .settings-about div {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(245, 247, 244, 0.62));
 }
