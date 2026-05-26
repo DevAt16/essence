@@ -9979,7 +9979,7 @@ textarea:focus-visible {
   .auth-main {
     width: 100%;
     min-height: 100svh;
-    padding: 24px;
+    padding: 24px 18px;
   }
 
   .auth-brandbar {
@@ -10001,8 +10001,9 @@ textarea:focus-visible {
   }
 
   .auth-panel {
-    width: min(100%, calc(100vw - 48px));
-    justify-self: stretch;
+    width: 100%;
+    max-width: none;
+    justify-self: start;
   }
 
   .auth-poem {
@@ -10275,6 +10276,36 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
+  .auth-main {
+    overflow-x: hidden;
+  }
+
+  .auth-brandbar {
+    gap: 9px;
+  }
+
+  .auth-brandbar p {
+    font-size: 0.82rem;
+  }
+
+  .auth-brandbar__divider {
+    margin: 0 3px;
+  }
+
+  .auth-main__content {
+    max-width: min(100%, 394px);
+  }
+
+  .auth-hero h1 {
+    max-width: 7.7em;
+    font-size: clamp(2.35rem, 9.2vw, 2.75rem);
+  }
+
+  .auth-panel {
+    max-width: 394px;
+    padding: 20px 18px;
+  }
+
   .topbar--editor {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 8px;
