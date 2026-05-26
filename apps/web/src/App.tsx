@@ -4718,7 +4718,7 @@ function NoteCard({
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
 }) {
-  const excerpt = summarizeBlocks(note.blocks)
+  const excerpt = summarizeNotePreview(note)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
   const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const isCompact = note.layout === 'standard' && excerpt.length < 90
@@ -4809,7 +4809,7 @@ function NoteListItem({
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
 }) {
-  const excerpt = summarizeBlocks(note.blocks)
+  const excerpt = summarizeNotePreview(note)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
   const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const wordCount = countWordsFromBlocks(note.blocks)
@@ -5045,7 +5045,7 @@ function EditorSidebar({
                   <span>{note.previewDate}</span>
                 </div>
                 <h3>{note.title}</h3>
-                <p>{summarizeBlocks(note.blocks)}</p>
+                <p>{summarizeNotePreview(note)}</p>
                 <span className="note-sidebar__collection">{location}</span>
               </button>
             )
@@ -9876,6 +9876,27 @@ function summarizeBlocks(blocks: NoteBlock[]) {
   }
 
   return `${text.slice(0, 145).trimEnd()}...`
+}
+
+function summarizeNotePreview(note: Pick<Note, 'blocks' | 'title'>) {
+  return summarizeBlocks(getPreviewBlocks(note))
+}
+
+function getPreviewBlocks(note: Pick<Note, 'blocks' | 'title'>) {
+  const [firstBlock, ...remainingBlocks] = note.blocks
+
+  if (
+    firstBlock?.type === 'heading' &&
+    normalizePreviewText(firstBlock.text ?? '') === normalizePreviewText(note.title)
+  ) {
+    return remainingBlocks
+  }
+
+  return note.blocks
+}
+
+function normalizePreviewText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 function countWordsFromBlocks(blocks: NoteBlock[]) {
