@@ -159,8 +159,14 @@ interface RemoteAppSnapshot {
   user: AuthUser | null
 }
 
-type RemoteSignInResult =
-  | { kind: 'magic-link'; email: string }
+interface RemoteAuthSessionPayload {
+  access_token: string
+  expires_at: number | null
+  refresh_token: string
+}
+
+type RemoteCodeRequestResult =
+  | { kind: 'code-sent'; email: string }
   | { kind: 'session'; snapshot: RemoteAppSnapshot }
 
 interface ImportedMarkdownNote {
@@ -894,6 +900,8 @@ function App() {
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [authEmail, setAuthEmail] = useState('')
+  const [authCode, setAuthCode] = useState('')
+  const [authCodeEmail, setAuthCodeEmail] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authNotice, setAuthNotice] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
@@ -1871,7 +1879,17 @@ function App() {
     notes,
   })
 
-  const handleSignIn = async () => {
+  const completeRemoteSignIn = (snapshot: RemoteAppSnapshot) => {
+    setCurrentUser(snapshot.user)
+    setAuthEmail('')
+    setAuthCode('')
+    setAuthCodeEmail(null)
+    setAuthGateDismissed(false)
+    clearAuthGateDismissed()
+    applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
+  }
+
+  const handleRequestAuthCode = async () => {
     if (!authEmail.trim()) {
       setAuthError('Enter an email to continue.')
       return
@@ -1882,20 +1900,17 @@ function App() {
     setAuthBusy(true)
 
     try {
-      const result = await signInRemote(authEmail, getCurrentPersistedState())
+      const result = await requestRemoteSignInCode(authEmail, getCurrentPersistedState())
 
-      if (result.kind === 'magic-link') {
-        setAuthNotice(`Check ${result.email} for the Essence sign-in link, then return here.`)
-        flashSaveFeedback('Sign-in link sent')
+      if (result.kind === 'code-sent') {
+        setAuthCode('')
+        setAuthCodeEmail(result.email)
+        setAuthNotice(`Enter the code sent to ${result.email}.`)
+        flashSaveFeedback('Sign-in code sent')
         return
       }
 
-      const { snapshot } = result
-      setCurrentUser(snapshot.user)
-      setAuthEmail('')
-      setAuthGateDismissed(false)
-      clearAuthGateDismissed()
-      applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
+      completeRemoteSignIn(result.snapshot)
     } catch (error) {
       if (isRemoteAccessError(error)) {
         handleRemoteAccessEnded(error)
@@ -1913,6 +1928,76 @@ function App() {
     }
   }
 
+  const handleVerifyAuthCode = async () => {
+    const email = authCodeEmail ?? authEmail.trim()
+
+    if (!email) {
+      setAuthError('Enter an email to continue.')
+      return
+    }
+
+    if (!authCode.trim()) {
+      setAuthError('Enter the code from your email.')
+      return
+    }
+
+    setAuthError(null)
+    setAuthNotice(null)
+    setAuthBusy(true)
+
+    try {
+      const snapshot = await verifyRemoteSignInCode(email, authCode, getCurrentPersistedState())
+      completeRemoteSignIn(snapshot)
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to verify sign-in code.', error)
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'We could not verify that code. Request a new one and try again.',
+      )
+      flashSaveFeedback('Sign in failed')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  const handleRequestMagicLink = async () => {
+    if (!authEmail.trim()) {
+      setAuthError('Enter an email to continue.')
+      return
+    }
+
+    setAuthError(null)
+    setAuthNotice(null)
+    setAuthBusy(true)
+
+    try {
+      await requestRemoteSignInLink(authEmail)
+      setAuthCode('')
+      setAuthCodeEmail(null)
+      setAuthNotice(`Check ${authEmail.trim()} for the Essence sign-in link, then return here.`)
+      flashSaveFeedback('Sign-in link sent')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to request sign-in link.', error)
+      setAuthError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'We could not send that sign-in link. Check the email and try again.',
+      )
+      flashSaveFeedback('Sign in failed')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
   const handleSignOut = async () => {
     setAuthBusy(true)
 
@@ -1920,6 +2005,8 @@ function App() {
       await signOutRemote()
       setCurrentUser(createLocalAuthUser())
       setAuthEmail('')
+      setAuthCode('')
+      setAuthCodeEmail(null)
       setAuthNotice(null)
       setAuthGateDismissed(false)
       clearAuthGateDismissed()
@@ -1935,6 +2022,8 @@ function App() {
   const continueLocally = () => {
     setAuthError(null)
     setAuthNotice(null)
+    setAuthCode('')
+    setAuthCodeEmail(null)
     setAuthGateDismissed(true)
     persistAuthGateDismissed()
   }
@@ -1942,6 +2031,8 @@ function App() {
   const openAuthScreen = () => {
     setAuthError(null)
     setAuthNotice(null)
+    setAuthCode('')
+    setAuthCodeEmail(null)
     setAiComposerOpen(false)
     setSettingsOpen(false)
     setAuthGateDismissed(false)
@@ -3530,18 +3621,36 @@ function App() {
   if (showAuthScreen) {
     return (
       <AuthScreen
+        code={authCode}
+        codeSentTo={authCodeEmail}
         disabled={authBusy || !remoteSyncReady}
         email={authEmail}
         error={authError}
+        isBusy={authBusy}
         isLoading={!remoteSyncReady}
         notice={authNotice}
-        onContinueLocally={continueLocally}
-        onEmailChange={(value) => {
-          setAuthEmail(value)
+        onChangeEmail={() => {
+          setAuthCode('')
+          setAuthCodeEmail(null)
           setAuthError(null)
           setAuthNotice(null)
         }}
-        onSubmit={handleSignIn}
+        onCodeChange={(value) => {
+          setAuthCode(value)
+          setAuthError(null)
+          setAuthNotice(null)
+        }}
+        onContinueLocally={continueLocally}
+        onEmailChange={(value) => {
+          setAuthEmail(value)
+          setAuthCode('')
+          setAuthCodeEmail(null)
+          setAuthError(null)
+          setAuthNotice(null)
+        }}
+        onRequestCode={handleRequestAuthCode}
+        onRequestMagicLink={handleRequestMagicLink}
+        onVerifyCode={handleVerifyAuthCode}
         waitlistUrl={waitlistUrl}
       />
     )
@@ -4718,7 +4827,7 @@ function NoteCard({
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
 }) {
-  const excerpt = summarizeBlocks(note.blocks)
+  const excerpt = summarizeNotePreview(note)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
   const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const isCompact = note.layout === 'standard' && excerpt.length < 90
@@ -4809,7 +4918,7 @@ function NoteListItem({
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
 }) {
-  const excerpt = summarizeBlocks(note.blocks)
+  const excerpt = summarizeNotePreview(note)
   const folderPath = getFolderPathLabel(note.folderId, foldersById)
   const locationLabel = folderPath || collectionNameById[note.collectionId] || humanizeCollectionId(note.collectionId)
   const wordCount = countWordsFromBlocks(note.blocks)
@@ -5045,7 +5154,7 @@ function EditorSidebar({
                   <span>{note.previewDate}</span>
                 </div>
                 <h3>{note.title}</h3>
-                <p>{summarizeBlocks(note.blocks)}</p>
+                <p>{summarizeNotePreview(note)}</p>
                 <span className="note-sidebar__collection">{location}</span>
               </button>
             )
@@ -6959,30 +7068,56 @@ function EditorActionsMenu({
 }
 
 function AuthScreen({
+  code,
+  codeSentTo,
   disabled,
   email,
   error,
+  isBusy,
   isLoading,
   notice,
+  onChangeEmail,
+  onCodeChange,
   onContinueLocally,
   onEmailChange,
-  onSubmit,
+  onRequestCode,
+  onRequestMagicLink,
+  onVerifyCode,
   waitlistUrl,
 }: {
+  code: string
+  codeSentTo: string | null
   disabled: boolean
   email: string
   error: string | null
+  isBusy: boolean
   isLoading: boolean
   notice: string | null
+  onChangeEmail: () => void
+  onCodeChange: (code: string) => void
   onContinueLocally: () => void
   onEmailChange: (email: string) => void
-  onSubmit: () => void
+  onRequestCode: () => void
+  onRequestMagicLink: () => void
+  onVerifyCode: () => void
   waitlistUrl: string
 }) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSubmit()
+    if (codeSentTo) {
+      onVerifyCode()
+      return
+    }
+
+    onRequestCode()
   }
+  const primaryLabel = isLoading
+    ? 'Preparing workspace...'
+    : isBusy
+      ? 'Please wait...'
+      : codeSentTo
+        ? 'Verify code'
+        : 'Send sign-in code'
 
   return (
     <main className="auth-screen">
@@ -7001,29 +7136,66 @@ function AuthScreen({
 
           <section className="auth-panel">
             <span className="auth-panel__eyebrow">Invite-only access</span>
-            <p className="auth-panel__copy">Use the email that was approved from the waitlist.</p>
+            <p className="auth-panel__copy">Use your approved email. Essence sends a short code first.</p>
 
             <form className="auth-form" onSubmit={handleSubmit}>
-              <label className="auth-field">
-                <span>Email</span>
-                <input
-                  autoComplete="email"
-                  autoFocus
-                  disabled={disabled}
-                  inputMode="email"
-                  onChange={(event) => onEmailChange(event.target.value)}
-                  placeholder="you@example.com"
-                  type="email"
-                  value={email}
-                />
-              </label>
+              {codeSentTo ? (
+                <div className="auth-codeSummary">
+                  <span>
+                    Code sent to <strong>{codeSentTo}</strong>
+                  </span>
+                  <button type="button" onClick={onChangeEmail} disabled={disabled}>
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <label className="auth-field">
+                  <span>Email</span>
+                  <input
+                    autoComplete="email"
+                    autoFocus
+                    disabled={disabled}
+                    inputMode="email"
+                    onChange={(event) => onEmailChange(event.target.value)}
+                    placeholder="you@example.com"
+                    type="email"
+                    value={email}
+                  />
+                </label>
+              )}
+
+              {codeSentTo && (
+                <label className="auth-field">
+                  <span>Sign-in code</span>
+                  <input
+                    autoComplete="one-time-code"
+                    autoFocus
+                    disabled={disabled}
+                    inputMode="numeric"
+                    onChange={(event) => onCodeChange(event.target.value)}
+                    placeholder="Enter code"
+                    type="text"
+                    value={code}
+                  />
+                </label>
+              )}
 
               {error && <div className="auth-error">{error}</div>}
               {notice && <div className="auth-notice">{notice}</div>}
 
               <button type="submit" className="auth-primary" disabled={disabled}>
-                {isLoading ? 'Preparing workspace...' : 'Send sign-in link'}
+                {primaryLabel}
               </button>
+
+              {codeSentTo ? (
+                <button type="button" className="auth-secondary" onClick={onRequestCode} disabled={disabled}>
+                  Send a new code
+                </button>
+              ) : (
+                <button type="button" className="auth-secondary" onClick={onRequestMagicLink} disabled={disabled}>
+                  Use a magic link instead
+                </button>
+              )}
             </form>
 
             {waitlistUrl && (
@@ -8551,18 +8723,30 @@ function normalizeComposerContextText(value: string) {
     .trim()
 }
 
-async function signInRemote(email: string, state: PersistedAppState): Promise<RemoteSignInResult> {
+async function requestRemoteSignInCode(email: string, state: PersistedAppState): Promise<RemoteCodeRequestResult> {
   if (supabaseClient) {
     const { data } = await supabaseClient.auth.getSession()
 
     if (!data.session?.access_token) {
-      await requestRemoteSignInLink(email)
-      return { email, kind: 'magic-link' }
+      const response = await fetch(getApiUrl('/api/auth/request-code'), {
+        method: 'POST',
+        credentials: apiFetchCredentials,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      })
+
+      if (!response.ok) {
+        throw await createRemoteRequestError(response, `Could not send sign-in code: ${response.status}`)
+      }
+
+      return { email, kind: 'code-sent' }
     }
 
     return {
       kind: 'session',
-      snapshot: await fetchRemoteAppState(),
+      snapshot: await resolveRemoteSnapshotAfterSignIn(await fetchRemoteAppState(), state),
     }
   }
 
@@ -8588,6 +8772,69 @@ async function signInRemote(email: string, state: PersistedAppState): Promise<Re
   return {
     kind: 'session',
     snapshot: normalizeRemoteAppSnapshot(payload),
+  }
+}
+
+async function verifyRemoteSignInCode(
+  email: string,
+  code: string,
+  state: PersistedAppState,
+): Promise<RemoteAppSnapshot> {
+  if (!supabaseClient) {
+    throw new Error('Supabase sign-in is not active in this browser session. Restart the dev server after updating .env.')
+  }
+
+  const response = await fetch(getApiUrl('/api/auth/verify-code'), {
+    method: 'POST',
+    credentials: apiFetchCredentials,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ code, email, state }),
+  })
+
+  const payload = await response.json().catch(() => ({})) as { session?: unknown; state?: unknown; user?: unknown }
+
+  if (!response.ok) {
+    throw new RemoteRequestError(
+      response.status,
+      typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
+        : `Could not verify sign-in code: ${response.status}`,
+    )
+  }
+
+  const session = normalizeRemoteAuthSession(payload.session)
+
+  if (!session) {
+    throw new Error('The API verified the code but did not return a usable Supabase session.')
+  }
+
+  const { error } = await supabaseClient.auth.setSession({
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+  })
+
+  if (error) {
+    throw new Error(error.message || 'Could not save the verified Supabase session.')
+  }
+
+  return resolveRemoteSnapshotAfterSignIn(normalizeRemoteAppSnapshot(payload), state)
+}
+
+async function resolveRemoteSnapshotAfterSignIn(
+  snapshot: RemoteAppSnapshot,
+  state: PersistedAppState,
+): Promise<RemoteAppSnapshot> {
+  if (snapshot.user?.isLocal || snapshot.state || !hasWorkspaceData(state)) {
+    return snapshot
+  }
+
+  await persistRemoteAppState(state)
+
+  return {
+    ...snapshot,
+    state,
   }
 }
 
@@ -8662,6 +8909,26 @@ function normalizeRemoteAppSnapshot(payload: unknown): RemoteAppSnapshot {
   return {
     state: candidate.state ? normalizePersistedAppState(candidate.state) : null,
     user: normalizeAuthUser(candidate.user),
+  }
+}
+
+function normalizeRemoteAuthSession(payload: unknown): RemoteAuthSessionPayload | null {
+  const candidate = payload as Partial<RemoteAuthSessionPayload> | null
+
+  if (
+    !candidate ||
+    typeof candidate.access_token !== 'string' ||
+    !candidate.access_token ||
+    typeof candidate.refresh_token !== 'string' ||
+    !candidate.refresh_token
+  ) {
+    return null
+  }
+
+  return {
+    access_token: candidate.access_token,
+    expires_at: typeof candidate.expires_at === 'number' ? candidate.expires_at : null,
+    refresh_token: candidate.refresh_token,
   }
 }
 
@@ -9876,6 +10143,27 @@ function summarizeBlocks(blocks: NoteBlock[]) {
   }
 
   return `${text.slice(0, 145).trimEnd()}...`
+}
+
+function summarizeNotePreview(note: Pick<Note, 'blocks' | 'title'>) {
+  return summarizeBlocks(getPreviewBlocks(note))
+}
+
+function getPreviewBlocks(note: Pick<Note, 'blocks' | 'title'>) {
+  const [firstBlock, ...remainingBlocks] = note.blocks
+
+  if (
+    firstBlock?.type === 'heading' &&
+    normalizePreviewText(firstBlock.text ?? '') === normalizePreviewText(note.title)
+  ) {
+    return remainingBlocks
+  }
+
+  return note.blocks
+}
+
+function normalizePreviewText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 function countWordsFromBlocks(blocks: NoteBlock[]) {

@@ -33,6 +33,6 @@
     "copyright": "Copyright 2026 Essence",
     "shortDescription": "A lucid space for thought.",
     "longDescription": "Essence is an internal desktop preview for testing the feel of the notes, library, reader, and Composer workflows as a native app shell.",
-    "targets": "all"
+    "targets": ["nsis"]
   }
 }

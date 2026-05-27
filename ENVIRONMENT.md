@@ -55,16 +55,18 @@ This file explains every field in `.env.example`, what it controls, and whether 
 
 | Field | Scope | Secret | Role |
 | --- | --- | --- | --- |
-| `SUPABASE_URL` | API | No | Supabase project URL used by the API for JWT verification and magic-link requests. |
-| `SUPABASE_PUBLISHABLE_KEY` | API | No | Supabase publishable key used by the API to request magic links after checking `approved_users`. Public-safe by design. |
+| `SUPABASE_URL` | API | No | Supabase project URL used by the API for JWT verification and OTP email requests. |
+| `SUPABASE_PUBLISHABLE_KEY` | API | No | Supabase publishable key used by the API to request and verify OTP emails after checking `approved_users`. Public-safe by design. |
 | `SUPABASE_SERVICE_ROLE_KEY` | API/CLI | Yes | Service role key used by approval tooling when it needs elevated Supabase actions. Never expose to the browser. |
 | `SUPABASE_JWT_AUDIENCE` | API | No | Expected Supabase JWT audience. Usually `authenticated`. |
+
+Configure the Supabase email OTP template to show the code token, for example `{{ .Token }}`, so users can complete the primary code sign-in flow.
 
 ## Auth And Invite Gate
 
 | Field | Scope | Secret | Role |
 | --- | --- | --- | --- |
-| `AUTH_INVITE_REDIRECT_URL` | API | No | URL where Supabase magic links should return users after login. Use the deployed app URL in production. |
+| `AUTH_INVITE_REDIRECT_URL` | API | No | URL where Supabase magic-link fallback emails should return users after login. Use the deployed app URL in production. |
 | `AUTH_ALLOWED_REDIRECT_ORIGINS` | API | No | Comma-separated origins allowed for auth redirects. Prevents login links from redirecting to untrusted origins. |
 | `AUTH_COOKIE_NAME` | API | No | Cookie name for API-created sessions used by the development email-login helper. |
 | `AUTH_SESSION_DAYS` | API | No | Number of days development helper sessions remain valid. |
