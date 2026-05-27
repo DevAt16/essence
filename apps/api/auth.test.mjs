@@ -124,6 +124,86 @@ test('approved emails can request a sign-in link through the API gate', async ()
   assert.equal(fakeSupabase.requests[0].options.shouldCreateUser, false)
 })
 
+test('approved emails can request a sign-in code through the API gate', async () => {
+  const email = uniqueEmail('code-approved')
+  const fakeSupabase = createFakeSupabaseOtpClient()
+  await approveUserEmail(email, { approvedBy: 'test' })
+  setSupabaseOtpClientForTests(fakeSupabase)
+
+  const response = await apiRequest('/api/auth/request-code', {
+    email,
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ok, true)
+  assert.equal(fakeSupabase.requests.length, 1)
+  assert.equal(fakeSupabase.requests[0].email, email)
+  assert.equal(fakeSupabase.requests[0].options.shouldCreateUser, false)
+  assert.equal(fakeSupabase.requests[0].options.emailRedirectTo, undefined)
+})
+
+test('approved emails can verify a sign-in code and receive a Supabase session', async () => {
+  const email = uniqueEmail('code-verify')
+  const fakeSupabase = createFakeSupabaseOtpClient()
+  await approveUserEmail(email, { approvedBy: 'test' })
+  setSupabaseOtpClientForTests(fakeSupabase)
+
+  const response = await apiRequest('/api/auth/verify-code', {
+    code: '123 456',
+    email,
+    state: {
+      activeNoteId: null,
+      composerHistory: [],
+      collections: [],
+      folders: [],
+      notes: [],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ok, true)
+  assert.equal(fakeSupabase.verifications.length, 1)
+  assert.deepEqual(fakeSupabase.verifications[0], {
+    email,
+    token: '123456',
+    type: 'email',
+  })
+  assert.equal(response.body.session.access_token, 'fake-access-token')
+  assert.equal(response.body.session.refresh_token, 'fake-refresh-token')
+  assert.equal(response.body.user.email, email)
+  assert.equal(response.body.user.isLocal, false)
+  assert.deepEqual(response.body.state.notes, [])
+})
+
+test('unapproved emails cannot verify sign-in codes', async () => {
+  const fakeSupabase = createFakeSupabaseOtpClient()
+  setSupabaseOtpClientForTests(fakeSupabase)
+
+  const response = await apiRequest('/api/auth/verify-code', {
+    code: '123456',
+    email: uniqueEmail('code-unapproved'),
+  })
+
+  assert.equal(response.status, 403)
+  assert.equal(fakeSupabase.verifications.length, 0)
+})
+
+test('sign-in code verification requires a code-shaped token', async () => {
+  const email = uniqueEmail('code-invalid')
+  const fakeSupabase = createFakeSupabaseOtpClient()
+  await approveUserEmail(email, { approvedBy: 'test' })
+  setSupabaseOtpClientForTests(fakeSupabase)
+
+  const response = await apiRequest('/api/auth/verify-code', {
+    code: '12',
+    email,
+  })
+
+  assert.equal(response.status, 400)
+  assert.equal(fakeSupabase.verifications.length, 0)
+  assert.match(response.body.error, /code/i)
+})
+
 test('revoked approved users cannot request sign-in links', async () => {
   const email = uniqueEmail('revoked')
   const fakeSupabase = createFakeSupabaseOtpClient()
@@ -289,13 +369,35 @@ async function apiRequest(path, body, options = {}) {
 
 function createFakeSupabaseOtpClient() {
   const requests = []
+  const verifications = []
 
   return {
     requests,
+    verifications,
     auth: {
       async signInWithOtp(request) {
         requests.push(request)
         return { data: {}, error: null }
+      },
+      async verifyOtp(request) {
+        verifications.push(request)
+        return {
+          data: {
+            session: {
+              access_token: 'fake-access-token',
+              expires_at: 1_789_999_999,
+              refresh_token: 'fake-refresh-token',
+            },
+            user: {
+              email: request.email,
+              id: `supabase-${request.email}`,
+              user_metadata: {
+                full_name: 'Test Invited User',
+              },
+            },
+          },
+          error: null,
+        }
       },
     },
   }

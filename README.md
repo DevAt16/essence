@@ -112,17 +112,17 @@ Current backend model:
 
 ## Authentication
 
-Production auth is designed around invite-only Supabase Auth magic links. Configure both the browser and API with the same Supabase project:
+Production auth is designed around invite-only Supabase Auth email codes, with magic links kept as a fallback. Configure both the browser and API with the same Supabase project:
 
-- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` let the React app receive Supabase sessions after the email link is opened.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` let the React app store Supabase sessions after an email code is verified.
 - `SUPABASE_URL` lets the API verify Supabase access-token JWTs with the project's JWKS endpoint.
-- `SUPABASE_PUBLISHABLE_KEY` lets the API request approved sign-in emails after checking `approved_users`.
+- `SUPABASE_PUBLISHABLE_KEY` lets the API request and verify approved sign-in emails after checking `approved_users`.
 - `SUPABASE_JWT_AUDIENCE` defaults to `authenticated`.
 - `AUTH_ALLOWED_REDIRECT_ORIGINS` restricts where API-requested auth links may redirect.
 - `VITE_WAITLIST_URL` optionally adds a waitlist link to the sign-in screen.
 - Approved users live in the `approved_users` table, so waitlist approvals do not require app restarts.
 
-For invite-only operation, disable public signups in Supabase Auth and add or invite approved users from your waitlist. The app also asks Supabase not to create users during OTP sign-in, so unknown emails should not receive a usable sign-in flow. After adding the user in Supabase, approve the same email in Essence:
+For invite-only operation, disable public signups in Supabase Auth and add or invite approved users from your waitlist. Configure the Supabase email OTP template to include the token, such as `{{ .Token }}`, so users can enter the code in Essence. The app also asks Supabase not to create users during OTP sign-in, so unknown emails should not receive a usable sign-in flow. After adding the user in Supabase, approve the same email in Essence:
 
 ```bash
 npm run auth:approve -- user@example.com
@@ -145,7 +145,9 @@ Current API endpoints:
 - `GET /api/health`
 - `GET /api/ready`
 - `GET /api/auth/session`
+- `POST /api/auth/request-code`
 - `POST /api/auth/request-link`
+- `POST /api/auth/verify-code`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/state`

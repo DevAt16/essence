@@ -123,6 +123,48 @@ app.get('/api/auth/session', async (request, response, next) => {
   }
 })
 
+app.post('/api/auth/request-code', async (request, response, next) => {
+  try {
+    const email = normalizeEmailInput(request.body?.email)
+
+    enforceRateLimit(request, 'auth-code', getAuthRateLimitOptions(), email)
+
+    if (!email) {
+      response.status(400).json({ error: 'Enter a valid email address.' })
+      return
+    }
+
+    if (!(await isApprovedUserEmail(email))) {
+      const error = new Error('This email is not invited to Essence yet.')
+      error.status = 403
+      throw error
+    }
+
+    if (!supabaseOtpClient) {
+      const error = new Error('Supabase sign-in is not configured on the API.')
+      error.status = 501
+      throw error
+    }
+
+    const { error } = await supabaseOtpClient.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      },
+    })
+
+    if (error) {
+      const requestError = new Error(`Supabase could not send the sign-in code: ${error.message}`)
+      requestError.status = Number.isInteger(error.status) ? error.status : 502
+      throw requestError
+    }
+
+    response.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.post('/api/auth/request-link', async (request, response, next) => {
   try {
     const email = normalizeEmailInput(request.body?.email)
@@ -161,6 +203,96 @@ app.post('/api/auth/request-link', async (request, response, next) => {
     }
 
     response.json({ ok: true })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/auth/verify-code', async (request, response, next) => {
+  try {
+    const email = normalizeEmailInput(request.body?.email)
+    const code = normalizeEmailCodeInput(request.body?.code)
+
+    enforceRateLimit(request, 'auth-code-verify', getAuthRateLimitOptions(), email)
+
+    if (!email) {
+      response.status(400).json({ error: 'Enter a valid email address.' })
+      return
+    }
+
+    if (!code) {
+      response.status(400).json({ error: 'Enter the sign-in code from your email.' })
+      return
+    }
+
+    if (!(await isApprovedUserEmail(email))) {
+      const error = new Error('This email is not invited to Essence yet.')
+      error.status = 403
+      throw error
+    }
+
+    if (!supabaseOtpClient) {
+      const error = new Error('Supabase sign-in is not configured on the API.')
+      error.status = 501
+      throw error
+    }
+
+    const { data, error } = await supabaseOtpClient.auth.verifyOtp({
+      email,
+      token: code,
+      type: 'email',
+    })
+
+    if (error) {
+      const requestError = new Error('The sign-in code is invalid or expired. Request a new code and try again.')
+      requestError.status = Number.isInteger(error.status) ? error.status : 401
+      throw requestError
+    }
+
+    const supabaseAccount = getSupabaseOtpAccount(data?.user)
+    const session = serializeSupabaseSession(data?.session)
+
+    if (!supabaseAccount || !session) {
+      const error = new Error('Supabase verified the code, but did not return a complete session.')
+      error.status = 502
+      throw error
+    }
+
+    if (supabaseAccount.email !== email && !(await isApprovedUserEmail(supabaseAccount.email))) {
+      const error = new Error('This email is not invited to Essence yet.')
+      error.status = 403
+      throw error
+    }
+
+    const user = await getOrCreateExternalUser({
+      displayName: supabaseAccount.displayName,
+      email: supabaseAccount.email,
+      provider: 'supabase',
+      subject: supabaseAccount.subject,
+    })
+
+    if (!user) {
+      const error = new Error('Unable to create account for authenticated user.')
+      error.status = 401
+      throw error
+    }
+
+    let accountState = await getAppState(user.id)
+
+    if (!accountState && isPersistedAppState(request.body?.state)) {
+      accountState = cloneStateForAccount(request.body.state)
+      await saveAppState(accountState, {
+        userId: user.id,
+        recordRevisions: false,
+      })
+    }
+
+    response.json({
+      ok: true,
+      session,
+      state: accountState ?? createEmptyPersistedState(),
+      user: serializeUser(user),
+    })
   } catch (error) {
     next(error)
   }
@@ -496,7 +628,7 @@ function validateRuntimeConfig() {
   }
 
   if (!supabaseOtpClient) {
-    errors.push('SUPABASE_PUBLISHABLE_KEY is required for production magic-link delivery.')
+    errors.push('SUPABASE_PUBLISHABLE_KEY is required for production Supabase OTP email delivery.')
   }
 
   if (process.env.AUTH_COOKIE_SECURE !== 'true') {
@@ -1506,6 +1638,44 @@ function getSupabaseDisplayName(payload) {
   return typeof name === 'string' ? name : null
 }
 
+function getSupabaseOtpAccount(user) {
+  if (!user || typeof user !== 'object') {
+    return null
+  }
+
+  const email = normalizeEmailInput(user.email)
+  const subject = typeof user.id === 'string' && user.id.trim() ? user.id.trim() : null
+
+  if (!email || !subject) {
+    return null
+  }
+
+  return {
+    displayName: getSupabaseDisplayName(user),
+    email,
+    subject,
+  }
+}
+
+function serializeSupabaseSession(session) {
+  if (!session || typeof session !== 'object') {
+    return null
+  }
+
+  const accessToken = typeof session.access_token === 'string' ? session.access_token : ''
+  const refreshToken = typeof session.refresh_token === 'string' ? session.refresh_token : ''
+
+  if (!accessToken || !refreshToken) {
+    return null
+  }
+
+  return {
+    access_token: accessToken,
+    expires_at: Number.isFinite(session.expires_at) ? session.expires_at : null,
+    refresh_token: refreshToken,
+  }
+}
+
 function serializeUser(user) {
   return {
     id: user.id,
@@ -1705,6 +1875,12 @@ function normalizeEmailInput(value) {
   const email = String(value ?? '').trim().toLowerCase()
 
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null
+}
+
+function normalizeEmailCodeInput(value) {
+  const code = String(value ?? '').trim().replace(/\s+/g, '')
+
+  return /^[a-zA-Z0-9-]{4,12}$/.test(code) ? code : null
 }
 
 function isDevEmailLoginEnabled() {
