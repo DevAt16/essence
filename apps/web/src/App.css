@@ -348,7 +348,7 @@
 }
 
 .auth-main__content {
-  width: min(100%, 580px);
+  width: min(100%, 640px);
   min-width: 0;
   align-self: center;
   justify-self: start;
@@ -359,16 +359,16 @@
 
 .auth-hero h1 {
   margin: 0;
-  max-width: 9.2em;
+  max-width: 9.7em;
   font-family: var(--font-sans);
-  font-size: clamp(3.1rem, 4.35vw, 4.9rem);
+  font-size: clamp(3.45rem, 4.85vw, 5.45rem);
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.04;
 }
 
 .auth-panel {
-  width: min(100%, 440px);
+  width: min(100%, 460px);
   max-width: 100%;
   min-width: 0;
   border: 1px solid var(--line-strong);
@@ -591,10 +591,10 @@
 
 .auth-poem p {
   margin: 0;
-  max-width: 7.6em;
+  max-width: 7.4em;
   color: var(--ink-strong);
   font-family: var(--font-sans);
-  font-size: clamp(2.65rem, 3.55vw, 4.45rem);
+  font-size: clamp(2.45rem, 3.18vw, 4rem);
   font-weight: 400;
   letter-spacing: 0;
   line-height: 1.08;
@@ -619,11 +619,11 @@
   }
 
   .auth-hero h1 {
-    font-size: clamp(2.75rem, 3.8vw, 4.2rem);
+    font-size: clamp(3rem, 4.15vw, 4.55rem);
   }
 
   .auth-panel {
-    width: min(100%, 420px);
+    width: min(100%, 440px);
     gap: 12px;
     padding: 18px;
   }
@@ -653,7 +653,7 @@
   }
 
   .auth-poem p {
-    font-size: clamp(2.35rem, 3.2vw, 3.8rem);
+    font-size: clamp(2.2rem, 2.9vw, 3.45rem);
   }
 }
 
