@@ -10554,9 +10554,11 @@ textarea:focus-visible {
     grid-template-areas:
       'heading actions'
       'tools tools';
-    min-height: 144px;
+    min-height: 132px;
     align-items: center;
-    gap: 8px 12px;
+    gap: 7px 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 
   .topbar--dashboard .topbar__browseHeading {
@@ -10568,26 +10570,26 @@ textarea:focus-visible {
     width: 100%;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    gap: 7px;
   }
 
   .topbar--dashboard .topbar__dashboardActions {
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 40px 40px;
+    grid-template-columns: minmax(0, 1fr) 38px 38px;
     gap: 6px;
   }
 
   .topbar--dashboard .topbar-search {
     min-width: 0;
-    min-height: 36px;
+    min-height: 34px;
     padding: 0 10px;
   }
 
   .topbar--dashboard .topbar-toolButton,
   .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary {
-    width: 40px;
-    min-height: 36px;
+    width: 38px;
+    min-height: 34px;
     padding: 0;
   }
 
@@ -10882,9 +10884,19 @@ textarea:focus-visible {
   .library-filterChips {
     gap: 6px;
     max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
     overscroll-behavior-inline: contain;
-    padding-right: 2px;
+    padding-right: 18px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    scroll-padding-inline: 2px;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .library-spaces::-webkit-scrollbar,
+  .library-filterChips::-webkit-scrollbar {
+    display: none;
   }
 
   .library-space,
@@ -10894,6 +10906,7 @@ textarea:focus-visible {
     padding: 0 8px;
     gap: 6px;
     font-size: 0.76rem;
+    scroll-snap-align: start;
   }
 
   .library-space svg {
@@ -11236,29 +11249,34 @@ textarea:focus-visible {
   }
 
   .rail {
-    gap: 8px;
-    padding: 10px 12px;
+    gap: 6px;
+    padding: 8px 10px;
   }
 
   .rail__compose {
-    width: 46px;
-    height: 46px;
-    border-radius: 13px;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
   }
 
   .rail__nav {
     flex: 0 1 auto;
-    justify-content: flex-start;
+    justify-content: space-around;
     gap: 2px;
   }
 
   .rail__button {
-    width: 46px;
-    min-height: 46px;
+    width: 42px;
+    min-height: 42px;
   }
 
   .rail__footer {
     display: flex;
+  }
+
+  .rail__settings {
+    width: 42px;
+    height: 42px;
   }
 
 }
