@@ -496,14 +496,14 @@
 .auth-codeSummary button {
   flex: none;
   min-height: 28px;
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 0 12px;
   font-size: 0.78rem;
 }
 
 .auth-secondary {
   min-height: 36px;
-  border-radius: 999px;
+  border-radius: 10px;
   font-weight: 650;
 }
 
@@ -516,7 +516,7 @@
 .auth-primary {
   min-height: 44px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--ink);
   color: #06070a;
   font-weight: 700;
@@ -537,7 +537,7 @@
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 10px;
   color: var(--ink-subtle);
   text-decoration: none;
   font-size: 0.86rem;
@@ -1568,7 +1568,7 @@
   gap: 8px;
   padding: 3px 4px 3px 10px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.055);
   color: var(--ink-subtle);
 }
@@ -1619,7 +1619,7 @@
 .account-control__profileButton {
   min-width: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   display: inline-flex;
@@ -1649,7 +1649,7 @@
 .account-control__button {
   min-height: 26px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--paper-soft);
   color: var(--ink);
   padding: 0 10px;
@@ -3253,7 +3253,7 @@
   align-items: center;
   gap: 3px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.045);
   padding: 2px;
 }
@@ -3261,7 +3261,7 @@
 .library-viewToggle button {
   min-height: 24px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ink-muted);
   padding: 0 10px;
@@ -3276,7 +3276,7 @@
 .library-sortControl {
   min-height: 29px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.045);
   color: var(--ink-subtle);
   display: inline-flex;
@@ -6836,6 +6836,15 @@
   color: var(--ink);
   border-color: var(--line-strong);
   background: var(--paper-soft);
+}
+
+.source-card__link--disabled,
+.source-card__link--disabled:hover {
+  color: var(--ink-muted);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.3);
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .source-card__link svg {
@@ -10443,15 +10452,17 @@ textarea:focus-visible {
   }
 
   .auth-main__content {
-    width: min(100%, 394px);
+    width: 100%;
     max-width: 100%;
+    justify-self: stretch;
     gap: 24px;
-    padding-top: clamp(56px, 9vh, 78px);
+    padding-top: clamp(42px, 8vh, 68px);
   }
 
   .auth-hero h1 {
-    max-width: 8.2em;
-    font-size: clamp(2.3rem, 10vw, 2.9rem);
+    max-width: 100%;
+    font-size: clamp(2.2rem, 9vw, 2.8rem);
+    overflow-wrap: break-word;
   }
 
   .auth-panel {
@@ -10543,7 +10554,7 @@ textarea:focus-visible {
     grid-template-areas:
       'heading actions'
       'tools tools';
-    min-height: 108px;
+    min-height: 144px;
     align-items: center;
     gap: 8px 12px;
   }
@@ -10556,11 +10567,14 @@ textarea:focus-visible {
     grid-area: tools;
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .topbar--dashboard .topbar__dashboardActions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 40px 40px;
     gap: 6px;
   }
 
@@ -10572,9 +10586,15 @@ textarea:focus-visible {
 
   .topbar--dashboard .topbar-toolButton,
   .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary {
-    width: 36px;
+    width: 40px;
     min-height: 36px;
     padding: 0;
+  }
+
+  .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary {
+    width: auto;
+    min-width: 0;
+    padding: 0 12px;
   }
 
   .topbar--dashboard .topbar-toolButton span {
@@ -10584,6 +10604,16 @@ textarea:focus-visible {
     margin: -1px;
     overflow: hidden;
     clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary span {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
     white-space: nowrap;
   }
 
@@ -11177,13 +11207,13 @@ textarea:focus-visible {
   }
 
   .auth-main__content {
-    width: min(100%, 306px);
+    width: 100%;
     gap: 22px;
-    padding-top: clamp(42px, 7vh, 60px);
+    padding-top: clamp(38px, 7vh, 56px);
   }
 
   .auth-hero h1 {
-    font-size: clamp(2.08rem, 9vw, 2.58rem);
+    font-size: clamp(2rem, 8.5vw, 2.42rem);
   }
 
   .auth-panel {
