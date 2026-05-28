@@ -134,8 +134,9 @@ create table if not exists note_blocks (
   citation text null
 );
 
+alter table note_blocks add column if not exists user_id text not null default 'local' references users(id) on delete cascade;
+
 create index if not exists note_blocks_note_id_idx on note_blocks(note_id);
-create unique index if not exists note_blocks_note_id_position_idx on note_blocks(note_id, position);
 
 create table if not exists note_sources (
   id text primary key,
@@ -150,9 +151,10 @@ create table if not exists note_sources (
   note text not null default ''
 );
 
+alter table note_sources add column if not exists user_id text not null default 'local' references users(id) on delete cascade;
+
 create index if not exists note_sources_note_id_idx on note_sources(note_id);
 create index if not exists note_sources_source_type_idx on note_sources(source_type);
-create unique index if not exists note_sources_note_id_position_idx on note_sources(note_id, position);
 
 create table if not exists note_tags (
   note_id text not null references notes(id) on delete cascade,
@@ -160,6 +162,8 @@ create table if not exists note_tags (
   position integer not null default 0,
   primary key (note_id, tag)
 );
+
+alter table note_tags add column if not exists user_id text not null default 'local' references users(id) on delete cascade;
 
 create index if not exists note_tags_tag_idx on note_tags(tag);
 create index if not exists note_tags_note_id_position_idx on note_tags(note_id, position);
@@ -173,8 +177,134 @@ create table if not exists note_links (
   occurrence_count integer not null default 1
 );
 
+alter table note_links add column if not exists user_id text not null default 'local' references users(id) on delete cascade;
+
 create index if not exists note_links_source_note_id_idx on note_links(source_note_id);
 create index if not exists note_links_target_note_id_idx on note_links(target_note_id);
+
+with note_user_candidates as (
+  select id, min(user_id) as user_id, count(*) as user_count
+  from notes
+  group by id
+)
+update note_blocks
+set user_id = note_user_candidates.user_id
+from note_user_candidates
+where note_blocks.note_id = note_user_candidates.id
+  and note_user_candidates.user_count = 1
+  and not exists (
+    select 1
+    from notes
+    where notes.user_id = note_blocks.user_id and notes.id = note_blocks.note_id
+  );
+
+with note_user_candidates as (
+  select id, min(user_id) as user_id, count(*) as user_count
+  from notes
+  group by id
+)
+update note_sources
+set user_id = note_user_candidates.user_id
+from note_user_candidates
+where note_sources.note_id = note_user_candidates.id
+  and note_user_candidates.user_count = 1
+  and not exists (
+    select 1
+    from notes
+    where notes.user_id = note_sources.user_id and notes.id = note_sources.note_id
+  );
+
+with note_user_candidates as (
+  select id, min(user_id) as user_id, count(*) as user_count
+  from notes
+  group by id
+)
+update note_tags
+set user_id = note_user_candidates.user_id
+from note_user_candidates
+where note_tags.note_id = note_user_candidates.id
+  and note_user_candidates.user_count = 1
+  and not exists (
+    select 1
+    from notes
+    where notes.user_id = note_tags.user_id and notes.id = note_tags.note_id
+  );
+
+with note_user_candidates as (
+  select id, min(user_id) as user_id, count(*) as user_count
+  from notes
+  group by id
+)
+update note_links
+set user_id = note_user_candidates.user_id
+from note_user_candidates
+where note_links.source_note_id = note_user_candidates.id
+  and note_user_candidates.user_count = 1
+  and not exists (
+    select 1
+    from notes
+    where notes.user_id = note_links.user_id and notes.id = note_links.source_note_id
+  );
+
+alter table note_links drop constraint if exists note_links_source_note_id_fkey;
+alter table note_links drop constraint if exists note_links_target_note_id_fkey;
+alter table note_links drop constraint if exists note_links_user_source_note_id_fkey;
+alter table note_links drop constraint if exists note_links_user_target_note_id_fkey;
+alter table note_tags drop constraint if exists note_tags_note_id_fkey;
+alter table note_tags drop constraint if exists note_tags_user_note_id_fkey;
+alter table note_sources drop constraint if exists note_sources_note_id_fkey;
+alter table note_sources drop constraint if exists note_sources_user_note_id_fkey;
+alter table note_blocks drop constraint if exists note_blocks_note_id_fkey;
+alter table note_blocks drop constraint if exists note_blocks_user_note_id_fkey;
+alter table notes drop constraint if exists notes_folder_id_fkey;
+alter table folders drop constraint if exists folders_parent_id_fkey;
+
+alter table note_tags drop constraint if exists note_tags_pkey;
+alter table note_sources drop constraint if exists note_sources_pkey;
+alter table note_blocks drop constraint if exists note_blocks_pkey;
+alter table notes drop constraint if exists notes_pkey;
+alter table folders drop constraint if exists folders_pkey;
+
+alter table folders add constraint folders_pkey primary key (user_id, id);
+alter table notes add constraint notes_pkey primary key (user_id, id);
+alter table note_blocks add constraint note_blocks_pkey primary key (user_id, id);
+alter table note_sources add constraint note_sources_pkey primary key (user_id, id);
+alter table note_tags add constraint note_tags_pkey primary key (user_id, note_id, tag);
+
+drop index if exists note_blocks_note_id_position_idx;
+drop index if exists note_sources_note_id_position_idx;
+
+create index if not exists folders_user_parent_id_idx on folders(user_id, parent_id);
+create index if not exists folders_user_collection_id_idx on folders(user_id, collection_id);
+create index if not exists notes_user_folder_id_idx on notes(user_id, folder_id);
+create index if not exists notes_user_collection_id_idx on notes(user_id, collection_id);
+create index if not exists note_blocks_user_note_id_idx on note_blocks(user_id, note_id);
+create unique index if not exists note_blocks_user_note_position_idx on note_blocks(user_id, note_id, position);
+create index if not exists note_sources_user_note_id_idx on note_sources(user_id, note_id);
+create unique index if not exists note_sources_user_note_position_idx on note_sources(user_id, note_id, position);
+create index if not exists note_tags_user_note_position_idx on note_tags(user_id, note_id, position);
+create index if not exists note_links_user_source_note_id_idx on note_links(user_id, source_note_id);
+create index if not exists note_links_user_target_note_id_idx on note_links(user_id, target_note_id);
+
+alter table note_blocks
+  add constraint note_blocks_user_note_id_fkey
+  foreign key (user_id, note_id) references notes(user_id, id) on delete cascade;
+
+alter table note_sources
+  add constraint note_sources_user_note_id_fkey
+  foreign key (user_id, note_id) references notes(user_id, id) on delete cascade;
+
+alter table note_tags
+  add constraint note_tags_user_note_id_fkey
+  foreign key (user_id, note_id) references notes(user_id, id) on delete cascade;
+
+alter table note_links
+  add constraint note_links_user_source_note_id_fkey
+  foreign key (user_id, source_note_id) references notes(user_id, id) on delete cascade;
+
+alter table note_links
+  add constraint note_links_user_target_note_id_fkey
+  foreign key (user_id, target_note_id) references notes(user_id, id) on delete cascade;
 
 create table if not exists note_revisions (
   id bigserial primary key,

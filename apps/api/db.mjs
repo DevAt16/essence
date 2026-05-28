@@ -54,7 +54,18 @@ export async function getAppState(userId = localUserId) {
   const client = await pool.connect()
 
   try {
-    return await readNormalizedState(client, userId)
+    const snapshot = await readNormalizedSnapshot(client, userId)
+    return snapshot.state
+  } finally {
+    client.release()
+  }
+}
+
+export async function getAppSnapshot(userId = localUserId) {
+  const client = await pool.connect()
+
+  try {
+    return await readNormalizedSnapshot(client, userId)
   } finally {
     client.release()
   }
@@ -63,22 +74,79 @@ export async function getAppState(userId = localUserId) {
 export async function saveAppState(state, options = {}) {
   const client = await pool.connect()
   const userId = typeof options.userId === 'string' && options.userId ? options.userId : localUserId
+  const hasExpectedVersion = Object.hasOwn(options, 'expectedWorkspaceVersion')
 
   try {
     await client.query('begin')
-    await replaceNormalizedState(client, state, {
+    await lockWorkspaceForUpdate(client, userId)
+
+    if (hasExpectedVersion) {
+      await assertExpectedWorkspaceVersion(client, userId, options.expectedWorkspaceVersion)
+    }
+
+    const workspaceVersion = await replaceNormalizedState(client, state, {
       userId,
       recordRevisions: options.recordRevisions ?? true,
       revisionEvents: Array.isArray(options.revisionEvents) ? options.revisionEvents : [],
       updateLegacySnapshot: true,
     })
     await client.query('commit')
+    return { workspaceVersion }
   } catch (error) {
     await client.query('rollback')
     throw error
   } finally {
     client.release()
   }
+}
+
+async function lockWorkspaceForUpdate(client, userId) {
+  await client.query('select pg_advisory_xact_lock(hashtext($1))', [userId])
+}
+
+async function assertExpectedWorkspaceVersion(client, userId, expectedWorkspaceVersion) {
+  const result = await client.query(
+    `
+      select to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "workspaceVersion"
+      from workspace_state
+      where id = $1
+      for update
+    `,
+    [userId],
+  )
+  const currentWorkspaceVersion = serializeWorkspaceVersion(result.rows[0]?.workspaceVersion)
+
+  if (currentWorkspaceVersion === expectedWorkspaceVersion) {
+    return
+  }
+
+  const error = new Error('Remote workspace changed before this save could finish.')
+  error.status = 409
+  error.code = 'WORKSPACE_VERSION_CONFLICT'
+  error.currentWorkspaceVersion = currentWorkspaceVersion
+  throw error
+}
+
+function serializeWorkspaceVersion(value) {
+  if (!value) {
+    return null
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (typeof value === 'string') {
+    return value.trim() || null
+  }
+
+  const parsedDate = new Date(value)
+
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return parsedDate.toISOString()
+  }
+
+  return String(value)
 }
 
 export async function getLocalUser() {
@@ -497,6 +565,7 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
       with recursive folder_paths as (
         select
           id,
+          user_id,
           parent_id,
           lower(name) as path_text
         from folders
@@ -506,10 +575,11 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
 
         select
           child.id,
+          child.user_id,
           child.parent_id,
           folder_paths.path_text || ' / ' || lower(child.name) as path_text
         from folders child
-        join folder_paths on folder_paths.id = child.parent_id
+        join folder_paths on folder_paths.user_id = child.user_id and folder_paths.id = child.parent_id
         where child.user_id = $3
       ),
       block_search as (
@@ -520,33 +590,33 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
               trim(
                 concat_ws(
                   ' ',
-                  coalesce(text_content, ''),
-                  coalesce(citation, ''),
+                  coalesce(note_blocks.text_content, ''),
+                  coalesce(note_blocks.citation, ''),
                   coalesce(
                     (
                       select string_agg(item_text, ' ')
-                      from jsonb_array_elements_text(coalesce(items, '[]'::jsonb)) as item(item_text)
+                      from jsonb_array_elements_text(coalesce(note_blocks.items, '[]'::jsonb)) as item(item_text)
                     ),
                     ''
                   )
                 )
               ),
               ' '
-              order by position
+              order by note_blocks.position
             )
           ) as block_text
         from note_blocks
-        join notes on notes.id = note_blocks.note_id
-        where notes.user_id = $3
+        join notes on notes.user_id = note_blocks.user_id and notes.id = note_blocks.note_id
+        where note_blocks.user_id = $3
         group by note_blocks.note_id
       ),
       tag_search as (
         select
           note_tags.note_id,
-          lower(string_agg(tag, ' ' order by position)) as tag_text
+          lower(string_agg(note_tags.tag, ' ' order by note_tags.position)) as tag_text
         from note_tags
-        join notes on notes.id = note_tags.note_id
-        where notes.user_id = $3
+        join notes on notes.user_id = note_tags.user_id and notes.id = note_tags.note_id
+        where note_tags.user_id = $3
         group by note_tags.note_id
       ),
       source_search as (
@@ -556,21 +626,21 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
             string_agg(
               concat_ws(
                 ' ',
-                source_type,
-                title,
-                author,
-                year,
-                publisher,
-                url,
-                note
+                note_sources.source_type,
+                note_sources.title,
+                note_sources.author,
+                note_sources.year,
+                note_sources.publisher,
+                note_sources.url,
+                note_sources.note
               ),
               ' '
-              order by position
+              order by note_sources.position
             )
           ) as source_text
         from note_sources
-        join notes on notes.id = note_sources.note_id
-        where notes.user_id = $3
+        join notes on notes.user_id = note_sources.user_id and notes.id = note_sources.note_id
+        where note_sources.user_id = $3
         group by note_sources.note_id
       ),
       link_search as (
@@ -578,9 +648,9 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
           note_links.source_note_id as note_id,
           lower(string_agg(target_notes.title, ' ' order by target_notes.title)) as link_text
         from note_links
-        join notes as source_notes on source_notes.id = note_links.source_note_id
-        join notes as target_notes on target_notes.id = note_links.target_note_id
-        where source_notes.user_id = $3 and target_notes.user_id = $3
+        join notes as source_notes on source_notes.user_id = note_links.user_id and source_notes.id = note_links.source_note_id
+        join notes as target_notes on target_notes.user_id = note_links.user_id and target_notes.id = note_links.target_note_id
+        where note_links.user_id = $3
         group by note_links.source_note_id
       ),
       prepared as (
@@ -599,7 +669,7 @@ export async function searchNotes(query, limit = 24, userId = localUserId) {
         left join block_search on block_search.note_id = notes.id
         left join source_search on source_search.note_id = notes.id
         left join tag_search on tag_search.note_id = notes.id
-        left join folder_paths on folder_paths.id = notes.folder_id
+        left join folder_paths on folder_paths.user_id = notes.user_id and folder_paths.id = notes.folder_id
         left join link_search on link_search.note_id = notes.id
         where notes.user_id = $3
       ),
@@ -699,13 +769,19 @@ async function migrateLegacySnapshotIfNeeded() {
 }
 
 async function readNormalizedState(client, userId = localUserId) {
+  const snapshot = await readNormalizedSnapshot(client, userId)
+  return snapshot.state
+}
+
+async function readNormalizedSnapshot(client, userId = localUserId) {
   const workspaceIds = userId === localUserId ? [userId, legacyStateRowId] : [userId]
 
   const workspaceResult = await client.query(
     `
       select
         active_note_id as "activeNoteId",
-        composer_history as "composerHistory"
+        composer_history as "composerHistory",
+        to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "workspaceVersion"
       from workspace_state
       where id = any($1::text[])
       order by case when id = $2 then 0 else 1 end
@@ -771,8 +847,7 @@ async function readNormalizedState(client, userId = localUserId) {
         note_blocks.items,
         note_blocks.citation
       from note_blocks
-      join notes on notes.id = note_blocks.note_id
-      where notes.user_id = $1
+      where note_blocks.user_id = $1
       order by note_blocks.note_id asc, note_blocks.position asc
     `,
     [userId],
@@ -790,8 +865,7 @@ async function readNormalizedState(client, userId = localUserId) {
         note_sources.url,
         note_sources.note
       from note_sources
-      join notes on notes.id = note_sources.note_id
-      where notes.user_id = $1
+      where note_sources.user_id = $1
       order by note_sources.note_id asc, note_sources.position asc
     `,
     [userId],
@@ -802,8 +876,7 @@ async function readNormalizedState(client, userId = localUserId) {
         note_tags.note_id as "noteId",
         note_tags.tag
       from note_tags
-      join notes on notes.id = note_tags.note_id
-      where notes.user_id = $1
+      where note_tags.user_id = $1
       order by note_tags.note_id asc, note_tags.position asc
     `,
     [userId],
@@ -815,7 +888,10 @@ async function readNormalizedState(client, userId = localUserId) {
     folderResult.rowCount === 0 &&
     noteResult.rowCount === 0
   ) {
-    return null
+    return {
+      state: null,
+      workspaceVersion: null,
+    }
   }
 
   const blocksByNoteId = new Map()
@@ -877,13 +953,16 @@ async function readNormalizedState(client, userId = localUserId) {
   }))
 
   return {
-    activeNoteId: workspaceResult.rows[0]?.activeNoteId ?? notes[0]?.id ?? null,
-    composerHistory: Array.isArray(workspaceResult.rows[0]?.composerHistory)
-      ? workspaceResult.rows[0].composerHistory
-      : [],
-    collections: ensureCollectionsForWorkspace(collectionResult.rows, folderResult.rows, notes),
-    folders: folderResult.rows,
-    notes,
+    state: {
+      activeNoteId: workspaceResult.rows[0]?.activeNoteId ?? notes[0]?.id ?? null,
+      composerHistory: Array.isArray(workspaceResult.rows[0]?.composerHistory)
+        ? workspaceResult.rows[0].composerHistory
+        : [],
+      collections: ensureCollectionsForWorkspace(collectionResult.rows, folderResult.rows, notes),
+      folders: folderResult.rows,
+      notes,
+    },
+    workspaceVersion: serializeWorkspaceVersion(workspaceResult.rows[0]?.workspaceVersion),
   }
 }
 
@@ -898,32 +977,28 @@ async function replaceNormalizedState(client, rawState, options) {
   await client.query(
     `
       delete from note_links
-      using notes
-      where note_links.source_note_id = notes.id and notes.user_id = $1
+      where user_id = $1
     `,
     [userId],
   )
   await client.query(
     `
       delete from note_tags
-      using notes
-      where note_tags.note_id = notes.id and notes.user_id = $1
+      where user_id = $1
     `,
     [userId],
   )
   await client.query(
     `
       delete from note_blocks
-      using notes
-      where note_blocks.note_id = notes.id and notes.user_id = $1
+      where user_id = $1
     `,
     [userId],
   )
   await client.query(
     `
       delete from note_sources
-      using notes
-      where note_sources.note_id = notes.id and notes.user_id = $1
+      where user_id = $1
     `,
     [userId],
   )
@@ -1012,11 +1087,12 @@ async function replaceNormalizedState(client, rawState, options) {
     for (const [blockIndex, block] of note.blocks.entries()) {
       await client.query(
         `
-          insert into note_blocks (id, note_id, position, type, text_content, items, citation)
-          values ($1, $2, $3, $4, $5, $6::jsonb, $7)
+          insert into note_blocks (id, user_id, note_id, position, type, text_content, items, citation)
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
         `,
         [
           block.id,
+          userId,
           note.id,
           blockIndex,
           block.type,
@@ -1032,6 +1108,7 @@ async function replaceNormalizedState(client, rawState, options) {
         `
           insert into note_sources (
             id,
+            user_id,
             note_id,
             position,
             source_type,
@@ -1042,10 +1119,11 @@ async function replaceNormalizedState(client, rawState, options) {
             url,
             note
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         `,
         [
           source.id,
+          userId,
           note.id,
           sourceIndex,
           source.sourceType ?? 'other',
@@ -1062,10 +1140,10 @@ async function replaceNormalizedState(client, rawState, options) {
     for (const [tagIndex, tag] of note.tags.entries()) {
       await client.query(
         `
-          insert into note_tags (note_id, tag, position)
-          values ($1, $2, $3)
+          insert into note_tags (user_id, note_id, tag, position)
+          values ($1, $2, $3, $4)
         `,
-        [note.id, tag, tagIndex],
+        [userId, note.id, tag, tagIndex],
       )
     }
   }
@@ -1074,15 +1152,17 @@ async function replaceNormalizedState(client, rawState, options) {
     await client.query(
       `
         insert into note_links (
+          user_id,
           source_note_id,
           target_note_id,
           source_block_id,
           link_text,
           occurrence_count
         )
-        values ($1, $2, $3, $4, $5)
+        values ($1, $2, $3, $4, $5, $6)
       `,
       [
+        userId,
         linkRow.sourceNoteId,
         linkRow.targetNoteId,
         linkRow.sourceBlockId,
@@ -1092,22 +1172,26 @@ async function replaceNormalizedState(client, rawState, options) {
     )
   }
 
-  await client.query(
+  const workspaceResult = await client.query(
     `
       insert into workspace_state (id, active_note_id, composer_history, updated_at)
-      values ($1, $2, $3::jsonb, now())
+      values ($1, $2, $3::jsonb, clock_timestamp())
       on conflict (id)
       do update set
         active_note_id = excluded.active_note_id,
         composer_history = excluded.composer_history,
-        updated_at = now()
+        updated_at = clock_timestamp()
+      returning to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "workspaceVersion"
     `,
     [userId, state.activeNoteId, JSON.stringify(state.composerHistory ?? [])],
   )
+  const workspaceVersion = serializeWorkspaceVersion(workspaceResult.rows[0]?.workspaceVersion)
 
   if (updateLegacySnapshot) {
     await upsertLegacySnapshot(client, state, userId)
   }
+
+  return workspaceVersion
 }
 
 async function captureNoteRevisions(client, nextNotes, revisionEvents = [], userId = localUserId) {

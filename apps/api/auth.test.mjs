@@ -36,9 +36,14 @@ beforeEach(() => {
 
 after(async () => {
   await pool.query("delete from approved_users where email like 'gate1-test-%@example.com'")
-  await new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()))
-  })
+  await pool.query("delete from users where email like 'gate1-test-%@example.com'")
+
+  if (server) {
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+    })
+  }
+
   restoreEnvValue('REQUEST_LOGGING', previousRequestLogging)
   await pool.end()
 })
@@ -253,6 +258,184 @@ test('workspace endpoints reject unauthenticated requests', async () => {
   }
 })
 
+test('workspace saves reject stale workspace versions', async () => {
+  const previousNodeEnv = process.env.NODE_ENV
+  const previousDevLogin = process.env.AUTH_DEV_EMAIL_LOGIN
+
+  process.env.NODE_ENV = 'development'
+  process.env.AUTH_DEV_EMAIL_LOGIN = 'true'
+
+  try {
+    const loginResponse = await apiRequest('/api/auth/login', {
+      email: uniqueEmail('workspace-version'),
+      state: {
+        activeNoteId: null,
+        composerHistory: [],
+        folders: [],
+        notes: [],
+      },
+    })
+    const sessionCookie = loginResponse.headers.get('set-cookie')?.split(';')[0]
+
+    assert.equal(loginResponse.status, 200)
+    assert.ok(sessionCookie)
+    assert.equal(typeof loginResponse.body.workspaceVersion, 'string')
+
+    const firstVersion = loginResponse.body.workspaceVersion
+    const firstSaveResponse = await apiRequest(
+      '/api/state',
+      {
+        expectedWorkspaceVersion: firstVersion,
+        state: createVersionedWorkspaceState('version-a', 'Version A'),
+      },
+      {
+        headers: {
+          Cookie: sessionCookie,
+        },
+        method: 'PUT',
+      },
+    )
+
+    assert.equal(firstSaveResponse.status, 200)
+    assert.equal(typeof firstSaveResponse.body.workspaceVersion, 'string')
+    assert.notEqual(firstSaveResponse.body.workspaceVersion, firstVersion)
+
+    const staleSaveResponse = await apiRequest(
+      '/api/state',
+      {
+        expectedWorkspaceVersion: firstVersion,
+        state: createVersionedWorkspaceState('version-b', 'Version B'),
+      },
+      {
+        headers: {
+          Cookie: sessionCookie,
+        },
+        method: 'PUT',
+      },
+    )
+
+    assert.equal(staleSaveResponse.status, 409)
+    assert.equal(staleSaveResponse.body.workspaceVersion, firstSaveResponse.body.workspaceVersion)
+
+    const currentStateResponse = await apiRequest('/api/state', undefined, {
+      headers: {
+        Cookie: sessionCookie,
+      },
+      method: 'GET',
+    })
+
+    assert.equal(currentStateResponse.status, 200)
+    assert.equal(currentStateResponse.body.state.notes.length, 1)
+    assert.equal(currentStateResponse.body.state.notes[0].title, 'Version A')
+  } finally {
+    restoreEnvValue('NODE_ENV', previousNodeEnv)
+    restoreEnvValue('AUTH_DEV_EMAIL_LOGIN', previousDevLogin)
+  }
+})
+
+test('workspace data stays isolated when users reuse note ids', async () => {
+  const previousNodeEnv = process.env.NODE_ENV
+  const previousDevLogin = process.env.AUTH_DEV_EMAIL_LOGIN
+
+  process.env.NODE_ENV = 'development'
+  process.env.AUTH_DEV_EMAIL_LOGIN = 'true'
+
+  try {
+    const firstLoginResponse = await apiRequest('/api/auth/login', {
+      email: uniqueEmail('tenant-collision-a'),
+      state: createEmptyWorkspaceState(),
+    })
+    const secondLoginResponse = await apiRequest('/api/auth/login', {
+      email: uniqueEmail('tenant-collision-b'),
+      state: createEmptyWorkspaceState(),
+    })
+    const firstSessionCookie = firstLoginResponse.headers.get('set-cookie')?.split(';')[0]
+    const secondSessionCookie = secondLoginResponse.headers.get('set-cookie')?.split(';')[0]
+
+    assert.equal(firstLoginResponse.status, 200)
+    assert.equal(secondLoginResponse.status, 200)
+    assert.ok(firstSessionCookie)
+    assert.ok(secondSessionCookie)
+
+    const firstSaveResponse = await apiRequest(
+      '/api/state',
+      {
+        expectedWorkspaceVersion: firstLoginResponse.body.workspaceVersion,
+        state: createCollidingWorkspaceState('Tenant A'),
+      },
+      {
+        headers: {
+          Cookie: firstSessionCookie,
+        },
+        method: 'PUT',
+      },
+    )
+    const secondSaveResponse = await apiRequest(
+      '/api/state',
+      {
+        expectedWorkspaceVersion: secondLoginResponse.body.workspaceVersion,
+        state: createCollidingWorkspaceState('Tenant B'),
+      },
+      {
+        headers: {
+          Cookie: secondSessionCookie,
+        },
+        method: 'PUT',
+      },
+    )
+
+    assert.equal(firstSaveResponse.status, 200)
+    assert.equal(secondSaveResponse.status, 200)
+
+    await ensureSchema()
+
+    const firstStateResponse = await apiRequest('/api/state', undefined, {
+      headers: {
+        Cookie: firstSessionCookie,
+      },
+      method: 'GET',
+    })
+    const secondStateResponse = await apiRequest('/api/state', undefined, {
+      headers: {
+        Cookie: secondSessionCookie,
+      },
+      method: 'GET',
+    })
+    const firstSharedNote = firstStateResponse.body.state.notes.find((note) => note.id === 'shared-note')
+    const secondSharedNote = secondStateResponse.body.state.notes.find((note) => note.id === 'shared-note')
+
+    assert.equal(firstStateResponse.status, 200)
+    assert.equal(secondStateResponse.status, 200)
+    assert.equal(firstSharedNote.title, 'Tenant A Workspace')
+    assert.equal(secondSharedNote.title, 'Tenant B Workspace')
+    assert.equal(firstSharedNote.blocks[0].text, 'Tenant A body links to [[Reference]]')
+    assert.equal(secondSharedNote.blocks[0].text, 'Tenant B body links to [[Reference]]')
+    assert.equal(firstSharedNote.sources[0].title, 'Tenant A source')
+    assert.equal(secondSharedNote.sources[0].title, 'Tenant B source')
+
+    const firstSearchResponse = await apiRequest('/api/search?q=Tenant%20A', undefined, {
+      headers: {
+        Cookie: firstSessionCookie,
+      },
+      method: 'GET',
+    })
+    const secondSearchResponse = await apiRequest('/api/search?q=Tenant%20A', undefined, {
+      headers: {
+        Cookie: secondSessionCookie,
+      },
+      method: 'GET',
+    })
+
+    assert.equal(firstSearchResponse.status, 200)
+    assert.equal(secondSearchResponse.status, 200)
+    assert.deepEqual(firstSearchResponse.body.results.map((result) => result.noteId), ['shared-note'])
+    assert.deepEqual(secondSearchResponse.body.results, [])
+  } finally {
+    restoreEnvValue('NODE_ENV', previousNodeEnv)
+    restoreEnvValue('AUTH_DEV_EMAIL_LOGIN', previousDevLogin)
+  }
+})
+
 test('AI endpoints can be disabled without affecting account login', async () => {
   const previousAiEnabled = process.env.AI_ENABLED
   const previousNodeEnv = process.env.NODE_ENV
@@ -405,6 +588,124 @@ function createFakeSupabaseOtpClient() {
 
 function uniqueEmail(label) {
   return `gate1-test-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`
+}
+
+function createEmptyWorkspaceState() {
+  return {
+    activeNoteId: null,
+    composerHistory: [],
+    folders: [],
+    notes: [],
+  }
+}
+
+function createCollidingWorkspaceState(ownerLabel) {
+  const now = new Date().toISOString()
+
+  return {
+    activeNoteId: 'shared-note',
+    composerHistory: [],
+    folders: [
+      {
+        id: 'shared-folder',
+        name: `${ownerLabel} Folder`,
+        parentId: null,
+        collectionId: 'ideas',
+      },
+    ],
+    notes: [
+      {
+        id: 'shared-note',
+        title: `${ownerLabel} Workspace`,
+        collectionId: 'ideas',
+        folderId: 'shared-folder',
+        status: 'Draft',
+        blocks: [
+          {
+            id: 'block-shared-note',
+            type: 'paragraph',
+            text: `${ownerLabel} body links to [[Reference]]`,
+          },
+        ],
+        editorDoc: null,
+        sources: [
+          {
+            id: 'source-shared-note',
+            sourceType: 'web',
+            title: `${ownerLabel} source`,
+            author: '',
+            year: '',
+            publisher: '',
+            url: 'https://example.com/reference',
+            note: '',
+          },
+        ],
+        tags: ['shared-tag'],
+        previewDate: 'Just now',
+        updatedAt: now,
+        isFavorite: false,
+        isPinned: false,
+        isArchived: false,
+        layout: 'standard',
+      },
+      {
+        id: 'linked-note',
+        title: 'Reference',
+        collectionId: 'ideas',
+        folderId: null,
+        status: 'Draft',
+        blocks: [
+          {
+            id: 'block-linked-note',
+            type: 'paragraph',
+            text: 'Reference body',
+          },
+        ],
+        editorDoc: null,
+        sources: [],
+        tags: [],
+        previewDate: 'Just now',
+        updatedAt: now,
+        isFavorite: false,
+        isPinned: false,
+        isArchived: false,
+        layout: 'standard',
+      },
+    ],
+  }
+}
+
+function createVersionedWorkspaceState(noteId, title) {
+  return {
+    activeNoteId: noteId,
+    composerHistory: [],
+    folders: [],
+    notes: [
+      {
+        id: noteId,
+        title,
+        collectionId: 'ideas',
+        folderId: null,
+        status: 'Draft',
+        blocks: [
+          {
+            id: `block-${noteId}`,
+            type: 'paragraph',
+            text: title,
+          },
+        ],
+        editorDoc: null,
+        sources: [],
+        tags: [],
+        previewDate: 'Just now',
+        updatedAt: new Date().toISOString(),
+        isFavorite: false,
+        isPinned: false,
+        isArchived: false,
+        layout: 'standard',
+      },
+    ],
+  }
 }
 
 function restoreEnvValue(name, value) {

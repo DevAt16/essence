@@ -157,6 +157,7 @@ interface ProfileDraft {
 interface RemoteAppSnapshot {
   state: PersistedAppState | null
   user: AuthUser | null
+  workspaceVersion: string | null
 }
 
 interface RemoteAuthSessionPayload {
@@ -320,6 +321,7 @@ interface QuickSwitcherItem {
 }
 
 const storageKey = 'lucid-notes-state'
+const accountStorageKeyPrefix = 'essence-account-state:'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
 const colorThemeStorageKey = 'essence-color-theme'
@@ -928,6 +930,7 @@ function App() {
   const [slashMenuState, setSlashMenuState] = useState<SlashMenuState | null>(null)
   const [linkMenuState, setLinkMenuState] = useState<LinkMenuState | null>(null)
   const [remoteSyncReady, setRemoteSyncReady] = useState(false)
+  const [workspaceStorageKey, setWorkspaceStorageKey] = useState(storageKey)
   const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>([])
   const [historyState, setHistoryState] = useState({ canRedo: false, canUndo: false })
   const [noteHistoryEntries, setNoteHistoryEntries] = useState<NoteRevision[]>([])
@@ -960,6 +963,7 @@ function App() {
   const lastHistorySnapshotJsonRef = useRef<string | null>(null)
   const lastHistorySnapshotRef = useRef<HistorySnapshot | null>(null)
   const lastRemoteSnapshotRef = useRef<string | null>(null)
+  const remoteWorkspaceVersionRef = useRef<string | null>(null)
   const pendingRevisionEventRef = useRef<PendingRevisionEvent | null>(null)
   const initialLocalStateRef = useRef<PersistedAppState | null>(null)
   const keyboardShortcutStateRef = useRef<{
@@ -1028,6 +1032,7 @@ function App() {
 
     pendingRevisionEventRef.current = null
     lastRemoteSnapshotRef.current = null
+    remoteWorkspaceVersionRef.current = null
     setCurrentUser(createLocalAuthUser())
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
@@ -1189,18 +1194,22 @@ function App() {
 
         if (remoteUser.isLocal) {
           lastRemoteSnapshotRef.current = null
+          remoteWorkspaceVersionRef.current = null
+          setWorkspaceStorageKey(storageKey)
           setRemoteBrowseSearchResults(null)
           setRemoteQuickSearchResults(null)
           return
         }
 
         let resolvedState = remoteSnapshot.state
+        let resolvedWorkspaceVersion = remoteSnapshot.workspaceVersion
 
         if (!resolvedState) {
           const localState = initialLocalStateRef.current ?? createEmptyPersistedState()
 
           if (hasWorkspaceData(localState)) {
-            await persistRemoteAppState(localState)
+            const saveResult = await persistRemoteAppState(localState, [], remoteSnapshot.workspaceVersion)
+            resolvedWorkspaceVersion = saveResult.workspaceVersion
             resolvedState = localState
           } else {
             resolvedState = createEmptyPersistedState()
@@ -1208,6 +1217,8 @@ function App() {
         }
 
         lastRemoteSnapshotRef.current = JSON.stringify(resolvedState)
+        remoteWorkspaceVersionRef.current = resolvedWorkspaceVersion
+        setWorkspaceStorageKey(getWorkspaceStorageKey(remoteUser))
         setComposerHistory(resolvedState.composerHistory)
         setCollections(resolvedState.collections)
         setFolders(resolvedState.folders)
@@ -1246,17 +1257,14 @@ function App() {
       return
     }
 
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        activeNoteId,
-        composerHistory,
-        collections,
-        folders,
-        notes,
-      }),
-    )
-  }, [activeNoteId, composerHistory, collections, folders, notes])
+    persistWorkspaceState(workspaceStorageKey, {
+      activeNoteId,
+      composerHistory,
+      collections,
+      folders,
+      notes,
+    })
+  }, [activeNoteId, composerHistory, collections, folders, notes, workspaceStorageKey])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1363,11 +1371,13 @@ function App() {
     }
 
     const pendingRevisionEvent = pendingRevisionEventRef.current
+    const expectedWorkspaceVersion = remoteWorkspaceVersionRef.current
 
     remoteSyncTimerRef.current = window.setTimeout(() => {
-      void persistRemoteAppState(nextState, pendingRevisionEvent ? [pendingRevisionEvent] : [])
-        .then(() => {
+      void persistRemoteAppState(nextState, pendingRevisionEvent ? [pendingRevisionEvent] : [], expectedWorkspaceVersion)
+        .then((saveResult) => {
           lastRemoteSnapshotRef.current = nextSnapshot
+          remoteWorkspaceVersionRef.current = saveResult.workspaceVersion
           setRemoteSyncVersion((currentValue) => currentValue + 1)
 
           if (
@@ -1381,6 +1391,11 @@ function App() {
         .catch((error) => {
           if (isRemoteAccessError(error)) {
             handleRemoteAccessEnded(error)
+            return
+          }
+
+          if (isRemoteConflictError(error)) {
+            setSaveMessage('Remote changes detected')
             return
           }
 
@@ -1838,12 +1853,20 @@ function App() {
     updateHistoryState()
   }
 
-  const applyWorkspaceState = (nextState: PersistedAppState, message: string) => {
+  const applyWorkspaceState = (
+    nextState: PersistedAppState,
+    message: string,
+    options: { storageKey?: string; workspaceVersion?: string | null } = {},
+  ) => {
     const normalizedState = normalizePersistedAppState(nextState)
 
     setAiComposerOpen(false)
 
     startTransition(() => {
+      if (options.storageKey) {
+        setWorkspaceStorageKey(options.storageKey)
+      }
+
       setFolders(normalizedState.folders)
       setCollections(normalizedState.collections)
       setNotes(normalizedState.notes)
@@ -1864,6 +1887,7 @@ function App() {
 
     pendingRevisionEventRef.current = null
     lastRemoteSnapshotRef.current = JSON.stringify(normalizedState)
+    remoteWorkspaceVersionRef.current = options.workspaceVersion ?? null
     resetHistoryTracking()
     setRemoteBrowseSearchResults(null)
     setRemoteQuickSearchResults(null)
@@ -1880,13 +1904,19 @@ function App() {
   })
 
   const completeRemoteSignIn = (snapshot: RemoteAppSnapshot) => {
-    setCurrentUser(snapshot.user)
+    const accountUser = snapshot.user ?? createLocalAuthUser()
+
+    setCurrentUser(accountUser)
     setAuthEmail('')
     setAuthCode('')
     setAuthCodeEmail(null)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
-    applyWorkspaceState(snapshot.state ?? createEmptyPersistedState(), 'Account synced')
+    applyWorkspaceState(
+      snapshot.state ?? createEmptyPersistedState(),
+      'Account synced',
+      { storageKey: getWorkspaceStorageKey(accountUser), workspaceVersion: snapshot.workspaceVersion },
+    )
   }
 
   const handleRequestAuthCode = async () => {
@@ -2008,9 +2038,9 @@ function App() {
       setAuthCode('')
       setAuthCodeEmail(null)
       setAuthNotice(null)
-      setAuthGateDismissed(false)
-      clearAuthGateDismissed()
-      applyWorkspaceState(createEmptyPersistedState(), 'Signed out')
+      setAuthGateDismissed(true)
+      persistAuthGateDismissed()
+      applyWorkspaceState(loadLocalWorkspaceState(), 'Signed out', { storageKey })
     } catch (error) {
       console.warn('Unable to sign out.', error)
       flashSaveFeedback('Sign out failed')
@@ -2026,6 +2056,7 @@ function App() {
     setAuthCodeEmail(null)
     setAuthGateDismissed(true)
     persistAuthGateDismissed()
+    applyWorkspaceState(loadLocalWorkspaceState(), 'Local workspace', { storageKey })
   }
 
   const openAuthScreen = () => {
@@ -6353,24 +6384,40 @@ function SourceReferences({ sources }: { sources: NoteSource[] }) {
 
       {isExpanded && (
         <div className="source-cards__grid">
-          {visibleSources.map((source) => (
-            <article key={source.id} className="source-card source-card--compact">
-              <div className="source-card__readerTop">
-                <span className="badge badge--soft">{formatSourceTypeLabel(source.sourceType)}</span>
-                {source.year && <span>{source.year}</span>}
-              </div>
-              <h3>{source.title || 'Untitled source'}</h3>
-              <p className="source-card__byline">{formatSourceByline(source)}</p>
-              <div className="source-card__compactBottom">
-                {source.note ? <p className="source-card__note">{source.note}</p> : <span />}
-                {source.url && (
-                  <a className="source-card__link source-card__link--icon" href={source.url} target="_blank" rel="noreferrer" aria-label={`Open source ${source.title || 'Untitled source'}`}>
-                    <Icon name="link" />
-                  </a>
-                )}
-              </div>
-            </article>
-          ))}
+          {visibleSources.map((source) => {
+            const sourceTitle = source.title || 'Untitled source'
+            const safeSourceHref = getSafeSourceHref(source.url)
+            const hasUnsupportedSourceUrl = source.url.trim().length > 0 && !safeSourceHref
+
+            return (
+              <article key={source.id} className="source-card source-card--compact">
+                <div className="source-card__readerTop">
+                  <span className="badge badge--soft">{formatSourceTypeLabel(source.sourceType)}</span>
+                  {source.year && <span>{source.year}</span>}
+                </div>
+                <h3>{sourceTitle}</h3>
+                <p className="source-card__byline">{formatSourceByline(source)}</p>
+                <div className="source-card__compactBottom">
+                  {source.note ? <p className="source-card__note">{source.note}</p> : <span />}
+                  {safeSourceHref ? (
+                    <a
+                      className="source-card__link source-card__link--icon"
+                      href={safeSourceHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open source ${sourceTitle}`}
+                    >
+                      <Icon name="link" />
+                    </a>
+                  ) : hasUnsupportedSourceUrl ? (
+                    <span className="source-card__link source-card__link--icon source-card__link--disabled" title="Unsupported source URL">
+                      <Icon name="link" />
+                    </span>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
     </section>
@@ -8218,13 +8265,29 @@ function getApiUrl(path: string) {
   return apiBaseUrl ? `${apiBaseUrl}${path}` : path
 }
 
-function loadStoredCacheState(): PersistedAppState {
+function getWorkspaceStorageKey(user: AuthUser | null) {
+  return user && !user.isLocal ? `${accountStorageKeyPrefix}${encodeURIComponent(user.id)}` : storageKey
+}
+
+function loadLocalWorkspaceState() {
+  return loadStoredCacheState(storageKey)
+}
+
+function persistWorkspaceState(key: string, state: PersistedAppState) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(key, JSON.stringify(state))
+}
+
+function loadStoredCacheState(key = storageKey): PersistedAppState {
   if (typeof window === 'undefined') {
     return createEmptyPersistedState()
   }
 
   try {
-    const raw = window.localStorage.getItem(storageKey)
+    const raw = window.localStorage.getItem(key)
 
     if (!raw) {
       return createEmptyPersistedState()
@@ -8254,23 +8317,31 @@ async function getRemoteAuthHeaders(): Promise<Record<string, string>> {
 
 class RemoteRequestError extends Error {
   status: number
+  workspaceVersion: string | null
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, options: { workspaceVersion?: string | null } = {}) {
     super(message)
     this.name = 'RemoteRequestError'
     this.status = status
+    this.workspaceVersion = options.workspaceVersion ?? null
   }
 }
 
 async function createRemoteRequestError(response: Response, fallbackMessage: string) {
-  const payload = await response.json().catch(() => ({})) as { error?: unknown }
+  const payload = await response.json().catch(() => ({})) as { error?: unknown; workspaceVersion?: unknown }
   const message = typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : fallbackMessage
 
-  return new RemoteRequestError(response.status, message)
+  return new RemoteRequestError(response.status, message, {
+    workspaceVersion: normalizeRemoteWorkspaceVersion(payload.workspaceVersion),
+  })
 }
 
 function isRemoteAccessError(error: unknown) {
   return error instanceof RemoteRequestError && (error.status === 401 || error.status === 403)
+}
+
+function isRemoteConflictError(error: unknown) {
+  return error instanceof RemoteRequestError && error.status === 409
 }
 
 function getRemoteAccessEndedMessage(error: unknown) {
@@ -8304,6 +8375,7 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
     return {
       state: null,
       user: createLocalAuthUser(),
+      workspaceVersion: null,
     }
   }
 
@@ -8311,11 +8383,12 @@ async function fetchRemoteAppState(): Promise<RemoteAppSnapshot> {
     throw await createRemoteRequestError(response, `Failed to load remote state: ${response.status}`)
   }
 
-  const payload = (await response.json()) as { state?: unknown | null; user?: unknown | null }
+  const payload = (await response.json()) as { state?: unknown | null; user?: unknown | null; workspaceVersion?: unknown }
 
   return {
     state: payload.state ? normalizePersistedAppState(payload.state) : null,
     user: normalizeAuthUser(payload.user),
+    workspaceVersion: normalizeRemoteWorkspaceVersion(payload.workspaceVersion),
   }
 }
 
@@ -8415,7 +8488,11 @@ async function generateRemoteAiAssist(request: {
   return normalizeRemoteAiAssistResult(payload.result, request.action)
 }
 
-async function persistRemoteAppState(state: PersistedAppState, revisionEvents: PendingRevisionEvent[] = []) {
+async function persistRemoteAppState(
+  state: PersistedAppState,
+  revisionEvents: PendingRevisionEvent[] = [],
+  expectedWorkspaceVersion?: string | null,
+): Promise<{ workspaceVersion: string | null }> {
   const authHeaders = await getRemoteAuthHeaders()
   const response = await fetch(getApiUrl('/api/state'), {
     method: 'PUT',
@@ -8424,11 +8501,17 @@ async function persistRemoteAppState(state: PersistedAppState, revisionEvents: P
       ...authHeaders,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ revisionEvents, state }),
+    body: JSON.stringify({ expectedWorkspaceVersion, revisionEvents, state }),
   })
 
   if (!response.ok) {
     throw await createRemoteRequestError(response, `Failed to persist remote state: ${response.status}`)
+  }
+
+  const payload = await response.json().catch(() => ({})) as { workspaceVersion?: unknown }
+
+  return {
+    workspaceVersion: normalizeRemoteWorkspaceVersion(payload.workspaceVersion),
   }
 }
 
@@ -8801,6 +8884,9 @@ async function verifyRemoteSignInCode(
       typeof (payload as { error?: unknown }).error === 'string'
         ? (payload as { error: string }).error
         : `Could not verify sign-in code: ${response.status}`,
+      {
+        workspaceVersion: normalizeRemoteWorkspaceVersion((payload as { workspaceVersion?: unknown }).workspaceVersion),
+      },
     )
   }
 
@@ -8830,11 +8916,12 @@ async function resolveRemoteSnapshotAfterSignIn(
     return snapshot
   }
 
-  await persistRemoteAppState(state)
+  const saveResult = await persistRemoteAppState(state, [], snapshot.workspaceVersion)
 
   return {
     ...snapshot,
     state,
+    workspaceVersion: saveResult.workspaceVersion,
   }
 }
 
@@ -8904,12 +8991,17 @@ async function updateRemoteProfile(profile: ProfileDraft): Promise<AuthUser> {
 }
 
 function normalizeRemoteAppSnapshot(payload: unknown): RemoteAppSnapshot {
-  const candidate = (payload ?? {}) as { state?: unknown | null; user?: unknown | null }
+  const candidate = (payload ?? {}) as { state?: unknown | null; user?: unknown | null; workspaceVersion?: unknown }
 
   return {
     state: candidate.state ? normalizePersistedAppState(candidate.state) : null,
     user: normalizeAuthUser(candidate.user),
+    workspaceVersion: normalizeRemoteWorkspaceVersion(candidate.workspaceVersion),
   }
+}
+
+function normalizeRemoteWorkspaceVersion(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function normalizeRemoteAuthSession(payload: unknown): RemoteAuthSessionPayload | null {
@@ -11217,6 +11309,50 @@ function hasSourceContent(source: NoteSource) {
   return [source.title, source.author, source.year, source.publisher, source.url, source.note].some(
     (value) => value.trim().length > 0,
   )
+}
+
+function getSafeSourceHref(value: string) {
+  const trimmedValue = value.trim()
+
+  if (!trimmedValue || hasControlCharacter(trimmedValue)) {
+    return null
+  }
+
+  const doiHref = getSafeDoiHref(trimmedValue)
+
+  if (doiHref) {
+    return doiHref
+  }
+
+  try {
+    const parsedUrl = new URL(trimmedValue)
+
+    return parsedUrl.protocol === 'https:' || parsedUrl.protocol === 'http:' ? parsedUrl.href : null
+  } catch {
+    return null
+  }
+}
+
+function getSafeDoiHref(value: string) {
+  const doiValue = value.replace(/^doi:\s*/i, '').trim()
+
+  if (!/^10\.\d{4,9}\/\S+$/i.test(doiValue) || /[<>"'`]/.test(doiValue)) {
+    return null
+  }
+
+  return `https://doi.org/${doiValue.split('/').map(encodeURIComponent).join('/')}`
+}
+
+function hasControlCharacter(value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    const charCode = value.charCodeAt(index)
+
+    if (charCode <= 31 || charCode === 127) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function normalizeExternalHref(value: string) {

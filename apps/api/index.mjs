@@ -13,7 +13,7 @@ import {
   createUserSession,
   deleteUserSession,
   ensureSchema,
-  getAppState,
+  getAppSnapshot,
   getLocalUser,
   getNoteRevisions,
   getOrCreateExternalUser,
@@ -111,13 +111,13 @@ app.get('/api/auth/session', async (request, response, next) => {
 
     if (!user) {
       const localUser = await getRequestUser({ headers: {} })
-      response.json({ state: null, user: serializeUser(localUser) })
+      response.json({ state: null, user: serializeUser(localUser), workspaceVersion: null })
       return
     }
 
-    const state = await getAppState(user.id)
+    const snapshot = await getAppSnapshot(user.id)
 
-    response.json({ state, user: serializeUser(user) })
+    response.json({ state: snapshot.state, user: serializeUser(user), workspaceVersion: snapshot.workspaceVersion })
   } catch (error) {
     next(error)
   }
@@ -277,14 +277,17 @@ app.post('/api/auth/verify-code', async (request, response, next) => {
       throw error
     }
 
-    let accountState = await getAppState(user.id)
+    let accountSnapshot = await getAppSnapshot(user.id)
+    let accountState = accountSnapshot.state
+    let workspaceVersion = accountSnapshot.workspaceVersion
 
     if (!accountState && isPersistedAppState(request.body?.state)) {
       accountState = cloneStateForAccount(request.body.state)
-      await saveAppState(accountState, {
+      const saveResult = await saveAppState(accountState, {
         userId: user.id,
         recordRevisions: false,
       })
+      workspaceVersion = saveResult.workspaceVersion
     }
 
     response.json({
@@ -292,6 +295,7 @@ app.post('/api/auth/verify-code', async (request, response, next) => {
       session,
       state: accountState ?? createEmptyPersistedState(),
       user: serializeUser(user),
+      workspaceVersion,
     })
   } catch (error) {
     next(error)
@@ -318,14 +322,17 @@ app.post('/api/auth/login', async (request, response, next) => {
       return
     }
 
-    let accountState = await getAppState(user.id)
+    let accountSnapshot = await getAppSnapshot(user.id)
+    let accountState = accountSnapshot.state
+    let workspaceVersion = accountSnapshot.workspaceVersion
 
     if (!accountState && isPersistedAppState(state)) {
       accountState = cloneStateForAccount(state)
-      await saveAppState(accountState, {
+      const saveResult = await saveAppState(accountState, {
         userId: user.id,
         recordRevisions: false,
       })
+      workspaceVersion = saveResult.workspaceVersion
     }
 
     const session = await createUserSession(user.id)
@@ -334,6 +341,7 @@ app.post('/api/auth/login', async (request, response, next) => {
     response.json({
       state: accountState ?? createEmptyPersistedState(),
       user: serializeUser(user),
+      workspaceVersion,
     })
   } catch (error) {
     next(error)
@@ -347,7 +355,7 @@ app.post('/api/auth/logout', async (request, response, next) => {
 
     const user = await getRequestUser({ headers: {} })
 
-    response.json({ state: createEmptyPersistedState(), user: serializeUser(user) })
+    response.json({ state: createEmptyPersistedState(), user: serializeUser(user), workspaceVersion: null })
   } catch (error) {
     next(error)
   }
@@ -356,8 +364,8 @@ app.post('/api/auth/logout', async (request, response, next) => {
 app.get('/api/state', async (request, response, next) => {
   try {
     const user = await requireAccountUser(request)
-    const state = await getAppState(user.id)
-    response.json({ state, user: serializeUser(user) })
+    const snapshot = await getAppSnapshot(user.id)
+    response.json({ state: snapshot.state, user: serializeUser(user), workspaceVersion: snapshot.workspaceVersion })
   } catch (error) {
     next(error)
   }
@@ -454,7 +462,7 @@ app.post('/api/ai/assist', async (request, response, next) => {
 
 app.put('/api/state', async (request, response, next) => {
   try {
-    const { revisionEvents, state } = request.body ?? {}
+    const { expectedWorkspaceVersion, revisionEvents, state } = request.body ?? {}
 
     if (!isPersistedAppState(state)) {
       response.status(400).json({
@@ -464,11 +472,18 @@ app.put('/api/state', async (request, response, next) => {
     }
 
     const user = await requireAccountUser(request)
-    await saveAppState(state, {
+    const normalizedExpectedWorkspaceVersion = normalizeExpectedWorkspaceVersion(expectedWorkspaceVersion)
+    const saveOptions = {
       userId: user.id,
       revisionEvents: normalizeRevisionEvents(revisionEvents),
-    })
-    response.status(204).end()
+    }
+
+    if (normalizedExpectedWorkspaceVersion !== undefined) {
+      saveOptions.expectedWorkspaceVersion = normalizedExpectedWorkspaceVersion
+    }
+
+    const saveResult = await saveAppState(state, saveOptions)
+    response.json({ workspaceVersion: saveResult.workspaceVersion })
   } catch (error) {
     next(error)
   }
@@ -498,6 +513,8 @@ app.use((error, request, response, next) => {
   response.status(statusCode).json({
     error: statusCode === 500 ? 'Internal server error' : error.message,
     requestId: request.id,
+    workspaceVersion:
+      error?.code === 'WORKSPACE_VERSION_CONFLICT' ? error.currentWorkspaceVersion ?? null : undefined,
   })
 })
 
@@ -955,6 +972,24 @@ function normalizeRevisionEvents(value) {
 
     return noteId && revisionKind ? [{ noteId, revisionKind }] : []
   })
+}
+
+function normalizeExpectedWorkspaceVersion(value) {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (value === null) {
+    return null
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  const error = new Error('Expected workspace version must be a string or null.')
+  error.status = 400
+  throw error
 }
 
 const aiDraftCategoryMeta = {
