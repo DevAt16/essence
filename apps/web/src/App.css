@@ -10173,19 +10173,40 @@ textarea:focus-visible {
   }
 
   .rail {
+    order: 2;
+    position: relative;
+    z-index: 70;
+    right: auto;
+    bottom: auto;
+    left: auto;
     width: 100%;
-    height: auto;
-    padding: 12px 16px;
-    gap: 14px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    height: calc(70px + env(safe-area-inset-bottom));
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+    gap: 6px;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: center;
+    background:
+      linear-gradient(180deg, rgba(31, 32, 36, 0.9), rgba(16, 17, 20, 0.88));
+    box-shadow:
+      0 -18px 52px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 248, 232, 0.055);
   }
 
-  .rail__composeGroup,
+  .workspace {
+    order: 1;
+  }
+
+  .rail__composeGroup {
+    display: none;
+  }
+
   .rail__footer {
     width: auto;
+    margin-top: 0;
+    padding-top: 0;
   }
 
   .rail__brand,
@@ -10201,11 +10222,11 @@ textarea:focus-visible {
   }
 
   .rail__nav {
-    width: auto;
-    flex-direction: row;
+    width: 100%;
     flex: 1;
-    justify-content: center;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
     padding: 0;
     border: 0;
     border-radius: 0;
@@ -10213,25 +10234,35 @@ textarea:focus-visible {
   }
 
   .rail__button {
-    width: 52px;
+    width: auto;
     min-height: 50px;
     padding: 0;
-    border-radius: 12px;
+    border-radius: 15px;
   }
 
   .rail__button::before {
     display: none;
   }
 
+  .rail__button--active {
+    background: rgba(255, 248, 232, 0.12);
+  }
+
   .rail__settings {
-    width: 42px;
-    height: 42px;
+    width: 50px;
+    height: 50px;
+    border-radius: 15px;
+  }
+
+  .main::before,
+  .main::after {
+    inset: 64px 0 0;
   }
 
   .ai-composer {
     left: 0;
     top: 73px;
-    bottom: 0;
+    bottom: calc(88px + env(safe-area-inset-bottom));
     width: min(420px, 100vw);
   }
 
@@ -10550,13 +10581,14 @@ textarea:focus-visible {
   }
 
   .topbar--dashboard:not(.topbar--editor) {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
-      'heading actions'
-      'tools tools';
-    min-height: 144px;
+      'heading tools actions';
+    min-height: 58px;
     align-items: center;
-    gap: 8px 12px;
+    gap: 6px;
+    padding-top: 9px;
+    padding-bottom: 9px;
   }
 
   .topbar--dashboard .topbar__browseHeading {
@@ -10567,34 +10599,34 @@ textarea:focus-visible {
     grid-area: tools;
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
   }
 
   .topbar--dashboard .topbar__dashboardActions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 40px 40px;
+    width: auto;
+    display: flex;
+    align-items: center;
     gap: 6px;
   }
 
   .topbar--dashboard .topbar-search {
     min-width: 0;
-    min-height: 36px;
+    min-height: 38px;
     padding: 0 10px;
   }
 
   .topbar--dashboard .topbar-toolButton,
   .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary {
-    width: 40px;
-    min-height: 36px;
+    width: 38px;
+    min-height: 38px;
     padding: 0;
   }
 
   .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary {
-    width: auto;
-    min-width: 0;
-    padding: 0 12px;
+    width: 38px;
+    padding: 0;
   }
 
   .topbar--dashboard .topbar-toolButton span {
@@ -10608,24 +10640,6 @@ textarea:focus-visible {
   }
 
   .topbar--dashboard .topbar-toolButton.topbar-toolButton--primary span {
-    position: static;
-    width: auto;
-    height: auto;
-    margin: 0;
-    overflow: visible;
-    clip: auto;
-    white-space: nowrap;
-  }
-
-  .topbar--dashboard .topbar__actions--browser {
-    grid-area: actions;
-  }
-
-  .topbar__browseContext {
-    gap: 0;
-  }
-
-  .topbar__browseContext span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -10635,13 +10649,33 @@ textarea:focus-visible {
     white-space: nowrap;
   }
 
-  .topbar__actions--browser .utility-button {
-    width: 36px;
+  .topbar--dashboard .topbar__actions--browser {
+    grid-area: actions;
+    gap: 0;
+  }
+
+  .topbar__browseContext {
+    display: none;
+  }
+
+  .topbar__actions--browser .topbar__actionGroup {
+    display: none;
+  }
+
+  .topbar__actions--browser .account-control {
+    display: none;
+  }
+
+  .topbar__actions--browser .utility-button,
+  .account-control--button {
+    width: 38px;
+    min-height: 38px;
     padding: 0;
     justify-content: center;
   }
 
-  .topbar__actions--browser .utility-button span {
+  .topbar__actions--browser .utility-button span,
+  .account-control--button span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -10656,6 +10690,7 @@ textarea:focus-visible {
   .editor-screen {
     padding-left: 18px;
     padding-right: 18px;
+    padding-bottom: 28px;
   }
 
   .editor-screen--readMode {
@@ -10882,9 +10917,19 @@ textarea:focus-visible {
   .library-filterChips {
     gap: 6px;
     max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
     overscroll-behavior-inline: contain;
-    padding-right: 2px;
+    padding-right: 18px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    scroll-padding-inline: 2px;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .library-spaces::-webkit-scrollbar,
+  .library-filterChips::-webkit-scrollbar {
+    display: none;
   }
 
   .library-space,
@@ -10894,6 +10939,7 @@ textarea:focus-visible {
     padding: 0 8px;
     gap: 6px;
     font-size: 0.76rem;
+    scroll-snap-align: start;
   }
 
   .library-space svg {
@@ -11236,31 +11282,20 @@ textarea:focus-visible {
   }
 
   .rail {
-    gap: 8px;
-    padding: 10px 12px;
+    height: calc(66px + env(safe-area-inset-bottom));
+    padding: 7px 10px calc(7px + env(safe-area-inset-bottom));
   }
 
-  .rail__compose {
-    width: 46px;
-    height: 46px;
-    border-radius: 13px;
+  .rail__button,
+  .rail__settings {
+    min-height: 48px;
+    border-radius: 14px;
   }
 
-  .rail__nav {
-    flex: 0 1 auto;
-    justify-content: flex-start;
-    gap: 2px;
+  .rail__settings {
+    width: 48px;
+    height: 48px;
   }
-
-  .rail__button {
-    width: 46px;
-    min-height: 46px;
-  }
-
-  .rail__footer {
-    display: flex;
-  }
-
 }
 
 @media (max-width: 420px) {

@@ -3990,7 +3990,7 @@ function App() {
                         type="search"
                         value={searchQuery}
                         onChange={(event) => updateGlobalSearchQuery(event.target.value)}
-                        placeholder="Search notes, blocks, and tags"
+                        placeholder="Search library"
                         aria-label="Search notes, blocks, and tags"
                       />
                     </label>
