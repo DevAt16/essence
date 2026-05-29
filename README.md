@@ -91,6 +91,7 @@ npm run check
 This runs lint, API auth tests, and the production web build. Supabase dashboard settings still need to be verified separately before a real deployment.
 
 For production runtime, health checks, logging, backups, and deployment options, see [DEPLOYMENT.md](DEPLOYMENT.md).
+For the release smoke checklist, see [docs/production-qa.md](docs/production-qa.md).
 
 ## PostgreSQL
 

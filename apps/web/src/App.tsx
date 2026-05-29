@@ -1010,7 +1010,7 @@ function App() {
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
   const composerLockedMessage =
-    'Composer is available after invite sign-in. Local mode keeps manual notes on this device and does not run AI.'
+    'Composer unlocks after approved sign-in. You can keep writing locally; sync and AI stay off until then.'
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -4831,7 +4831,7 @@ function getLibraryEmptyState(
 
   return {
     title: 'Start with one clear note',
-    description: 'Create a note from the rail, import Markdown, or ask Composer for a first draft.',
+    description: 'Create a note, import Markdown, or unlock Composer with an approved sign-in.',
   }
 }
 
@@ -6589,7 +6589,7 @@ function ReaderExplorationPanel({
       </div>
       <div className="reader-depth__copy">
         <span className="reader-depth__eyebrow">{isLocked ? 'Invite-only Composer' : 'You have reached the edge of this thought.'}</span>
-        <h2>{isLocked ? 'Sign in to use Composer.' : 'Continue deeper?'}</h2>
+        <h2>{isLocked ? 'Composer is invite-only.' : 'Continue deeper?'}</h2>
         <p>
           {isLocked
             ? 'Local mode keeps reading and writing private to this browser. AI actions are reserved for approved accounts.'
@@ -6600,7 +6600,7 @@ function ReaderExplorationPanel({
       {isLocked ? (
         <div className="reader-depth__lockedNote">
           <Icon name="lock" />
-          <span>Sign in from the topbar to unlock Composer prompts for this note.</span>
+          <span>Sign in with an approved invite to unlock Composer prompts for this note.</span>
         </div>
       ) : (
         <div className="reader-depth__actions">
@@ -7183,7 +7183,7 @@ function AuthScreen({
 
           <section className="auth-panel">
             <span className="auth-panel__eyebrow">Invite-only access</span>
-            <p className="auth-panel__copy">Use your approved email. Essence sends a short code first.</p>
+            <p className="auth-panel__copy">Use your approved email for sync and Composer, or keep this workspace local for now.</p>
 
             <form className="auth-form" onSubmit={handleSubmit}>
               {codeSentTo ? (
@@ -7255,7 +7255,7 @@ function AuthScreen({
               <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
                 Use this device only
               </button>
-              <p>Stores notes in this browser. Composer and sync unlock after invite sign-in.</p>
+              <p>Local notes stay in this browser. Approved sign-in adds sync and Composer.</p>
             </div>
           </section>
         </div>
