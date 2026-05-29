@@ -1912,6 +1912,7 @@
 
 .composer-dock--open {
   width: min(390px, calc(100vw - 136px));
+  max-height: min(680px, calc(100vh - 72px));
   border: 1px solid var(--line-strong);
   border-radius: 20px;
   background:
@@ -1923,6 +1924,7 @@
   backdrop-filter: blur(20px);
   display: grid;
   gap: 12px;
+  overflow: auto;
   padding: 14px;
   animation: rise-in 160ms ease both;
 }
@@ -1994,6 +1996,118 @@
 .composer-dock__chips button:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.composer-dock__thinking,
+.composer-dock__result {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.052);
+}
+
+.composer-dock__thinking {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.composer-dock__thinking strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.composer-dock__thinking p {
+  margin: 2px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.composer-dock__spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255, 248, 232, 0.18);
+  border-top-color: var(--ink);
+  border-radius: 999px;
+  animation: composer-spin 820ms linear infinite;
+}
+
+.composer-dock__result {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.composer-dock__resultHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer-dock__resultHeader div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.composer-dock__resultHeader span {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-dock__resultHeader strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.composer-dock__resultHeader .text-action {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 0.74rem;
+}
+
+.composer-dock__result p,
+.composer-dock__result blockquote {
+  margin: 0;
+  color: var(--ink-subtle);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.composer-dock__result blockquote {
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+  padding-left: 10px;
+}
+
+.composer-dock__tags,
+.composer-dock__resultActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-dock__tags span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+}
+
+.composer-dock__resultActions .primary-button,
+.composer-dock__resultActions .ghost-button {
+  min-height: 34px;
+  padding: 0 11px;
 }
 
 .composer-dock__form {
@@ -10621,6 +10735,7 @@ textarea:focus-visible {
     left: 14px;
     right: 14px;
     width: auto;
+    max-height: calc(100dvh - 124px - env(safe-area-inset-bottom));
   }
 
   .topbar,

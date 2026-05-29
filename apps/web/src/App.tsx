@@ -7,7 +7,6 @@ import './App.css'
 declare const __ESSENCE_APP_VERSION__: string
 
 const ModernRichEditor = lazy(() => import('./editor/ModernRichEditor'))
-const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
 type ViewMode = 'library' | 'collections' | 'favorites' | 'archive' | 'editor'
 type NavMode = Exclude<ViewMode, 'editor'>
@@ -934,8 +933,6 @@ function App() {
   const [aiAssistError, setAiAssistError] = useState<string | null>(null)
   const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
   const [aiAssisting, setAiAssisting] = useState(false)
-  const [aiComposerOpen, setAiComposerOpen] = useState(false)
-  const [aiComposerMode, setAiComposerMode] = useState<AiComposerMode>('draft')
   const [aiDraft, setAiDraft] = useState<AiDraft | null>(null)
   const [aiDraftCategory, setAiDraftCategory] = useState<AiDraftCategory>('essay')
   const [aiDraftError, setAiDraftError] = useState<string | null>(null)
@@ -991,7 +988,7 @@ function App() {
   const initialLocalStateRef = useRef<PersistedAppState | null>(null)
   const keyboardShortcutStateRef = useRef<{
     activeNote: Note | null
-    aiComposerOpen: boolean
+    composerDockOpen: boolean
     dialogState: AppDialogState | null
     editorActionsOpen: boolean
     noteHistoryOpen: boolean
@@ -1000,7 +997,7 @@ function App() {
     view: ViewMode
   }>({
     activeNote: null as Note | null,
-    aiComposerOpen: false,
+    composerDockOpen: false,
     dialogState: null as AppDialogState | null,
     editorActionsOpen: false,
     noteHistoryOpen: false,
@@ -1100,6 +1097,20 @@ function App() {
   }, [activeNoteId, view])
 
   useEffect(() => {
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setComposerDockError(null)
+  }, [activeNoteId])
+
+  useEffect(() => {
+    if (view !== 'editor') {
+      setAiAssistResult(null)
+      setAiAssistError(null)
+      setComposerDockError(null)
+    }
+  }, [view])
+
+  useEffect(() => {
     void refreshApiReadiness()
   }, [refreshApiReadiness])
 
@@ -1190,13 +1201,13 @@ function App() {
 
   useEffect(() => {
     if (zenMode) {
-      setAiComposerOpen(false)
+      setComposerDockOpen(false)
     }
   }, [zenMode])
 
   useEffect(() => {
     if (!composerAvailable) {
-      setAiComposerOpen(false)
+      setComposerDockOpen(false)
       setReaderExplorationPendingAction(null)
     }
   }, [composerAvailable])
@@ -1889,13 +1900,14 @@ function App() {
     })
   }
 
-  const toggleComposerPanel = () => {
+  const openComposerDock = () => {
     if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
 
-    setAiComposerOpen((isOpen) => !isOpen)
+    setComposerDockOpen(true)
+    setComposerDockError(null)
     setQuickSwitcherOpen(false)
   }
 
@@ -1915,7 +1927,7 @@ function App() {
   ) => {
     const normalizedState = normalizePersistedAppState(nextState)
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
 
     startTransition(() => {
       if (options.storageKey) {
@@ -2119,14 +2131,14 @@ function App() {
     setAuthNotice(null)
     setAuthCode('')
     setAuthCodeEmail(null)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setSettingsOpen(false)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
   }
 
   const openSettings = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setEditorActionsOpen(false)
     setQuickSwitcherOpen(false)
     setNoteHistoryOpen(false)
@@ -2182,7 +2194,7 @@ function App() {
   }
 
   const openQuickSwitcher = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setEditorActionsOpen(false)
     setQuickSwitcherOpen(true)
     setQuickSwitcherQuery('')
@@ -2212,7 +2224,7 @@ function App() {
       return
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setSlashMenuState(null)
@@ -2222,7 +2234,7 @@ function App() {
 
   const openSearchView = () => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     moveToLibrarySearchSurface()
@@ -2641,7 +2653,7 @@ function App() {
       return
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
 
     if (view !== 'editor') {
@@ -2677,7 +2689,7 @@ function App() {
       layout: 'standard',
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorContext(view === 'editor' ? editorContext : view === 'collections' ? 'library' : view)
     setNotes((currentNotes) => [newNote, ...currentNotes])
@@ -2779,7 +2791,7 @@ function App() {
     setNoteHistoryEntries([])
     setSelectedNoteRevisionId(null)
     setNoteViewMode('edit')
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setAiDraft(null)
     setAiDraftTopic('')
     setEditorContext('library')
@@ -2881,6 +2893,7 @@ function App() {
     setSelectedBlockId(nextBlocks[0].id)
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
+    setComposerDockOpen(false)
     flashSaveFeedback('Inserted Composer blocks')
   }
 
@@ -2903,6 +2916,7 @@ function App() {
     setSelectedBlockId(nextBlocks[0].id)
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
+    setComposerDockOpen(false)
     flashSaveFeedback('Replaced selected block')
   }
 
@@ -2912,24 +2926,30 @@ function App() {
       return
     }
 
-    setComposerDockOpen((isOpen) => !isOpen)
+    if (composerDockOpen) {
+      setComposerDockOpen(false)
+      setComposerDockError(null)
+      setAiAssistError(null)
+      setAiDraftError(null)
+      return
+    }
+
+    setComposerDockOpen(true)
     setComposerDockError(null)
   }
 
   const closeComposerDock = () => {
     setComposerDockOpen(false)
     setComposerDockError(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
   }
 
-  const expandComposerFromDock = () => {
-    if (!composerAvailable) {
-      showComposerLockedDialog()
-      return
-    }
-
-    setAiComposerMode(activeNote && view === 'editor' ? 'assist' : 'draft')
-    setAiComposerOpen(true)
-    setComposerDockOpen(false)
+  const clearComposerDockResult = () => {
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiDraft(null)
+    setAiDraftError(null)
     setComposerDockError(null)
   }
 
@@ -2945,16 +2965,12 @@ function App() {
     }
 
     setComposerDockError(null)
-    setAiComposerOpen(true)
-    setAiComposerMode('assist')
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiDraft(null)
+    setAiDraftError(null)
 
-    const ok = await generateAiAssist(action)
-
-    if (ok) {
-      setComposerDockOpen(false)
-    }
+    await generateAiAssist(action)
   }
 
   const submitComposerDockPrompt = async () => {
@@ -2972,18 +2988,17 @@ function App() {
 
     const shouldAssistActiveNote = activeNote && view === 'editor' && !looksLikeNewDraftPrompt(prompt)
     setComposerDockError(null)
-    setAiComposerOpen(true)
+    setAiAssistError(null)
+    setAiDraftError(null)
 
     if (shouldAssistActiveNote) {
-      setAiComposerMode('assist')
       setAiAssistResult(null)
-      setAiAssistError(null)
+      setAiDraft(null)
 
       const ok = await generateAiAssist('custom', prompt)
 
       if (ok) {
         setComposerDockPrompt('')
-        setComposerDockOpen(false)
       }
 
       return
@@ -2991,74 +3006,19 @@ function App() {
 
     const category = inferDraftCategoryFromPrompt(prompt)
 
-    setAiComposerMode('draft')
+    setAiAssistResult(null)
     setAiDraft(null)
-    setAiDraftError(null)
 
     const ok = await generateAiDraft(prompt, category)
 
     if (ok) {
       setComposerDockPrompt('')
-      setComposerDockOpen(false)
+      setComposerDockOpen(true)
     }
-  }
-
-  const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
-    if (!composerAvailable) {
-      showComposerLockedDialog()
-      return
-    }
-
-    setAiComposerOpen(true)
-    setAiComposerMode(entry.mode)
-    setAiDraftError(null)
-    setAiAssistError(null)
-
-    if (entry.mode === 'draft' && entry.draft) {
-      setAiDraftCategory(entry.draft.category)
-      setAiDraftTopic(entry.prompt)
-      setAiDraft({
-        blocks: entry.blocks,
-        collectionId: entry.draft.collectionId,
-        layout: entry.draft.layout,
-        noteType: entry.draft.noteType,
-        status: entry.draft.status,
-        summary: entry.summary,
-        tags: entry.draft.tags,
-        title: entry.title,
-      })
-      return
-    }
-
-    if (entry.mode === 'assist' && entry.assist) {
-      setAiAssistAction(entry.assist.action)
-      setAiAssistResult({
-        action: entry.assist.action,
-        actionLabel: entry.assist.actionLabel,
-        blocks: entry.blocks,
-        canReplaceSelection: false,
-        summary: entry.summary,
-        title: entry.title,
-      })
-    }
-  }
-
-  const clearComposerHistory = () => {
-    setDialogState({
-      type: 'confirm',
-      tone: 'danger',
-      title: 'Clear Composer history?',
-      message: 'Recent generated drafts and assist results will be removed. Notes already created or edited will stay untouched.',
-      confirmLabel: 'Clear history',
-      onConfirm: () => {
-        setComposerHistory([])
-        flashSaveFeedback('Composer history cleared')
-      },
-    })
   }
 
   const focusImportedNote = (note: Note, message: string) => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setActiveCollectionId(note.collectionId)
     setActiveFolderId(note.folderId)
     setActiveTag(null)
@@ -3073,13 +3033,13 @@ function App() {
   }
 
   const openImportDialog = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     importFileInputRef.current?.click()
   }
 
   const exportLibraryAsJson = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     downloadTextFile(
       `essence-export-${getExportDateStamp()}.json`,
       JSON.stringify(
@@ -3195,7 +3155,7 @@ function App() {
       const nextIsFocused = !isFocused
 
       if (nextIsFocused) {
-        setAiComposerOpen(false)
+        setComposerDockOpen(false)
         setEditorActionsOpen(false)
         setQuickSwitcherOpen(false)
         setNoteHistoryOpen(false)
@@ -3253,14 +3213,15 @@ function App() {
 
     setReaderExplorationAwake(true)
     setReaderExplorationPendingAction(action)
-    setAiComposerMode('assist')
     setAiAssistAction(assistAction)
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiDraft(null)
     setAiDraftError(null)
+    setComposerDockError(null)
     setSelectedBlockId(null)
     setZenMode(false)
-    setAiComposerOpen(true)
+    setComposerDockOpen(true)
 
     try {
       await generateAiAssist(assistAction)
@@ -3271,7 +3232,7 @@ function App() {
 
   const navigate = (nextView: NavMode) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
 
@@ -3288,7 +3249,7 @@ function App() {
 
   const openCollection = (collectionId: CollectionId) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusCollectionFilter(collectionId)
@@ -3296,7 +3257,7 @@ function App() {
 
   const openFolder = (folderId: string) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusFolderFilter(folderId)
@@ -3304,7 +3265,7 @@ function App() {
 
   const openCollectionInExplorer = (collectionId: CollectionId) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(collectionId)
@@ -3322,7 +3283,7 @@ function App() {
     }
 
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(folder.collectionId)
@@ -3334,7 +3295,7 @@ function App() {
 
   const openTag = (tagName: string) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(null)
@@ -3373,7 +3334,7 @@ function App() {
   useEffect(() => {
     keyboardShortcutStateRef.current = {
       activeNote,
-      aiComposerOpen,
+      composerDockOpen,
       dialogState,
       editorActionsOpen,
       noteHistoryOpen,
@@ -3422,9 +3383,9 @@ function App() {
           return
         }
 
-        if (state.aiComposerOpen) {
+        if (state.composerDockOpen) {
           event.preventDefault()
-          setAiComposerOpen(false)
+          setComposerDockOpen(false)
           return
         }
 
@@ -3745,7 +3706,7 @@ function App() {
     )
     setActiveCollectionId(collectionId)
     setActiveFolderId(newFolder.id)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     startTransition(() => setView('collections'))
     markSaving()
   }
@@ -3779,7 +3740,7 @@ function App() {
         setActiveFolderId(null)
         setActiveTag(null)
         setSearchQuery('')
-        setAiComposerOpen(false)
+        setComposerDockOpen(false)
         startTransition(() => setView('collections'))
         flashSaveFeedback('Collection created')
       },
@@ -3951,59 +3912,7 @@ function App() {
         </aside>
       )}
 
-      {!zenMode && aiComposerOpen && (
-        <Suspense fallback={<AiComposerPanelFallback />}>
-          <AiComposerPanel
-            activeNoteTitle={activeNote?.title ?? null}
-            assistAction={aiAssistAction}
-            assistError={aiAssistError}
-            assistResult={aiAssistResult}
-            category={aiDraftCategory}
-            canReplaceSelection={
-              Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')
-            }
-            composerHistory={composerHistory}
-            draft={aiDraft}
-            error={aiDraftError}
-            isAssisting={aiAssisting}
-            isGenerating={aiGenerating}
-            isOpen={aiComposerOpen}
-            mode={aiComposerMode}
-            runtimeLabel={composerRuntimeLabel}
-            onAppendAssist={appendAiAssistToActiveNote}
-            onAssistActionChange={(action) => {
-              setAiAssistAction(action)
-              setAiAssistResult(null)
-              setAiAssistError(null)
-            }}
-            onCategoryChange={(category) => {
-              setAiDraftCategory(category)
-              setAiDraft(null)
-              setAiDraftError(null)
-            }}
-            onClearHistory={clearComposerHistory}
-            onClose={() => setAiComposerOpen(false)}
-            onCreateNote={createNoteFromAiDraft}
-            onGenerateAssist={generateAiAssist}
-            onGenerate={generateAiDraft}
-            onModeChange={(mode) => {
-              setAiComposerMode(mode)
-              setAiDraftError(null)
-              setAiAssistError(null)
-            }}
-            onReplaceSelection={replaceSelectedBlockWithAiAssist}
-            onRestoreHistory={restoreComposerHistoryEntry}
-            onTopicChange={(value) => {
-              setAiDraftTopic(value)
-              setAiDraftError(null)
-            }}
-            selectedBlockPreview={noteViewMode === 'edit' ? summarizeInlineText(selectedBlockText, 120) : ''}
-            topic={aiDraftTopic}
-          />
-        </Suspense>
-      )}
-
-      {!zenMode && !settingsOpen && !aiComposerOpen && (
+      {!zenMode && !settingsOpen && (
         <>
           {composerDockOpen && (
             <button
@@ -4015,17 +3924,25 @@ function App() {
             />
           )}
           <ComposerDock
+            assistResult={aiAssistResult}
+            canReplaceAssist={Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')}
             canUseComposer={composerAvailable}
             contextLabel={composerDockContext}
-            error={composerDockError}
+            draft={aiDraft}
+            error={composerDockError ?? aiAssistError ?? aiDraftError}
             isBusy={composerBusy}
             isOpen={composerDockOpen}
             onAction={runComposerDockAction}
-            onExpand={expandComposerFromDock}
+            onAppendAssist={appendAiAssistToActiveNote}
+            onClearResult={clearComposerDockResult}
+            onCreateNote={createNoteFromAiDraft}
             onPromptChange={(value) => {
               setComposerDockPrompt(value)
               setComposerDockError(null)
+              setAiAssistError(null)
+              setAiDraftError(null)
             }}
+            onReplaceAssist={replaceSelectedBlockWithAiAssist}
             onSubmit={submitComposerDockPrompt}
             onToggle={toggleComposerDock}
             prompt={composerDockPrompt}
@@ -4281,7 +4198,7 @@ function App() {
               onClearFilters={clearFilters}
               onCreateNote={createNote}
               onOpenCollection={openCollection}
-              onOpenComposer={toggleComposerPanel}
+              onOpenComposer={openComposerDock}
               onOpenFolder={openFolder}
               onOpenImport={openImportDialog}
               onOpenNote={openNote}
@@ -4621,54 +4538,41 @@ function ModernRichEditorFallback({ title }: { title: string }) {
   )
 }
 
-function AiComposerPanelFallback() {
-  return (
-    <aside className="ai-composer ai-composer--open" aria-label="Loading Composer">
-      <div className="ai-composer__panel ai-composer__panel--loading">
-        <div className="ai-composer__header">
-          <div>
-            <span className="ai-composer__eyebrow">Essence Composer</span>
-            <h2>Opening Composer...</h2>
-            <p>Preparing the drafting side panel.</p>
-          </div>
-        </div>
-        <div className="ai-composer__modeToggle" aria-hidden="true">
-          <span className="ai-composer__loadingPill" />
-          <span className="ai-composer__loadingPill" />
-        </div>
-        <div className="ai-composer__preview ai-composer__preview--loading" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
-    </aside>
-  )
-}
-
 function ComposerDock({
+  assistResult,
+  canReplaceAssist,
   canUseComposer,
   contextLabel,
+  draft,
   error,
   isBusy,
   isOpen,
   onAction,
-  onExpand,
+  onAppendAssist,
+  onClearResult,
+  onCreateNote,
   onPromptChange,
+  onReplaceAssist,
   onSubmit,
   onToggle,
   prompt,
   runtimeLabel,
   showNoteActions,
 }: {
+  assistResult: AiAssistResult | null
+  canReplaceAssist: boolean
   canUseComposer: boolean
   contextLabel: string
+  draft: AiDraft | null
   error: string | null
   isBusy: boolean
   isOpen: boolean
   onAction: (action: AiAssistAction) => void
-  onExpand: () => void
+  onAppendAssist: () => void
+  onClearResult: () => void
+  onCreateNote: () => void
   onPromptChange: (value: string) => void
+  onReplaceAssist: () => void
   onSubmit: () => void
   onToggle: () => void
   prompt: string
@@ -4681,6 +4585,8 @@ function ComposerDock({
     { action: 'create-outline', label: 'Outline' },
     { action: 'study-questions', label: 'Questions' },
   ]
+  const assistPreview = assistResult ? summarizeInlineText(getPlainTextFromAiDraftBlocks(assistResult.blocks), 280) : ''
+  const draftPreview = draft ? summarizeInlineText(getPlainTextFromAiDraftBlocks(draft.blocks), 280) : ''
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -4729,9 +4635,6 @@ function ComposerDock({
           <strong>{contextLabel}</strong>
         </div>
         <div className="composer-dock__headerActions">
-          <button type="button" className="icon-button" onClick={onExpand} aria-label="Expand Composer" title="Expand Composer">
-            <Icon name="panelLeftOpen" />
-          </button>
           <button type="button" className="icon-button" onClick={onToggle} aria-label="Close Composer dock" title="Close">
             <Icon name="close" />
           </button>
@@ -4751,6 +4654,73 @@ function ComposerDock({
             </button>
           ))}
         </div>
+      )}
+
+      {isBusy && (
+        <div className="composer-dock__thinking" aria-live="polite">
+          <span className="composer-dock__spinner" aria-hidden="true" />
+          <div>
+            <strong>Composer is thinking</strong>
+            <p>{runtimeLabel === 'Composer' ? 'Generating a response...' : `Generating with ${runtimeLabel}...`}</p>
+          </div>
+        </div>
+      )}
+
+      {!isBusy && assistResult && (
+        <section className="composer-dock__result" aria-label="Composer response">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>{assistResult.actionLabel}</span>
+              <strong>{assistResult.title}</strong>
+            </div>
+            <button type="button" className="text-action" onClick={onClearResult}>
+              Clear
+            </button>
+          </div>
+          <p>{assistResult.summary || assistPreview || 'Composer prepared a response for this note.'}</p>
+          {assistPreview && <blockquote>{assistPreview}</blockquote>}
+          <div className="composer-dock__resultActions">
+            <button type="button" className="primary-button" onClick={onAppendAssist}>
+              <Icon name="plus" />
+              <span>Insert</span>
+            </button>
+            {canReplaceAssist && (
+              <button type="button" className="ghost-button" onClick={onReplaceAssist}>
+                <Icon name="edit" />
+                <span>Replace</span>
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {!isBusy && !assistResult && draft && (
+        <section className="composer-dock__result" aria-label="Composer draft">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>{draft.status}</span>
+              <strong>{draft.title}</strong>
+            </div>
+            <button type="button" className="text-action" onClick={onClearResult}>
+              Clear
+            </button>
+          </div>
+          <p>{draft.summary || draftPreview || 'Composer prepared a note draft.'}</p>
+          {draftPreview && <blockquote>{draftPreview}</blockquote>}
+          {draft.tags.length > 0 && (
+            <div className="composer-dock__tags" aria-label="Draft tags">
+              {draft.tags.slice(0, 4).map((tag) => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </div>
+          )}
+          <div className="composer-dock__resultActions">
+            <button type="button" className="primary-button" onClick={onCreateNote}>
+              <Icon name="plus" />
+              <span>Create note</span>
+            </button>
+          </div>
+        </section>
       )}
 
       <form className="composer-dock__form" onSubmit={handleSubmit}>
