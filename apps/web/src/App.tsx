@@ -209,6 +209,15 @@ interface SearchResult {
   score: number
 }
 
+interface ApiReadinessState {
+  aiAccess: string
+  aiComposer: string
+  aiModel: string
+  aiProvider: string
+  loadState: 'loading' | 'ready' | 'unavailable'
+  ok: boolean
+}
+
 interface AiDraftBlock {
   citation?: string
   items?: string[]
@@ -340,6 +349,14 @@ const supabaseClient = createSupabaseBrowserClient()
 const devEmailLoginEnabled = getViteEnvString('VITE_AUTH_DEV_EMAIL_LOGIN') === 'true'
 const localComposerAvailable = getViteEnvString('VITE_AI_ALLOW_LOCAL_USER') === 'true'
 const waitlistUrl = getViteEnvString('VITE_WAITLIST_URL')
+const initialApiReadinessState: ApiReadinessState = {
+  aiAccess: 'unknown',
+  aiComposer: 'unknown',
+  aiModel: '',
+  aiProvider: 'unknown',
+  loadState: 'loading',
+  ok: false,
+}
 
 const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
@@ -899,6 +916,7 @@ function App() {
   const [editorSidebarOpen, setEditorSidebarOpen] = useState(loadStoredEditorSidebarOpen)
   const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [apiReadiness, setApiReadiness] = useState<ApiReadinessState>(initialApiReadinessState)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -1013,6 +1031,7 @@ function App() {
   const composerAvailable = remoteAccountActive || localComposerAvailable
   const composerLockedMessage =
     'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
+  const composerRuntimeLabel = getComposerRuntimeLabel(apiReadiness)
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1045,6 +1064,24 @@ function App() {
     setSaveMessage('Sign in required')
   }, [])
 
+  const refreshApiReadiness = useCallback(async () => {
+    setApiReadiness((currentReadiness) => ({
+      ...currentReadiness,
+      loadState: 'loading',
+    }))
+
+    try {
+      const readiness = await fetchApiReadiness()
+      setApiReadiness(readiness)
+    } catch (error) {
+      console.warn('Unable to load API readiness.', error)
+      setApiReadiness({
+        ...initialApiReadinessState,
+        loadState: 'unavailable',
+      })
+    }
+  }, [])
+
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
   const collectionNameById = useMemo(() => buildCollectionNameLookup(collections), [collections])
 
@@ -1056,6 +1093,16 @@ function App() {
   useEffect(() => {
     setEditorActionsOpen(false)
   }, [activeNoteId, view])
+
+  useEffect(() => {
+    void refreshApiReadiness()
+  }, [refreshApiReadiness])
+
+  useEffect(() => {
+    if (settingsOpen) {
+      void refreshApiReadiness()
+    }
+  }, [refreshApiReadiness, settingsOpen])
 
   const activeFolder = activeFolderId ? foldersById[activeFolderId] ?? null : null
   const selectedBlock = useMemo(
@@ -3712,19 +3759,21 @@ function App() {
       />
 
       {!zenMode && settingsOpen && (
-          <SettingsDialog
-            ambienceMode={ambienceMode}
-            colorTheme={colorTheme}
-            currentUser={currentUser}
+        <SettingsDialog
+          ambienceMode={ambienceMode}
+          apiReadiness={apiReadiness}
+          colorTheme={colorTheme}
+          composerAvailable={composerAvailable}
+          currentUser={currentUser}
           isSaving={profileSaving}
           navigationSidebarVisible={navigationSidebarVisible}
           noteCount={notes.length}
           folderCount={folders.length}
           composerHistoryCount={composerHistory.length}
           error={profileError}
-            onAmbienceChange={setAmbienceMode}
-            onColorThemeChange={setColorTheme}
-            onClose={closeSettings}
+          onAmbienceChange={setAmbienceMode}
+          onColorThemeChange={setColorTheme}
+          onClose={closeSettings}
           onNavigationSidebarChange={setNavigationSidebarVisible}
           onOpenAuth={openAuthScreen}
           onSaveProfile={saveProfileSettings}
@@ -3799,6 +3848,7 @@ function App() {
             isGenerating={aiGenerating}
             isOpen={aiComposerOpen}
             mode={aiComposerMode}
+            runtimeLabel={composerRuntimeLabel}
             onAppendAssist={appendAiAssistToActiveNote}
             onAssistActionChange={(action) => {
               setAiAssistAction(action)
@@ -7317,7 +7367,9 @@ function AccountControl({
 
 function SettingsDialog({
   ambienceMode,
+  apiReadiness,
   colorTheme,
+  composerAvailable,
   composerHistoryCount,
   currentUser,
   error,
@@ -7334,7 +7386,9 @@ function SettingsDialog({
   onSignOut,
 }: {
   ambienceMode: AmbienceMode
+  apiReadiness: ApiReadinessState
   colorTheme: ColorTheme
+  composerAvailable: boolean
   composerHistoryCount: number
   currentUser: AuthUser | null
   error: string | null
@@ -7352,6 +7406,11 @@ function SettingsDialog({
 }) {
   const [draft, setDraft] = useState<ProfileDraft>(() => getProfileDraftFromUser(currentUser))
   const isLocal = !currentUser || currentUser.isLocal
+  const composerProviderLabel = getComposerProviderLabel(apiReadiness)
+  const composerModelLabel = getComposerModelLabel(apiReadiness)
+  const composerStatusLabel = getComposerStatusLabel(apiReadiness)
+  const composerAccessLabel = getComposerAccessLabel(apiReadiness, composerAvailable)
+  const composerSettingsNote = getComposerSettingsNote(apiReadiness, composerAvailable)
 
   useEffect(() => {
     setDraft(getProfileDraftFromUser(currentUser))
@@ -7508,6 +7567,33 @@ function SettingsDialog({
             </label>
           </section>
 
+          <section className="settings-section" aria-label="Composer settings">
+            <div className="settings-section__header">
+              <div>
+                <span>Composer</span>
+                <strong>{composerProviderLabel}</strong>
+              </div>
+              <span className="settings-accountBadge">{composerStatusLabel}</span>
+            </div>
+
+            <div className="settings-runtimeGrid" aria-label="Composer runtime">
+              <div className="settings-runtimeItem">
+                <span>Provider</span>
+                <strong>{composerProviderLabel}</strong>
+              </div>
+              <div className="settings-runtimeItem">
+                <span>Model</span>
+                <strong>{composerModelLabel}</strong>
+              </div>
+              <div className="settings-runtimeItem">
+                <span>Access</span>
+                <strong>{composerAccessLabel}</strong>
+              </div>
+            </div>
+
+            <p className="settings-note">{composerSettingsNote}</p>
+          </section>
+
           <section className="settings-section" aria-label="Data and account settings">
             <div className="settings-section__header">
               <div>
@@ -7571,6 +7657,136 @@ function SettingsDialog({
       </section>
     </div>
   )
+}
+
+function getComposerRuntimeLabel(readiness: ApiReadinessState) {
+  const provider = readiness.aiProvider.toLowerCase()
+
+  if (provider === 'ollama') {
+    return 'Ollama'
+  }
+
+  if (provider === 'gemini') {
+    return 'Gemini API'
+  }
+
+  return 'Composer'
+}
+
+function getComposerProviderLabel(readiness: ApiReadinessState) {
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'API unavailable'
+  }
+
+  const provider = readiness.aiProvider.toLowerCase()
+
+  if (provider === 'ollama') {
+    return 'Ollama local'
+  }
+
+  if (provider === 'gemini') {
+    return 'Gemini API'
+  }
+
+  if (provider === 'disabled') {
+    return 'Disabled'
+  }
+
+  return humanizeStatusLabel(readiness.aiProvider)
+}
+
+function getComposerModelLabel(readiness: ApiReadinessState) {
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'Unavailable'
+  }
+
+  if (readiness.aiComposer === 'disabled' || readiness.aiProvider === 'disabled') {
+    return 'Disabled'
+  }
+
+  return readiness.aiModel || 'Not reported'
+}
+
+function getComposerStatusLabel(readiness: ApiReadinessState) {
+  if (readiness.loadState === 'loading') {
+    return 'Checking'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'Unavailable'
+  }
+
+  switch (readiness.aiComposer) {
+    case 'ok':
+      return 'Ready'
+    case 'missing':
+      return 'Missing config'
+    case 'invalid':
+      return 'Invalid config'
+    case 'disabled':
+      return 'Disabled'
+    default:
+      return humanizeStatusLabel(readiness.aiComposer)
+  }
+}
+
+function getComposerAccessLabel(readiness: ApiReadinessState, composerAvailable: boolean) {
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return composerAvailable ? 'Enabled locally' : 'Unavailable'
+  }
+
+  if (readiness.aiAccess === 'local-enabled') {
+    return 'Local workspace'
+  }
+
+  return composerAvailable ? 'Approved account' : 'Invite required'
+}
+
+function getComposerSettingsNote(readiness: ApiReadinessState, composerAvailable: boolean) {
+  if (readiness.loadState === 'loading') {
+    return 'Checking the API runtime so Settings can show which Composer provider is active.'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'The web app cannot reach the API right now. Start the API server to verify the active Composer provider.'
+  }
+
+  if (readiness.aiComposer === 'disabled') {
+    return 'Composer API calls are disabled. Manual notes and local writing still work.'
+  }
+
+  if (readiness.aiProvider === 'ollama') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Ollama model. The browser does not call Ollama directly.'
+      : 'The API is set to Ollama, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
+  }
+
+  if (readiness.aiProvider === 'gemini') {
+    return 'Composer requests go through the Essence API to Gemini. The Gemini key stays server-only.'
+  }
+
+  return 'Composer provider details come from the API readiness check.'
+}
+
+function humanizeStatusLabel(value: string) {
+  const label = value
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return label ? label.replace(/\b\w/g, (character) => character.toUpperCase()) : 'Unknown'
 }
 
 function QuickSwitcher({
@@ -8265,6 +8481,38 @@ function getApiFetchCredentials(): RequestCredentials {
 
 function getApiUrl(path: string) {
   return apiBaseUrl ? `${apiBaseUrl}${path}` : path
+}
+
+async function fetchApiReadiness(): Promise<ApiReadinessState> {
+  const response = await fetch(getApiUrl('/api/ready'), {
+    credentials: apiFetchCredentials,
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`API readiness failed with status ${response.status}.`)
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    checks?: Record<string, unknown>
+    ok?: unknown
+  }
+  const checks = payload.checks && typeof payload.checks === 'object' ? payload.checks : {}
+
+  return {
+    aiAccess: normalizeReadinessField(checks.aiAccess, 'unknown'),
+    aiComposer: normalizeReadinessField(checks.aiComposer, 'unknown'),
+    aiModel: normalizeReadinessField(checks.aiModel, ''),
+    aiProvider: normalizeReadinessField(checks.aiProvider, 'unknown'),
+    loadState: 'ready',
+    ok: payload.ok === true,
+  }
+}
+
+function normalizeReadinessField(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
 function getWorkspaceStorageKey(user: AuthUser | null) {

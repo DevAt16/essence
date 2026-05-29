@@ -741,7 +741,9 @@ function validateRuntimeConfig() {
 
 function getReadinessChecks(databaseStatus) {
   return {
+    aiAccess: isLocalAiUserAllowed() ? 'local-enabled' : 'account-only',
     aiComposer: getAiReadinessStatus(),
+    aiModel: isAiEnabled() ? getAiModelLabel() : 'disabled',
     aiProvider: isAiEnabled() ? readAiProvider() : 'disabled',
     database: databaseStatus,
     staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
@@ -2128,6 +2130,20 @@ function getOllamaBaseUrl() {
 
 function getOllamaModel() {
   return process.env.OLLAMA_MODEL?.trim() || 'llama3.1'
+}
+
+function getAiModelLabel() {
+  const provider = readAiProvider()
+
+  if (provider === 'gemini') {
+    return process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  }
+
+  if (provider === 'ollama') {
+    return getOllamaModel()
+  }
+
+  return 'unknown'
 }
 
 function getAiReadinessStatus() {

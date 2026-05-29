@@ -2011,6 +2011,12 @@
   box-shadow: 0 0 0 4px var(--focus-soft);
 }
 
+.ai-composer__field textarea:disabled,
+.ai-composer__field select:disabled {
+  cursor: default;
+  opacity: 0.66;
+}
+
 .ai-composer__hint {
   margin: -2px 0 0;
   font-size: 0.84rem;
@@ -2110,6 +2116,11 @@
   line-height: 1.35;
 }
 
+.ai-composer__actionChoice:disabled {
+  cursor: default;
+  opacity: 0.64;
+}
+
 .ai-composer__error {
   margin: 0;
   border: 1px solid rgba(163, 65, 58, 0.22);
@@ -2128,6 +2139,19 @@
 .ai-composer__submit:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.ai-composer__buttonSpinner,
+.ai-composer__workingSpinner {
+  border: 2px solid rgba(255, 248, 232, 0.28);
+  border-top-color: rgba(255, 248, 232, 0.92);
+  border-radius: 999px;
+  animation: composer-spin 0.82s linear infinite;
+}
+
+.ai-composer__buttonSpinner {
+  width: 16px;
+  height: 16px;
 }
 
 .ai-composer__preview {
@@ -2152,6 +2176,60 @@
 
 .ai-composer__preview--loading span:last-child {
   width: 58%;
+}
+
+.ai-composer__working {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  min-height: 168px;
+}
+
+.ai-composer__workingSpinner {
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+}
+
+.ai-composer__working strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.ai-composer__working p {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.ai-composer__workingLines {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 9px;
+  padding-top: 6px;
+}
+
+.ai-composer__workingLines span {
+  min-height: 15px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.055));
+  background-size: 180% 100%;
+  animation: editor-loading-sheen 1.2s ease-in-out infinite;
+}
+
+.ai-composer__workingLines span:first-child {
+  width: 86%;
+}
+
+.ai-composer__workingLines span:nth-child(2) {
+  width: 100%;
+}
+
+.ai-composer__workingLines span:last-child {
+  width: 68%;
 }
 
 .ai-composer__outputToolbar {
@@ -2847,6 +2925,41 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.settings-runtimeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-runtimeItem {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px 12px;
+}
+
+.settings-runtimeItem span {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-runtimeItem strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-metrics span {
@@ -8355,6 +8468,7 @@ textarea:focus-visible {
 :root[data-essence-theme='starlight'] .settings-section,
 :root[data-essence-theme='starlight'] .settings-choice,
 :root[data-essence-theme='starlight'] .settings-field input,
+:root[data-essence-theme='starlight'] .settings-runtimeItem,
 :root[data-essence-theme='starlight'] .settings-about div {
   background:
     linear-gradient(180deg, rgba(34, 35, 39, 0.76), rgba(15, 16, 19, 0.64));
@@ -9005,6 +9119,7 @@ textarea:focus-visible {
 :root[data-essence-theme='moonlit'] .settings-section,
 :root[data-essence-theme='moonlit'] .settings-choice,
 :root[data-essence-theme='moonlit'] .settings-field input,
+:root[data-essence-theme='moonlit'] .settings-runtimeItem,
 :root[data-essence-theme='moonlit'] .settings-about div {
   background:
     linear-gradient(180deg, rgba(20, 31, 46, 0.76), rgba(9, 15, 24, 0.64));
@@ -9414,6 +9529,7 @@ textarea:focus-visible {
 :root[data-essence-theme='daylight'] .settings-section,
 :root[data-essence-theme='daylight'] .settings-choice,
 :root[data-essence-theme='daylight'] .settings-field input,
+:root[data-essence-theme='daylight'] .settings-runtimeItem,
 :root[data-essence-theme='daylight'] .settings-about div {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(245, 247, 244, 0.62));
@@ -9780,6 +9896,12 @@ textarea:focus-visible {
 
   to {
     background-position: -80% 0;
+  }
+}
+
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -10863,6 +10985,7 @@ textarea:focus-visible {
 
   .settings-profileGrid,
   .settings-choiceGrid,
+  .settings-runtimeGrid,
   .settings-metrics {
     grid-template-columns: 1fr;
   }

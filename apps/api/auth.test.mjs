@@ -81,6 +81,9 @@ test('ready endpoint verifies database readiness', async () => {
   assert.equal(response.status, 200)
   assert.equal(response.body.ok, true)
   assert.equal(response.body.checks.database, 'ok')
+  assert.equal(typeof response.body.checks.aiAccess, 'string')
+  assert.equal(typeof response.body.checks.aiModel, 'string')
+  assert.equal(typeof response.body.checks.aiProvider, 'string')
 })
 
 test('CORS preflight allows configured development origin', async () => {
