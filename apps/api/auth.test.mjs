@@ -86,6 +86,29 @@ test('ready endpoint verifies database readiness', async () => {
   assert.equal(typeof response.body.checks.aiProvider, 'string')
 })
 
+test('ready endpoint reports Gemini CLI Composer provider', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousGeminiCliModel = process.env.GEMINI_CLI_MODEL
+
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'gemini-cli'
+  process.env.GEMINI_CLI_MODEL = 'gemini-cli-test-model'
+
+  try {
+    const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
+
+    assert.equal(response.status, 200)
+    assert.equal(response.body.checks.aiComposer, 'ok')
+    assert.equal(response.body.checks.aiModel, 'gemini-cli-test-model')
+    assert.equal(response.body.checks.aiProvider, 'gemini-cli')
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('GEMINI_CLI_MODEL', previousGeminiCliModel)
+  }
+})
+
 test('CORS preflight allows configured development origin', async () => {
   const response = await apiRequest('/api/state', undefined, {
     headers: {

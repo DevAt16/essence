@@ -1,5 +1,6 @@
 import 'dotenv/config'
 
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -728,7 +729,7 @@ function validateRuntimeConfig() {
     const aiProvider = readAiProvider()
 
     if (!isSupportedAiProvider(aiProvider)) {
-      errors.push('AI_PROVIDER must be "gemini" or "ollama".')
+      errors.push('AI_PROVIDER must be "gemini", "ollama", or "gemini-cli".')
     } else if (aiProvider === 'gemini' && !process.env.GEMINI_API_KEY?.trim()) {
       errors.push('GEMINI_API_KEY is required when AI_PROVIDER=gemini and AI_ENABLED is not false.')
     }
@@ -1410,6 +1411,10 @@ async function generateAiJson(prompt, schema, options = {}) {
     return generateOllamaJson(prompt, schema, options)
   }
 
+  if (provider === 'gemini-cli') {
+    return generateGeminiCliJson(prompt, schema, options)
+  }
+
   return generateGeminiJson(prompt, schema, options)
 }
 
@@ -1550,6 +1555,164 @@ async function generateOllamaJson(prompt, schema, options = {}) {
     error.status = 502
     throw error
   }
+}
+
+async function generateGeminiCliJson(prompt, schema, options = {}) {
+  const model = getGeminiCliModel()
+  const cliPrompt = [
+    prompt,
+    'Return valid JSON only. Do not wrap the response in Markdown fences.',
+    `The JSON must match this schema:\n${JSON.stringify(schema)}`,
+  ].join('\n\n')
+  const args = ['--output-format', 'json']
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  const result = await runGeminiCli(args, cliPrompt, options)
+  const responseText = extractGeminiCliResponseText(result.stdout)
+
+  if (!responseText) {
+    const error = new Error('Gemini CLI returned an empty Composer response.')
+    error.status = 502
+    throw error
+  }
+
+  try {
+    return parseJsonText(responseText)
+  } catch {
+    const error = new Error('Gemini CLI returned content the app could not parse. Try again.')
+    error.status = 502
+    throw error
+  }
+}
+
+async function runGeminiCli(args, input, options = {}) {
+  const command = getGeminiCliCommand()
+  const cwd = getGeminiCliCwd()
+  const timeoutMs = getGeminiCliTimeoutMs()
+
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    let didTimeout = false
+    let settled = false
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const timeout = setTimeout(() => {
+      didTimeout = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
+
+    const settle = (callback) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeout)
+      callback()
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = appendLimitedProcessOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr = appendLimitedProcessOutput(stderr, chunk)
+    })
+
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+
+    child.on('error', (cause) => {
+      settle(() => {
+        const error = new Error('Gemini CLI could not be started. Install Gemini CLI or set GEMINI_CLI_COMMAND.')
+        error.cause = cause
+        error.status = 502
+        reject(error)
+      })
+    })
+
+    child.on('close', (code, signal) => {
+      settle(() => {
+        if (didTimeout) {
+          const error = new Error(`Gemini CLI timed out after ${timeoutMs}ms.`)
+          error.status = 504
+          reject(error)
+          return
+        }
+
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
+          const error = new Error(`Gemini CLI request failed. ${truncateErrorDetail(detail)}`)
+          error.status = code === 429 ? 429 : 502
+          reject(error)
+          return
+        }
+
+        resolve({ stderr, stdout, timeoutMs: options.timeoutMs ?? timeoutMs })
+      })
+    })
+  })
+}
+
+function extractGeminiCliResponseText(stdout) {
+  const output = stdout.trim()
+
+  if (!output) {
+    return ''
+  }
+
+  try {
+    const payload = parseJsonText(output)
+
+    if (typeof payload?.error?.message === 'string' && payload.error.message.trim()) {
+      const error = new Error(payload.error.message.trim())
+      error.status = 502
+      throw error
+    }
+
+    if (typeof payload?.response === 'string') {
+      return payload.response.trim()
+    }
+
+    if (payload && typeof payload === 'object') {
+      return JSON.stringify(payload)
+    }
+  } catch (error) {
+    if (error?.status) {
+      throw error
+    }
+  }
+
+  return output
+}
+
+function appendLimitedProcessOutput(currentValue, chunk) {
+  const nextValue = `${currentValue}${chunk.toString('utf8')}`
+  const maxLength = 2_000_000
+
+  if (nextValue.length <= maxLength) {
+    return nextValue
+  }
+
+  return nextValue.slice(nextValue.length - maxLength)
+}
+
+function truncateErrorDetail(value) {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim()
+
+  if (normalizedValue.length <= 360) {
+    return normalizedValue
+  }
+
+  return `${normalizedValue.slice(0, 357).trimEnd()}...`
 }
 
 function extractGeminiText(payload) {
@@ -2114,7 +2277,7 @@ function readAiProvider() {
 }
 
 function isSupportedAiProvider(provider) {
-  return provider === 'gemini' || provider === 'ollama'
+  return provider === 'gemini' || provider === 'ollama' || provider === 'gemini-cli'
 }
 
 function getAiProvider() {
@@ -2124,9 +2287,41 @@ function getAiProvider() {
     return provider
   }
 
-  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini" or "ollama".`)
+  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini", "ollama", or "gemini-cli".`)
   error.status = 503
   throw error
+}
+
+function getGeminiCliCommand() {
+  return process.env.GEMINI_CLI_COMMAND?.trim() || 'gemini'
+}
+
+function getGeminiCliCwd() {
+  const configuredCwd = process.env.GEMINI_CLI_CWD?.trim()
+  const cwd = configuredCwd ? path.resolve(configuredCwd) : apiDirectory
+
+  if (!existsSync(cwd)) {
+    const error = new Error('Invalid GEMINI_CLI_CWD.')
+    error.status = 503
+    throw error
+  }
+
+  return cwd
+}
+
+function getGeminiCliModel() {
+  return process.env.GEMINI_CLI_MODEL?.trim() || ''
+}
+
+function getGeminiCliTimeoutMs() {
+  const rawValue = process.env.GEMINI_CLI_TIMEOUT_MS?.trim()
+  const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 90_000
+
+  if (!Number.isFinite(parsedValue)) {
+    return 90_000
+  }
+
+  return Math.min(300_000, Math.max(5_000, parsedValue))
 }
 
 function getOllamaBaseUrl() {
@@ -2156,6 +2351,10 @@ function getAiModelLabel() {
     return getOllamaModel()
   }
 
+  if (provider === 'gemini-cli') {
+    return getGeminiCliModel() || 'Gemini CLI default'
+  }
+
   return 'unknown'
 }
 
@@ -2172,6 +2371,15 @@ function getAiReadinessStatus() {
 
   if (provider === 'gemini') {
     return process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing'
+  }
+
+  if (provider === 'gemini-cli') {
+    try {
+      getGeminiCliCwd()
+      return getGeminiCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
   }
 
   return getOllamaModel() ? 'ok' : 'missing'

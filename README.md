@@ -54,9 +54,13 @@ Frontend-only development still works with:
 npm run dev
 ```
 
-## Local Ollama Composer
+## Local Composer Providers
 
-For a private personal setup, Composer can use a local Ollama model through the API without requiring an approved remote account. Keep Ollama on localhost, pull the model you want, and enable the local Composer flags in `.env`:
+For a private personal setup, Composer can use a local provider through the API without requiring an approved remote account.
+
+### Ollama
+
+Keep Ollama on localhost, pull the model you want, and enable the local Composer flags in `.env`:
 
 ```bash
 ollama pull llama3.1
@@ -70,6 +74,23 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1
 VITE_AI_ALLOW_LOCAL_USER=true
 ```
+
+### Gemini CLI
+
+If you already use Gemini CLI locally, Composer can call it through the API in headless mode. Install and authenticate Gemini CLI first, then use:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=gemini-cli
+AI_ALLOW_LOCAL_USER=true
+GEMINI_CLI_COMMAND=gemini
+GEMINI_CLI_MODEL=
+GEMINI_CLI_CWD=
+GEMINI_CLI_TIMEOUT_MS=90000
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+Leave `GEMINI_CLI_MODEL` empty to use the CLI default, or set a model supported by your Gemini CLI setup. `GEMINI_CLI_CWD` is optional; when empty, Essence runs the CLI from the API directory.
 
 Then run:
 

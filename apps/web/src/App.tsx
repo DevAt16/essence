@@ -7912,6 +7912,10 @@ function getComposerRuntimeLabel(readiness: ApiReadinessState) {
     return 'Gemini API'
   }
 
+  if (provider === 'gemini-cli') {
+    return 'Gemini CLI'
+  }
+
   return 'Composer'
 }
 
@@ -7932,6 +7936,10 @@ function getComposerProviderLabel(readiness: ApiReadinessState) {
 
   if (provider === 'gemini') {
     return 'Gemini API'
+  }
+
+  if (provider === 'gemini-cli') {
+    return 'Gemini CLI local'
   }
 
   if (provider === 'disabled') {
@@ -8017,6 +8025,12 @@ function getComposerSettingsNote(readiness: ApiReadinessState, composerAvailable
 
   if (readiness.aiProvider === 'gemini') {
     return 'Composer requests go through the Essence API to Gemini. The Gemini key stays server-only.'
+  }
+
+  if (readiness.aiProvider === 'gemini-cli') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Gemini CLI. The browser never starts CLI processes directly.'
+      : 'The API is set to Gemini CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
   }
 
   return 'Composer provider details come from the API readiness check.'
