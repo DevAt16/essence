@@ -1846,6 +1846,227 @@
   transform: translateX(0);
 }
 
+.composer-dock {
+  position: fixed;
+  left: 112px;
+  bottom: 24px;
+  z-index: 34;
+  color: var(--ink);
+}
+
+.composer-dock--collapsed {
+  width: min(310px, calc(100vw - 136px));
+  min-height: 58px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 14% 8%, rgba(255, 248, 232, 0.12), transparent 38%),
+    rgba(21, 22, 25, 0.88);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 248, 232, 0.08);
+  backdrop-filter: blur(18px);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  text-align: left;
+}
+
+.composer-dock--collapsed:hover {
+  border-color: var(--ink-muted);
+  transform: translateY(-1px);
+}
+
+.composer-dock--locked {
+  opacity: 0.82;
+}
+
+.composer-dock__orb {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  background: var(--paper-panel);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+
+.composer-dock__orb svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-dock__collapsedCopy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.composer-dock__collapsedCopy strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.composer-dock__collapsedCopy small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-dock--open {
+  width: min(390px, calc(100vw - 136px));
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 14% 8%, rgba(255, 248, 232, 0.12), transparent 38%),
+    rgba(21, 22, 25, 0.94);
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 248, 232, 0.08);
+  backdrop-filter: blur(20px);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  animation: rise-in 160ms ease both;
+}
+
+.composer-dock__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer-dock__header div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.composer-dock__header span {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.composer-dock__header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-dock__headerActions {
+  display: flex;
+  gap: 4px;
+}
+
+.composer-dock__headerActions .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.composer-dock__chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.composer-dock__chips button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--ink-subtle);
+  padding: 0 11px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.composer-dock__chips button:hover {
+  border-color: var(--line-strong);
+  background: var(--paper-panel);
+  color: var(--ink);
+}
+
+.composer-dock__chips button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.composer-dock__form {
+  display: grid;
+  gap: 10px;
+}
+
+.composer-dock__form textarea {
+  width: 100%;
+  min-height: 88px;
+  max-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--ink);
+  outline: 0;
+  padding: 12px 13px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.composer-dock__form textarea:focus {
+  border-color: var(--line-dark);
+  box-shadow: 0 0 0 4px var(--focus-soft);
+}
+
+.composer-dock__form textarea:disabled {
+  cursor: default;
+  opacity: 0.66;
+}
+
+.composer-dock__form textarea::placeholder {
+  color: var(--ink-muted);
+}
+
+.composer-dock__error {
+  margin: 0;
+  border: 1px solid rgba(194, 91, 82, 0.22);
+  border-radius: 12px;
+  background: rgba(163, 65, 58, 0.09);
+  color: #f2c0ba;
+  padding: 9px 10px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.composer-dock__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer-dock__footer > span {
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+}
+
+.composer-dock__footer .primary-button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 .ai-composer__panel {
   height: 100%;
   overflow: auto;
@@ -8017,7 +8238,8 @@ textarea:focus-visible {
 }
 
 :root[data-essence-theme='starlight'] .topbar,
-:root[data-essence-theme='starlight'] .rail {
+:root[data-essence-theme='starlight'] .rail,
+:root[data-essence-theme='starlight'] .composer-dock {
   background:
     linear-gradient(180deg, rgba(25, 26, 29, 0.9), rgba(11, 12, 14, 0.86));
   box-shadow:
@@ -8668,7 +8890,8 @@ textarea:focus-visible {
 }
 
 :root[data-essence-theme='moonlit'] .topbar,
-:root[data-essence-theme='moonlit'] .rail {
+:root[data-essence-theme='moonlit'] .rail,
+:root[data-essence-theme='moonlit'] .composer-dock {
   background:
     linear-gradient(180deg, rgba(16, 24, 36, 0.9), rgba(7, 11, 18, 0.86));
   box-shadow:
@@ -9284,7 +9507,8 @@ textarea:focus-visible {
 }
 
 :root[data-essence-theme='daylight'] .topbar,
-:root[data-essence-theme='daylight'] .rail {
+:root[data-essence-theme='daylight'] .rail,
+:root[data-essence-theme='daylight'] .composer-dock {
   background:
     linear-gradient(180deg, rgba(255, 255, 252, 0.97), rgba(246, 247, 242, 0.94));
   backdrop-filter: blur(18px);
@@ -10386,6 +10610,17 @@ textarea:focus-visible {
     top: 73px;
     bottom: calc(88px + env(safe-area-inset-bottom));
     width: min(420px, 100vw);
+  }
+
+  .composer-dock {
+    left: 14px;
+    right: 14px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .composer-dock--collapsed,
+  .composer-dock--open {
+    width: auto;
   }
 
   .topbar,

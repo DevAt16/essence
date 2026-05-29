@@ -1127,6 +1127,12 @@ const aiAssistActionMeta = {
       'Create a research path from the note. Do not invent exact citations, URLs, or papers. Suggest source categories, search queries, canonical areas to investigate, and verification steps. Prefer headings and bullet lists.',
     temperature: 0.5,
   },
+  custom: {
+    label: 'Custom request',
+    guidance:
+      'Follow the user instruction while staying grounded in the selected text and note context. Return focused, insertable blocks instead of a chat transcript.',
+    temperature: 0.62,
+  },
 }
 
 const geminiDraftResponseSchema = {
@@ -1264,6 +1270,7 @@ function normalizeAiAssistRequest(body) {
   const meta = aiAssistActionMeta[action]
   const note = body?.note && typeof body.note === 'object' ? body.note : {}
   const composerContext = normalizeComposerRequestContext(body?.context)
+  const instruction = normalizeDraftString(body?.instruction, '', 1000)
   const title = normalizeDraftString(note.title, 'Untitled Note', 180)
   const status = normalizeDraftString(note.status, '', 60)
   const text = normalizeDraftString(note.text, '', 12000)
@@ -1273,7 +1280,11 @@ function normalizeAiAssistRequest(body) {
     : []
 
   if (!meta) {
-    return { ok: false, error: 'Choose Continue, Clarify, Outline, Study Questions, Counterarguments, or Reading List.' }
+    return { ok: false, error: 'Choose Continue, Clarify, Outline, Study Questions, Counterarguments, Reading List, or Custom.' }
+  }
+
+  if (action === 'custom' && instruction.length < 3) {
+    return { ok: false, error: 'Enter a Composer instruction with at least 3 characters.' }
   }
 
   if (text.length < 3 && selectedText.length < 3) {
@@ -1284,6 +1295,7 @@ function normalizeAiAssistRequest(body) {
     ok: true,
     action,
     composerContext,
+    instruction,
     meta,
     note: {
       selectedText,
@@ -1351,6 +1363,7 @@ function buildGeminiAssistPrompt(context) {
     'You are Essence Composer, an active-note assistant for students, researchers, and deep readers.',
     `Action: ${context.meta.label}`,
     context.meta.guidance,
+    context.instruction ? `User instruction: ${context.instruction}` : '',
     'Return only original, insertable Essence blocks. Do not invent citations, studies, URLs, books, or source names.',
     'If source verification is needed, include a short note telling the user what to verify rather than pretending it was checked.',
     `Note title: ${context.note.title}`,

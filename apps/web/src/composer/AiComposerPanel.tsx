@@ -15,6 +15,7 @@ type AiAssistAction =
   | 'study-questions'
   | 'counterarguments'
   | 'reading-list'
+  | 'custom'
 type AiAssistActionGroup = 'Write' | 'Review'
 
 interface AiDraftBlock {

@@ -27,6 +27,7 @@ type AiAssistAction =
   | 'study-questions'
   | 'counterarguments'
   | 'reading-list'
+  | 'custom'
 type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
 type AmbienceMode = 'still' | 'subtle' | 'cosmic'
@@ -968,6 +969,9 @@ function App() {
   const [readingProgress, setReadingProgress] = useState(0)
   const [readerExplorationAwake, setReaderExplorationAwake] = useState(false)
   const [readerExplorationPendingAction, setReaderExplorationPendingAction] = useState<ReaderExplorationAction | null>(null)
+  const [composerDockOpen, setComposerDockOpen] = useState(false)
+  const [composerDockPrompt, setComposerDockPrompt] = useState('')
+  const [composerDockError, setComposerDockError] = useState<string | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1032,6 +1036,7 @@ function App() {
   const composerLockedMessage =
     'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
   const composerRuntimeLabel = getComposerRuntimeLabel(apiReadiness)
+  const composerBusy = aiGenerating || aiAssisting
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1110,6 +1115,7 @@ function App() {
     [activeNote, selectedBlockId],
   )
   const selectedBlockText = selectedBlock ? getBlockTextValue(selectedBlock) : ''
+  const composerDockContext = getComposerDockContextLabel({ activeNote, selectedBlockText, view })
 
   const createHistorySnapshot = useCallback(
     (): HistorySnapshot => ({
@@ -2684,25 +2690,30 @@ function App() {
     startTransition(() => setView('editor'))
   }
 
-  const generateAiDraft = async () => {
-    const topic = aiDraftTopic.trim()
+  const generateAiDraft = async (
+    topicOverride = aiDraftTopic,
+    categoryOverride: AiDraftCategory = aiDraftCategory,
+  ) => {
+    const topic = topicOverride.trim()
 
     if (topic.length < 3) {
       setAiDraftError('Give Composer a topic with at least 3 characters.')
-      return
+      return false
     }
 
     if (!composerAvailable) {
       setAiDraftError(composerLockedMessage)
-      return
+      return false
     }
 
     setAiGenerating(true)
     setAiDraftError(null)
+    setAiDraftTopic(topic)
+    setAiDraftCategory(categoryOverride)
 
     try {
       const draft = await generateRemoteAiDraft({
-        category: aiDraftCategory,
+        category: categoryOverride,
         context: buildComposerRequestContext(composerHistory, { targetText: topic }),
         topic,
       })
@@ -2711,13 +2722,14 @@ function App() {
       setComposerHistory((currentHistory) =>
         addComposerHistoryEntry(
           createDraftComposerHistoryEntry(draft, {
-            category: aiDraftCategory,
+            category: categoryOverride,
             topic,
           }),
           currentHistory,
         ),
       )
       flashSaveFeedback('Draft generated')
+      return true
     } catch (error) {
       console.warn('Unable to generate AI draft.', error)
       setAiDraftError(
@@ -2725,6 +2737,7 @@ function App() {
           ? error.message
           : 'Composer could not create a draft. Check the server and AI provider configuration.',
       )
+      return false
     } finally {
       setAiGenerating(false)
     }
@@ -2775,36 +2788,44 @@ function App() {
     startTransition(() => setView('editor'))
   }
 
-  const generateAiAssist = async (actionOverride: AiAssistAction = aiAssistAction) => {
+  const generateAiAssist = async (actionOverride: AiAssistAction = aiAssistAction, instructionOverride = '') => {
     if (!activeNote) {
       setAiAssistError('Open a note before using active-note Composer.')
-      return
+      return false
     }
 
     const effectiveAction = actionOverride
+    const instruction = instructionOverride.trim()
     const selectedText = noteViewMode === 'edit' ? selectedBlockText : ''
     const noteText = getPlainTextFromBlocks(activeNote.blocks)
 
     if (noteText.length < 3 && selectedText.length < 3) {
       setAiAssistError('Write a little in this note first, then Composer can help.')
-      return
+      return false
+    }
+
+    if (effectiveAction === 'custom' && instruction.length < 3) {
+      setAiAssistError('Enter a Composer instruction with at least 3 characters.')
+      return false
     }
 
     if (!composerAvailable) {
       setAiAssistError(composerLockedMessage)
-      return
+      return false
     }
 
     setAiAssisting(true)
     setAiAssistError(null)
+    setAiAssistAction(effectiveAction)
 
     try {
       const result = await generateRemoteAiAssist({
         action: effectiveAction,
         context: buildComposerRequestContext(composerHistory, {
           activeNoteTitle: activeNote.title,
-          targetText: `${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
+          targetText: `${instruction} ${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
         }),
+        instruction,
         note: {
           selectedText,
           status: activeNote.status,
@@ -2820,12 +2841,14 @@ function App() {
           createAssistComposerHistoryEntry(result, {
             action: effectiveAction,
             noteTitle: activeNote.title,
+            prompt: instruction,
             selectedText,
           }),
           currentHistory,
         ),
       )
       flashSaveFeedback('Composer response ready')
+      return true
     } catch (error) {
       console.warn('Unable to generate active-note assistance.', error)
       setAiAssistError(
@@ -2833,6 +2856,7 @@ function App() {
           ? error.message
           : 'Composer could not assist this note. Check the server and AI provider configuration.',
       )
+      return false
     } finally {
       setAiAssisting(false)
     }
@@ -2880,6 +2904,98 @@ function App() {
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
     flashSaveFeedback('Replaced selected block')
+  }
+
+  const toggleComposerDock = () => {
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockOpen((isOpen) => !isOpen)
+    setComposerDockError(null)
+  }
+
+  const expandComposerFromDock = () => {
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setAiComposerMode(activeNote && view === 'editor' ? 'assist' : 'draft')
+    setAiComposerOpen(true)
+    setComposerDockOpen(false)
+    setComposerDockError(null)
+  }
+
+  const runComposerDockAction = async (action: AiAssistAction) => {
+    if (!activeNote) {
+      setComposerDockError('Open a note before using active-note Composer actions.')
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockError(null)
+    setAiComposerOpen(true)
+    setAiComposerMode('assist')
+    setAiAssistResult(null)
+    setAiAssistError(null)
+
+    const ok = await generateAiAssist(action)
+
+    if (ok) {
+      setComposerDockOpen(false)
+    }
+  }
+
+  const submitComposerDockPrompt = async () => {
+    const prompt = composerDockPrompt.trim()
+
+    if (prompt.length < 3) {
+      setComposerDockError('Give Composer at least 3 characters.')
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    const shouldAssistActiveNote = activeNote && view === 'editor' && !looksLikeNewDraftPrompt(prompt)
+    setComposerDockError(null)
+    setAiComposerOpen(true)
+
+    if (shouldAssistActiveNote) {
+      setAiComposerMode('assist')
+      setAiAssistResult(null)
+      setAiAssistError(null)
+
+      const ok = await generateAiAssist('custom', prompt)
+
+      if (ok) {
+        setComposerDockPrompt('')
+        setComposerDockOpen(false)
+      }
+
+      return
+    }
+
+    const category = inferDraftCategoryFromPrompt(prompt)
+
+    setAiComposerMode('draft')
+    setAiDraft(null)
+    setAiDraftError(null)
+
+    const ok = await generateAiDraft(prompt, category)
+
+    if (ok) {
+      setComposerDockPrompt('')
+      setComposerDockOpen(false)
+    }
   }
 
   const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
@@ -3882,6 +3998,27 @@ function App() {
         </Suspense>
       )}
 
+      {!zenMode && !settingsOpen && !aiComposerOpen && (
+        <ComposerDock
+          canUseComposer={composerAvailable}
+          contextLabel={composerDockContext}
+          error={composerDockError}
+          isBusy={composerBusy}
+          isOpen={composerDockOpen}
+          onAction={runComposerDockAction}
+          onExpand={expandComposerFromDock}
+          onPromptChange={(value) => {
+            setComposerDockPrompt(value)
+            setComposerDockError(null)
+          }}
+          onSubmit={submitComposerDockPrompt}
+          onToggle={toggleComposerDock}
+          prompt={composerDockPrompt}
+          runtimeLabel={composerRuntimeLabel}
+          showNoteActions={Boolean(activeNote && view === 'editor')}
+        />
+      )}
+
       <div className="workspace">
         {!zenMode && (
           <header
@@ -4500,6 +4637,139 @@ function AiComposerPanelFallback() {
         </div>
       </div>
     </aside>
+  )
+}
+
+function ComposerDock({
+  canUseComposer,
+  contextLabel,
+  error,
+  isBusy,
+  isOpen,
+  onAction,
+  onExpand,
+  onPromptChange,
+  onSubmit,
+  onToggle,
+  prompt,
+  runtimeLabel,
+  showNoteActions,
+}: {
+  canUseComposer: boolean
+  contextLabel: string
+  error: string | null
+  isBusy: boolean
+  isOpen: boolean
+  onAction: (action: AiAssistAction) => void
+  onExpand: () => void
+  onPromptChange: (value: string) => void
+  onSubmit: () => void
+  onToggle: () => void
+  prompt: string
+  runtimeLabel: string
+  showNoteActions: boolean
+}) {
+  const quickActions: Array<{ action: AiAssistAction; label: string }> = [
+    { action: 'continue-writing', label: 'Continue' },
+    { action: 'improve-clarity', label: 'Clarify' },
+    { action: 'create-outline', label: 'Outline' },
+    { action: 'study-questions', label: 'Questions' },
+  ]
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!isBusy) {
+      onSubmit()
+    }
+  }
+
+  const handlePromptKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+
+      if (!isBusy) {
+        onSubmit()
+      }
+    }
+
+    if (event.key === 'Escape' && isOpen) {
+      event.preventDefault()
+      onToggle()
+    }
+  }
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        className={`composer-dock composer-dock--collapsed ${canUseComposer ? '' : 'composer-dock--locked'}`}
+        onClick={onToggle}
+        aria-label={canUseComposer ? 'Open Composer dock' : 'Composer needs access'}
+        title={canUseComposer ? 'Open Composer' : 'Sign in with an approved invite or enable local Composer'}
+      >
+        <span className="composer-dock__orb" aria-hidden="true">
+          <Icon name={canUseComposer ? 'spark' : 'lock'} />
+        </span>
+        <span className="composer-dock__collapsedCopy">
+          <strong>Composer</strong>
+          <small>{canUseComposer ? contextLabel : 'Access needed'}</small>
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <section className="composer-dock composer-dock--open" aria-label="Composer dock">
+      <header className="composer-dock__header">
+        <div>
+          <span>{runtimeLabel}</span>
+          <strong>{contextLabel}</strong>
+        </div>
+        <div className="composer-dock__headerActions">
+          <button type="button" className="icon-button" onClick={onExpand} aria-label="Expand Composer" title="Expand Composer">
+            <Icon name="panelLeftOpen" />
+          </button>
+          <button type="button" className="icon-button" onClick={onToggle} aria-label="Close Composer dock" title="Close">
+            <Icon name="close" />
+          </button>
+        </div>
+      </header>
+
+      {showNoteActions && (
+        <div className="composer-dock__chips" aria-label="Quick Composer actions">
+          {quickActions.map((action) => (
+            <button
+              key={action.action}
+              type="button"
+              onClick={() => onAction(action.action)}
+              disabled={isBusy}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form className="composer-dock__form" onSubmit={handleSubmit}>
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={handlePromptKeyDown}
+          placeholder={showNoteActions ? 'Ask about this note...' : 'Draft a note about...'}
+          rows={3}
+          disabled={isBusy}
+        />
+        {error && <p className="composer-dock__error">{error}</p>}
+        <div className="composer-dock__footer">
+          <span>{isBusy ? 'Composer is thinking...' : 'Cmd/Ctrl Enter'}</span>
+          <button type="submit" className="primary-button" disabled={isBusy || prompt.trim().length < 3}>
+            <Icon name="spark" />
+            <span>{isBusy ? 'Working' : 'Send'}</span>
+          </button>
+        </div>
+      </form>
+    </section>
   )
 }
 
@@ -7789,6 +8059,46 @@ function humanizeStatusLabel(value: string) {
   return label ? label.replace(/\b\w/g, (character) => character.toUpperCase()) : 'Unknown'
 }
 
+function getComposerDockContextLabel({
+  activeNote,
+  selectedBlockText,
+  view,
+}: {
+  activeNote: Note | null
+  selectedBlockText: string
+  view: ViewMode
+}) {
+  if (activeNote && view === 'editor') {
+    return selectedBlockText.trim() ? 'Selected block' : activeNote.title || 'Current note'
+  }
+
+  return 'New draft'
+}
+
+function looksLikeNewDraftPrompt(prompt: string) {
+  return /\b(new note|draft|write (an?|the)?\s*(essay|article|note|quote)|create (an?|the)?\s*(essay|article|note|brief)|research brief|quote about)\b/i.test(
+    prompt,
+  )
+}
+
+function inferDraftCategoryFromPrompt(prompt: string): AiDraftCategory {
+  const normalizedPrompt = prompt.toLowerCase()
+
+  if (/\bquote|aphorism\b/.test(normalizedPrompt)) {
+    return 'quote'
+  }
+
+  if (/\bresearch|hypothesis|method|brief\b/.test(normalizedPrompt)) {
+    return 'research-topic'
+  }
+
+  if (/\barticle|explainer|guide\b/.test(normalizedPrompt)) {
+    return 'article'
+  }
+
+  return 'essay'
+}
+
 function QuickSwitcher({
   activeIndex,
   isOpen,
@@ -8710,6 +9020,7 @@ async function generateRemoteAiDraft(request: {
 async function generateRemoteAiAssist(request: {
   action: AiAssistAction
   context: ComposerRequestContext
+  instruction?: string
   note: {
     selectedText: string
     status: string
@@ -8771,7 +9082,7 @@ function normalizeRemoteAiAssistResult(rawResult: unknown, fallbackAction: AiAss
   const actionLabel =
     typeof candidate.actionLabel === 'string' && candidate.actionLabel.trim()
       ? candidate.actionLabel.trim()
-      : aiAssistActions.find((option) => option.value === action)?.label ?? 'Composer'
+      : getAiAssistActionLabel(action)
   const blocks = Array.isArray(candidate.blocks)
     ? candidate.blocks.map(normalizeRemoteAiDraftBlock).filter((block): block is AiDraftBlock => block !== null)
     : []
@@ -8809,6 +9120,14 @@ function normalizeRemoteAiDraft(rawDraft: unknown): AiDraft {
       : ['ai-draft'],
     title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Untitled AI Draft',
   }
+}
+
+function getAiAssistActionLabel(action: AiAssistAction) {
+  if (action === 'custom') {
+    return 'Custom request'
+  }
+
+  return aiAssistActions.find((option) => option.value === action)?.label ?? 'Composer'
 }
 
 function normalizeRemoteAiDraftBlock(rawBlock: unknown): AiDraftBlock | null {
@@ -8906,13 +9225,15 @@ function createDraftComposerHistoryEntry(
 
 function createAssistComposerHistoryEntry(
   result: AiAssistResult,
-  context: { action: AiAssistAction; noteTitle: string; selectedText: string },
+  context: { action: AiAssistAction; noteTitle: string; prompt?: string; selectedText: string },
 ): ComposerHistoryEntry {
+  const prompt = context.prompt?.trim() || context.selectedText || context.noteTitle
+
   return {
     id: generateId('composer'),
     mode: 'assist',
     createdAt: new Date().toISOString(),
-    prompt: context.selectedText || context.noteTitle,
+    prompt,
     sourceTitle: context.noteTitle,
     title: result.title,
     summary: result.summary,
@@ -11692,7 +12013,8 @@ function isAiAssistAction(value: unknown): value is AiAssistAction {
     value === 'create-outline' ||
     value === 'study-questions' ||
     value === 'counterarguments' ||
-    value === 'reading-list'
+    value === 'reading-list' ||
+    value === 'custom'
   )
 }
 
