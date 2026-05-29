@@ -7500,8 +7500,8 @@ function SettingsDialog({
                 onChange={(event) => onNavigationSidebarChange(event.target.checked)}
               />
               <span>
-                <strong>Navigation sidebar</strong>
-                <small>Keep the left rail visible for library, collections, favorites, and settings.</small>
+                <strong>Primary navigation</strong>
+                <small>Keep the main navigation controls visible across the workspace.</small>
               </span>
             </label>
           </section>
