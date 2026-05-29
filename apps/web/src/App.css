@@ -10175,7 +10175,7 @@ textarea:focus-visible {
   .rail {
     order: 2;
     position: relative;
-    z-index: 70;
+    z-index: 32;
     right: auto;
     bottom: auto;
     left: auto;
@@ -10797,6 +10797,43 @@ textarea:focus-visible {
 
   .ai-composer__actionGrid {
     grid-template-columns: 1fr;
+  }
+
+  .app-dialog {
+    place-items: end center;
+    padding: 14px;
+  }
+
+  .app-dialog__panel {
+    width: 100%;
+    max-height: calc(100svh - 28px);
+    overflow: auto;
+    gap: 16px;
+    border-radius: 18px;
+    padding: 18px;
+  }
+
+  .app-dialog__header {
+    gap: 12px;
+  }
+
+  .app-dialog__header h2 {
+    font-size: 1.5rem;
+  }
+
+  .app-dialog__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-dialog__actions .ghost-button,
+  .app-dialog__actions .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .app-dialog__actions .primary-button:only-child {
+    grid-column: 1 / -1;
   }
 
   .quick-switcher {
