@@ -2916,6 +2916,11 @@ function App() {
     setComposerDockError(null)
   }
 
+  const closeComposerDock = () => {
+    setComposerDockOpen(false)
+    setComposerDockError(null)
+  }
+
   const expandComposerFromDock = () => {
     if (!composerAvailable) {
       showComposerLockedDialog()
@@ -3999,24 +4004,35 @@ function App() {
       )}
 
       {!zenMode && !settingsOpen && !aiComposerOpen && (
-        <ComposerDock
-          canUseComposer={composerAvailable}
-          contextLabel={composerDockContext}
-          error={composerDockError}
-          isBusy={composerBusy}
-          isOpen={composerDockOpen}
-          onAction={runComposerDockAction}
-          onExpand={expandComposerFromDock}
-          onPromptChange={(value) => {
-            setComposerDockPrompt(value)
-            setComposerDockError(null)
-          }}
-          onSubmit={submitComposerDockPrompt}
-          onToggle={toggleComposerDock}
-          prompt={composerDockPrompt}
-          runtimeLabel={composerRuntimeLabel}
-          showNoteActions={Boolean(activeNote && view === 'editor')}
-        />
+        <>
+          {composerDockOpen && (
+            <button
+              type="button"
+              className="composer-dock-scrim"
+              onClick={closeComposerDock}
+              aria-label="Close Composer dock"
+              tabIndex={-1}
+            />
+          )}
+          <ComposerDock
+            canUseComposer={composerAvailable}
+            contextLabel={composerDockContext}
+            error={composerDockError}
+            isBusy={composerBusy}
+            isOpen={composerDockOpen}
+            onAction={runComposerDockAction}
+            onExpand={expandComposerFromDock}
+            onPromptChange={(value) => {
+              setComposerDockPrompt(value)
+              setComposerDockError(null)
+            }}
+            onSubmit={submitComposerDockPrompt}
+            onToggle={toggleComposerDock}
+            prompt={composerDockPrompt}
+            runtimeLabel={composerRuntimeLabel}
+            showNoteActions={Boolean(activeNote && view === 'editor')}
+          />
+        </>
       )}
 
       <div className="workspace">
