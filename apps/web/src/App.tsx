@@ -4205,16 +4205,6 @@ function App() {
                         <Icon name="upload" />
                         <span>Import</span>
                       </button>
-                      <button
-                        type="button"
-                        className="topbar-toolButton topbar-toolButton--composer"
-                        onClick={toggleComposerPanel}
-                        aria-label="Open Composer"
-                        title={composerAvailable ? 'Open Composer' : 'Sign in with an approved invite or enable local Composer'}
-                      >
-                        <Icon name={composerAvailable ? 'spark' : 'lock'} />
-                        <span>Composer</span>
-                      </button>
                     </div>
                   </div>
                 )}
@@ -4710,10 +4700,6 @@ function ComposerDock({
       >
         <span className="composer-dock__orb" aria-hidden="true">
           <Icon name={canUseComposer ? 'spark' : 'lock'} />
-        </span>
-        <span className="composer-dock__collapsedCopy">
-          <strong>Composer</strong>
-          <small>{canUseComposer ? contextLabel : 'Access needed'}</small>
         </span>
       </button>
     )

@@ -1848,15 +1848,15 @@
 
 .composer-dock {
   position: fixed;
-  left: 112px;
+  right: 24px;
   bottom: 24px;
   z-index: 34;
   color: var(--ink);
 }
 
 .composer-dock--collapsed {
-  width: min(310px, calc(100vw - 136px));
-  min-height: 58px;
+  width: 58px;
+  height: 58px;
   border: 1px solid var(--line-strong);
   border-radius: 18px;
   background:
@@ -1867,11 +1867,8 @@
     inset 0 1px 0 rgba(255, 248, 232, 0.08);
   backdrop-filter: blur(18px);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  text-align: left;
+  place-items: center;
+  padding: 0;
 }
 
 .composer-dock--collapsed:hover {
@@ -1897,27 +1894,6 @@
 .composer-dock__orb svg {
   width: 18px;
   height: 18px;
-}
-
-.composer-dock__collapsedCopy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.composer-dock__collapsedCopy strong {
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 650;
-}
-
-.composer-dock__collapsedCopy small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-size: 0.76rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .composer-dock--open {
@@ -10613,13 +10589,13 @@ textarea:focus-visible {
   }
 
   .composer-dock {
-    left: 14px;
     right: 14px;
     bottom: calc(86px + env(safe-area-inset-bottom));
   }
 
-  .composer-dock--collapsed,
   .composer-dock--open {
+    left: 14px;
+    right: 14px;
     width: auto;
   }
 
