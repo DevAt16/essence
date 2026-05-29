@@ -87,6 +87,7 @@ These values are public because Vite embeds `VITE_*` variables into browser Java
 | `VITE_API_CREDENTIALS` | Web | No | Fetch credentials mode. Use `same-origin` locally/single-service; use `omit` for split Supabase bearer-token deployments. |
 | `VITE_AUTH_DEV_EMAIL_LOGIN` | Web | No | Enables the old browser-side development login helper only when the API helper is also enabled. Keep `false` in production. |
 | `VITE_WAITLIST_URL` | Web | No | Optional waitlist URL shown on the sign-in page. |
+| `VITE_AI_ALLOW_LOCAL_USER` | Web | No | Unlocks Composer controls for the local browser workspace. Set this only when the API also has `AI_ALLOW_LOCAL_USER=true`. |
 
 ## Desktop Preview
 
@@ -103,10 +104,25 @@ The internal desktop app is a Tauri shell around the same Vite/React UI.
 | Field | Scope | Secret | Role |
 | --- | --- | --- | --- |
 | `AI_ENABLED` | API | No | Set `false` to disable Composer API calls without disabling manual notes or account login. Useful as a cost-control kill switch. |
+| `AI_PROVIDER` | API | No | Composer provider. Use `gemini` for Google Gemini or `ollama` for a local Ollama server. Defaults to `gemini`. |
+| `AI_ALLOW_LOCAL_USER` | API | No | Allows the local fallback user to call Composer without account sign-in. Use only for private local deployments. |
 | `AI_RATE_LIMIT_MAX` | API | No | Maximum AI requests per IP/user per rate-limit window. |
 | `AI_RATE_LIMIT_WINDOW_MS` | API | No | AI rate-limit window in milliseconds. |
-| `GEMINI_API_KEY` | API | Yes | Gemini API key used by server-side Composer requests. Never expose to the browser. Required in production when `AI_ENABLED` is not `false`. |
+| `GEMINI_API_KEY` | API | Yes | Gemini API key used by server-side Composer requests. Never expose to the browser. Required in production when `AI_PROVIDER=gemini` and `AI_ENABLED` is not `false`. |
 | `GEMINI_MODEL` | API | No | Gemini model name used by Composer. |
+| `OLLAMA_BASE_URL` | API | No | Local Ollama server URL used when `AI_PROVIDER=ollama`. Defaults to `http://127.0.0.1:11434`. |
+| `OLLAMA_MODEL` | API | No | Ollama model name used by Composer, such as `llama3.1`. |
+
+For private local Composer with Ollama, keep Ollama bound to localhost and set both API and web flags:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=ollama
+AI_ALLOW_LOCAL_USER=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1
+VITE_AI_ALLOW_LOCAL_USER=true
+```
 
 ## Recommended Local Values
 
@@ -119,6 +135,9 @@ VITE_AUTH_DEV_EMAIL_LOGIN=false
 VITE_API_BASE_URL=
 VITE_API_CREDENTIALS=same-origin
 AI_ENABLED=true
+AI_PROVIDER=gemini
+AI_ALLOW_LOCAL_USER=false
+VITE_AI_ALLOW_LOCAL_USER=false
 ```
 
 ## Recommended Single-Service Production Values
@@ -134,4 +153,7 @@ VITE_API_CREDENTIALS=same-origin
 SECURITY_CSP=true
 SECURITY_HSTS=true
 AI_ENABLED=true
+AI_PROVIDER=gemini
+AI_ALLOW_LOCAL_USER=false
+VITE_AI_ALLOW_LOCAL_USER=false
 ```

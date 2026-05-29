@@ -338,6 +338,7 @@ const apiBaseUrl = normalizeApiBaseUrl(getViteEnvString('VITE_API_BASE_URL'))
 const apiFetchCredentials = getApiFetchCredentials()
 const supabaseClient = createSupabaseBrowserClient()
 const devEmailLoginEnabled = getViteEnvString('VITE_AUTH_DEV_EMAIL_LOGIN') === 'true'
+const localComposerAvailable = getViteEnvString('VITE_AI_ALLOW_LOCAL_USER') === 'true'
 const waitlistUrl = getViteEnvString('VITE_WAITLIST_URL')
 
 const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
@@ -1009,8 +1010,9 @@ function App() {
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
+  const composerAvailable = remoteAccountActive || localComposerAvailable
   const composerLockedMessage =
-    'Composer unlocks after approved sign-in. You can keep writing locally; sync and AI stay off until then.'
+    'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1140,11 +1142,11 @@ function App() {
   }, [zenMode])
 
   useEffect(() => {
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       setAiComposerOpen(false)
       setReaderExplorationPendingAction(null)
     }
-  }, [remoteAccountActive])
+  }, [composerAvailable])
 
   useEffect(() => {
     setReadingProgress(0)
@@ -1828,14 +1830,14 @@ function App() {
   const showComposerLockedDialog = () => {
     setDialogState({
       type: 'alert',
-      title: 'Composer needs invite access',
+      title: 'Composer needs access',
       message: composerLockedMessage,
       confirmLabel: 'Got it',
     })
   }
 
   const toggleComposerPanel = () => {
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
@@ -2643,7 +2645,7 @@ function App() {
       return
     }
 
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       setAiDraftError(composerLockedMessage)
       return
     }
@@ -2674,7 +2676,7 @@ function App() {
       setAiDraftError(
         error instanceof Error && error.message
           ? error.message
-          : 'Composer could not create a draft. Check the server and Gemini key.',
+          : 'Composer could not create a draft. Check the server and AI provider configuration.',
       )
     } finally {
       setAiGenerating(false)
@@ -2741,7 +2743,7 @@ function App() {
       return
     }
 
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       setAiAssistError(composerLockedMessage)
       return
     }
@@ -2782,7 +2784,7 @@ function App() {
       setAiAssistError(
         error instanceof Error && error.message
           ? error.message
-          : 'Composer could not assist this note. Check the server and Gemini key.',
+          : 'Composer could not assist this note. Check the server and AI provider configuration.',
       )
     } finally {
       setAiAssisting(false)
@@ -2834,7 +2836,7 @@ function App() {
   }
 
   const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
@@ -3074,7 +3076,7 @@ function App() {
       return
     }
 
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
@@ -4021,9 +4023,9 @@ function App() {
                         className="topbar-toolButton topbar-toolButton--composer"
                         onClick={toggleComposerPanel}
                         aria-label="Open Composer"
-                        title={remoteAccountActive ? 'Open Composer' : 'Sign in with an approved invite to use Composer'}
+                        title={composerAvailable ? 'Open Composer' : 'Sign in with an approved invite or enable local Composer'}
                       >
-                        <Icon name={remoteAccountActive ? 'spark' : 'lock'} />
+                        <Icon name={composerAvailable ? 'spark' : 'lock'} />
                         <span>Composer</span>
                       </button>
                     </div>
@@ -4237,7 +4239,7 @@ function App() {
                           onOpenTag={openTag}
                           onOpenNote={openNote}
                           onExplore={exploreReaderDepth}
-                          composerAvailable={remoteAccountActive}
+                          composerAvailable={composerAvailable}
                           explorationAwake={readerExplorationAwake || readingProgress > 0.96}
                           pendingExplorationAction={readerExplorationPendingAction}
                           isFocusMode={zenMode}
@@ -6592,7 +6594,7 @@ function ReaderExplorationPanel({
         <h2>{isLocked ? 'Composer is invite-only.' : 'Continue deeper?'}</h2>
         <p>
           {isLocked
-            ? 'Local mode keeps reading and writing private to this browser. AI actions are reserved for approved accounts.'
+            ? 'Local mode keeps reading and writing private to this browser. AI actions need approved access or a private local Composer setup.'
             : 'Ask Essence Composer to extend the argument, test it, or turn the ending into a research path.'}
         </p>
       </div>
@@ -6600,7 +6602,7 @@ function ReaderExplorationPanel({
       {isLocked ? (
         <div className="reader-depth__lockedNote">
           <Icon name="lock" />
-          <span>Sign in with an approved invite to unlock Composer prompts for this note.</span>
+          <span>Sign in with an approved invite or enable local Composer to unlock prompts for this note.</span>
         </div>
       ) : (
         <div className="reader-depth__actions">

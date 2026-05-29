@@ -226,35 +226,64 @@ test('revoked approved users cannot request sign-in links', async () => {
 })
 
 test('workspace endpoints reject unauthenticated requests', async () => {
-  const protectedRequests = [
-    ['GET', '/api/state'],
-    ['GET', '/api/search?q=test'],
-    ['GET', '/api/notes/note-test/revisions'],
-    ['PUT', '/api/profile', { displayName: 'Test User' }],
-    ['POST', '/api/ai/draft', { category: 'essay', topic: 'consciousness' }],
-    ['POST', '/api/ai/assist', {
-      action: 'continue-writing',
-      note: {
-        selectedText: '',
-        status: 'Draft',
-        tags: [],
-        text: 'A short note body',
-        title: 'Test note',
-      },
-    }],
-    ['PUT', '/api/state', {
-      state: {
-        activeNoteId: null,
-        composerHistory: [],
-        folders: [],
-        notes: [],
-      },
-    }],
-  ]
+  const previousLocalAiUser = process.env.AI_ALLOW_LOCAL_USER
 
-  for (const [method, path, body] of protectedRequests) {
-    const response = await apiRequest(path, body, { method })
-    assert.equal(response.status, 401, `${method} ${path}`)
+  process.env.AI_ALLOW_LOCAL_USER = 'false'
+
+  try {
+    const protectedRequests = [
+      ['GET', '/api/state'],
+      ['GET', '/api/search?q=test'],
+      ['GET', '/api/notes/note-test/revisions'],
+      ['PUT', '/api/profile', { displayName: 'Test User' }],
+      ['POST', '/api/ai/draft', { category: 'essay', topic: 'consciousness' }],
+      ['POST', '/api/ai/assist', {
+        action: 'continue-writing',
+        note: {
+          selectedText: '',
+          status: 'Draft',
+          tags: [],
+          text: 'A short note body',
+          title: 'Test note',
+        },
+      }],
+      ['PUT', '/api/state', {
+        state: {
+          activeNoteId: null,
+          composerHistory: [],
+          folders: [],
+          notes: [],
+        },
+      }],
+    ]
+
+    for (const [method, path, body] of protectedRequests) {
+      const response = await apiRequest(path, body, { method })
+      assert.equal(response.status, 401, `${method} ${path}`)
+    }
+  } finally {
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousLocalAiUser)
+  }
+})
+
+test('local Composer opt-in allows unauthenticated local AI requests', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousLocalAiUser = process.env.AI_ALLOW_LOCAL_USER
+
+  process.env.AI_ENABLED = 'false'
+  process.env.AI_ALLOW_LOCAL_USER = 'true'
+
+  try {
+    const response = await apiRequest('/api/ai/draft', {
+      category: 'essay',
+      topic: 'consciousness',
+    })
+
+    assert.equal(response.status, 503)
+    assert.match(response.body.error, /disabled/i)
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousLocalAiUser)
   }
 })
 

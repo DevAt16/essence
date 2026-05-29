@@ -54,6 +54,29 @@ Frontend-only development still works with:
 npm run dev
 ```
 
+## Local Ollama Composer
+
+For a private personal setup, Composer can use a local Ollama model through the API without requiring an approved remote account. Keep Ollama on localhost, pull the model you want, and enable the local Composer flags in `.env`:
+
+```bash
+ollama pull llama3.1
+```
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=ollama
+AI_ALLOW_LOCAL_USER=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+Then run:
+
+```bash
+npm run dev:full
+```
+
 Build the web app:
 
 ```bash
@@ -108,8 +131,9 @@ Current backend model:
 - normalized tables for `workspace_state`, `folders`, `notes`, `note_blocks`, `note_tags`, and `note_links`
 - `note_revisions` as the foundation for note history/version restore
 - legacy `app_state` kept in sync as a compatibility backup snapshot
-- signed-in account sessions are required for sync, search, note history, and AI endpoints
-- local-only mode stays in browser `localStorage` and does not receive remote API capabilities
+- signed-in account sessions are required for sync, search, and note history
+- AI endpoints require signed-in account sessions unless private local Composer is explicitly enabled
+- local-only mode stays in browser `localStorage` and does not receive remote sync/search/history capabilities
 
 ## Authentication
 

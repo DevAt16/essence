@@ -38,6 +38,52 @@ const supabaseAuthConfig = createSupabaseAuthConfig()
 const supabaseJwks = supabaseAuthConfig
   ? createRemoteJWKSet(new URL(`${supabaseAuthConfig.issuer}/.well-known/jwks.json`))
   : null
+
+class DisabledRealtimeWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+
+  CONNECTING = DisabledRealtimeWebSocket.CONNECTING
+  OPEN = DisabledRealtimeWebSocket.OPEN
+  CLOSING = DisabledRealtimeWebSocket.CLOSING
+  CLOSED = DisabledRealtimeWebSocket.CLOSED
+  binaryType = 'blob'
+  bufferedAmount = 0
+  extensions = ''
+  onclose = null
+  onerror = null
+  onmessage = null
+  onopen = null
+  protocol = ''
+  readyState = DisabledRealtimeWebSocket.CLOSED
+
+  constructor(url) {
+    this.url = url
+  }
+
+  addEventListener() {
+    return undefined
+  }
+
+  close() {
+    this.readyState = DisabledRealtimeWebSocket.CLOSED
+  }
+
+  dispatchEvent() {
+    return false
+  }
+
+  removeEventListener() {
+    return undefined
+  }
+
+  send() {
+    throw new Error('Realtime is disabled for the Essence API Supabase auth client.')
+  }
+}
+
 let supabaseOtpClient = createSupabaseOtpClient()
 
 app.disable('x-powered-by')
@@ -408,7 +454,7 @@ app.get('/api/search', async (request, response, next) => {
 
 app.post('/api/ai/draft', async (request, response, next) => {
   try {
-    const user = await requireAccountUser(request)
+    const user = await requireComposerUser(request)
     enforceAiEnabled()
     enforceRateLimit(request, 'ai-draft-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-draft-user', getAiRateLimitOptions(), user.id)
@@ -420,7 +466,7 @@ app.post('/api/ai/draft', async (request, response, next) => {
       return
     }
 
-    const rawDraft = await generateGeminiJson(
+    const rawDraft = await generateAiJson(
       buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext),
       geminiDraftResponseSchema,
       { temperature: 0.72 },
@@ -435,7 +481,7 @@ app.post('/api/ai/draft', async (request, response, next) => {
 
 app.post('/api/ai/assist', async (request, response, next) => {
   try {
-    const user = await requireAccountUser(request)
+    const user = await requireComposerUser(request)
     enforceAiEnabled()
     enforceRateLimit(request, 'ai-assist-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-assist-user', getAiRateLimitOptions(), user.id)
@@ -447,7 +493,7 @@ app.post('/api/ai/assist', async (request, response, next) => {
       return
     }
 
-    const rawResult = await generateGeminiJson(
+    const rawResult = await generateAiJson(
       buildGeminiAssistPrompt(requestContext),
       geminiAssistResponseSchema,
       { temperature: requestContext.meta.temperature },
@@ -678,8 +724,14 @@ function validateRuntimeConfig() {
     errors.push(`SERVE_WEB=true requires a built web app at ${webIndexPath}.`)
   }
 
-  if (isAiEnabled() && !process.env.GEMINI_API_KEY?.trim()) {
-    errors.push('GEMINI_API_KEY is required when AI_ENABLED is not false.')
+  if (isAiEnabled()) {
+    const aiProvider = readAiProvider()
+
+    if (!isSupportedAiProvider(aiProvider)) {
+      errors.push('AI_PROVIDER must be "gemini" or "ollama".')
+    } else if (aiProvider === 'gemini' && !process.env.GEMINI_API_KEY?.trim()) {
+      errors.push('GEMINI_API_KEY is required when AI_PROVIDER=gemini and AI_ENABLED is not false.')
+    }
   }
 
   if (errors.length > 0) {
@@ -689,7 +741,8 @@ function validateRuntimeConfig() {
 
 function getReadinessChecks(databaseStatus) {
   return {
-    aiComposer: isAiEnabled() ? (process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing') : 'disabled',
+    aiComposer: getAiReadinessStatus(),
+    aiProvider: isAiEnabled() ? readAiProvider() : 'disabled',
     database: databaseStatus,
     staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
     supabaseJwt: supabaseAuthConfig ? 'ok' : 'missing',
@@ -1335,6 +1388,16 @@ function formatComposerContextForPrompt(composerContext) {
   ].join('\n\n')
 }
 
+async function generateAiJson(prompt, schema, options = {}) {
+  const provider = getAiProvider()
+
+  if (provider === 'ollama') {
+    return generateOllamaJson(prompt, schema, options)
+  }
+
+  return generateGeminiJson(prompt, schema, options)
+}
+
 async function generateGeminiJson(prompt, schema, options = {}) {
   const apiKey = process.env.GEMINI_API_KEY?.trim()
 
@@ -1345,34 +1408,43 @@ async function generateGeminiJson(prompt, schema, options = {}) {
   }
 
   const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
-  const geminiResponse = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: schema,
-          temperature: options.temperature ?? 0.64,
-          topP: options.topP ?? 0.9,
+  let geminiResponse
+
+  try {
+    geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
-      }),
-    },
-  )
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseJsonSchema: schema,
+            temperature: options.temperature ?? 0.64,
+            topP: options.topP ?? 0.9,
+          },
+        }),
+      },
+    )
+  } catch (cause) {
+    const error = new Error('Gemini could not be reached. Check the server network and Gemini configuration.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
 
   const geminiPayload = await geminiResponse.json().catch(() => null)
 
@@ -1398,6 +1470,68 @@ async function generateGeminiJson(prompt, schema, options = {}) {
     return parseJsonText(responseText)
   } catch {
     const error = new Error('Gemini returned content the app could not parse. Try again.')
+    error.status = 502
+    throw error
+  }
+}
+
+async function generateOllamaJson(prompt, schema, options = {}) {
+  const model = getOllamaModel()
+  const baseUrl = getOllamaBaseUrl()
+  let ollamaResponse
+
+  try {
+    ollamaResponse = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        format: 'json',
+        model,
+        options: {
+          temperature: options.temperature ?? 0.64,
+          top_p: options.topP ?? 0.9,
+        },
+        prompt: [
+          prompt,
+          'Return valid JSON only. Do not wrap the response in Markdown fences.',
+          `The JSON must match this schema:\n${JSON.stringify(schema)}`,
+        ].join('\n\n'),
+        stream: false,
+      }),
+    })
+  } catch (cause) {
+    const error = new Error('Ollama could not be reached. Start Ollama and check OLLAMA_BASE_URL.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const ollamaPayload = await ollamaResponse.json().catch(() => null)
+
+  if (!ollamaResponse.ok) {
+    const upstreamMessage =
+      typeof ollamaPayload?.error === 'string'
+        ? ollamaPayload.error
+        : `Ollama request failed with status ${ollamaResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = ollamaResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = typeof ollamaPayload?.response === 'string' ? ollamaPayload.response.trim() : ''
+
+  if (!responseText) {
+    const error = new Error('Ollama returned an empty Composer response.')
+    error.status = 502
+    throw error
+  }
+
+  try {
+    return parseJsonText(responseText)
+  } catch {
+    const error = new Error('Ollama returned content the app could not parse. Try again.')
     error.status = 502
     throw error
   }
@@ -1594,6 +1728,29 @@ async function requireAccountUser(request) {
   }
 
   const error = new Error('Sign in required for workspace sync.')
+  error.status = 401
+  throw error
+}
+
+async function requireComposerUser(request) {
+  const sessionUser = await getAccountUserFromRequest(request)
+
+  if (sessionUser) {
+    return sessionUser
+  }
+
+  if (isLocalAiUserAllowed()) {
+    return (
+      (await getLocalUser()) ?? {
+        id: localUserId,
+        email: 'local@essence.local',
+        displayName: 'Local Workspace',
+        isLocal: true,
+      }
+    )
+  }
+
+  const error = new Error('Sign in required for Composer. Set AI_ALLOW_LOCAL_USER=true for private local Composer use.')
   error.status = 401
   throw error
 }
@@ -1832,6 +1989,9 @@ function createSupabaseOtpClient() {
       autoRefreshToken: false,
       persistSession: false,
     },
+    realtime: {
+      transport: DisabledRealtimeWebSocket,
+    },
   })
 }
 
@@ -1928,6 +2088,64 @@ function isDevEmailLoginEnabled() {
 
 function isAiEnabled() {
   return process.env.AI_ENABLED !== 'false'
+}
+
+function isLocalAiUserAllowed() {
+  return process.env.AI_ALLOW_LOCAL_USER === 'true'
+}
+
+function readAiProvider() {
+  return process.env.AI_PROVIDER?.trim().toLowerCase() || 'gemini'
+}
+
+function isSupportedAiProvider(provider) {
+  return provider === 'gemini' || provider === 'ollama'
+}
+
+function getAiProvider() {
+  const provider = readAiProvider()
+
+  if (isSupportedAiProvider(provider)) {
+    return provider
+  }
+
+  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini" or "ollama".`)
+  error.status = 503
+  throw error
+}
+
+function getOllamaBaseUrl() {
+  const value = process.env.OLLAMA_BASE_URL?.trim() || 'http://127.0.0.1:11434'
+
+  try {
+    return new URL(value).toString().replace(/\/+$/g, '')
+  } catch {
+    const error = new Error('Invalid OLLAMA_BASE_URL.')
+    error.status = 503
+    throw error
+  }
+}
+
+function getOllamaModel() {
+  return process.env.OLLAMA_MODEL?.trim() || 'llama3.1'
+}
+
+function getAiReadinessStatus() {
+  if (!isAiEnabled()) {
+    return 'disabled'
+  }
+
+  const provider = readAiProvider()
+
+  if (!isSupportedAiProvider(provider)) {
+    return 'invalid'
+  }
+
+  if (provider === 'gemini') {
+    return process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing'
+  }
+
+  return getOllamaModel() ? 'ok' : 'missing'
 }
 
 function enforceAiEnabled() {
