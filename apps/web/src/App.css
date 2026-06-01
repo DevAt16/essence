@@ -4589,6 +4589,12 @@
   color: var(--ink);
 }
 
+.note-actionMenu__item--danger:hover,
+.note-actionMenu__item--danger:focus-visible {
+  background: rgba(163, 65, 58, 0.08);
+  color: #f0b6b0;
+}
+
 .note-actionMenu__item svg {
   width: 14px;
   height: 14px;

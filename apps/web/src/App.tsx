@@ -4361,6 +4361,7 @@ function App() {
               onOpenFolder={openFolder}
               onOpenImport={openImportDialog}
               onOpenNote={openNote}
+              onDeleteNote={deleteNote}
               onToggleArchived={toggleNoteArchived}
               onToggleFavorite={toggleNoteFavorite}
               onTogglePinned={toggleNotePinned}
@@ -4920,6 +4921,7 @@ function LibraryScreen({
   onOpenFolder,
   onOpenImport,
   onOpenNote,
+  onDeleteNote,
   onToggleArchived,
   onToggleFavorite,
   onTogglePinned,
@@ -4941,6 +4943,7 @@ function LibraryScreen({
   onOpenFolder: (folderId: string) => void
   onOpenImport: () => void
   onOpenNote: (noteId: string) => void
+  onDeleteNote: (noteId: string) => void
   onToggleArchived: (noteId: string) => void
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
@@ -5153,6 +5156,7 @@ function LibraryScreen({
                       onOpenNote={onOpenNote}
                       actionsOpen={openActionNoteId === note.id}
                       onCloseActions={() => setOpenActionNoteId(null)}
+                      onDeleteNote={onDeleteNote}
                       onToggleActions={() =>
                         setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
                       }
@@ -5177,6 +5181,7 @@ function LibraryScreen({
                       onOpenNote={onOpenNote}
                       actionsOpen={openActionNoteId === note.id}
                       onCloseActions={() => setOpenActionNoteId(null)}
+                      onDeleteNote={onDeleteNote}
                       onToggleActions={() =>
                         setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
                       }
@@ -5201,6 +5206,7 @@ function LibraryScreen({
               onOpenNote={onOpenNote}
               actionsOpen={openActionNoteId === note.id}
               onCloseActions={() => setOpenActionNoteId(null)}
+              onDeleteNote={onDeleteNote}
               onToggleActions={() =>
                 setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
               }
@@ -5221,6 +5227,7 @@ function LibraryScreen({
               onOpenNote={onOpenNote}
               actionsOpen={openActionNoteId === note.id}
               onCloseActions={() => setOpenActionNoteId(null)}
+              onDeleteNote={onDeleteNote}
               onToggleActions={() =>
                 setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
               }
@@ -5293,6 +5300,7 @@ function NoteCard({
   collectionNameById,
   note,
   foldersById,
+  onDeleteNote,
   onCloseActions,
   onOpenNote,
   onToggleActions,
@@ -5304,6 +5312,7 @@ function NoteCard({
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onDeleteNote: (noteId: string) => void
   onCloseActions: () => void
   onOpenNote: (noteId: string) => void
   onToggleActions: () => void
@@ -5370,6 +5379,7 @@ function NoteCard({
         isOpen={actionsOpen}
         note={note}
         onClose={onCloseActions}
+        onDeleteNote={onDeleteNote}
         onToggleOpen={onToggleActions}
         onToggleArchived={onToggleArchived}
         onToggleFavorite={onToggleFavorite}
@@ -5384,6 +5394,7 @@ function NoteListItem({
   collectionNameById,
   note,
   foldersById,
+  onDeleteNote,
   onCloseActions,
   onOpenNote,
   onToggleActions,
@@ -5395,6 +5406,7 @@ function NoteListItem({
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onDeleteNote: (noteId: string) => void
   onCloseActions: () => void
   onOpenNote: (noteId: string) => void
   onToggleActions: () => void
@@ -5441,6 +5453,7 @@ function NoteListItem({
         isOpen={actionsOpen}
         note={note}
         onClose={onCloseActions}
+        onDeleteNote={onDeleteNote}
         onToggleOpen={onToggleActions}
         onToggleArchived={onToggleArchived}
         onToggleFavorite={onToggleFavorite}
@@ -5454,6 +5467,7 @@ function NoteQuickActions({
   isOpen,
   note,
   onClose,
+  onDeleteNote,
   onToggleOpen,
   onToggleArchived,
   onToggleFavorite,
@@ -5462,6 +5476,7 @@ function NoteQuickActions({
   isOpen: boolean
   note: Note
   onClose: () => void
+  onDeleteNote: (noteId: string) => void
   onToggleOpen: () => void
   onToggleArchived: (noteId: string) => void
   onToggleFavorite: (noteId: string) => void
@@ -5487,6 +5502,11 @@ function NoteQuickActions({
   const handleArchived = () => {
     onToggleArchived(note.id)
     onClose()
+  }
+
+  const handleDelete = () => {
+    onClose()
+    onDeleteNote(note.id)
   }
 
   return (
@@ -5519,6 +5539,15 @@ function NoteQuickActions({
           <button type="button" className="note-actionMenu__item" onClick={handleArchived} role="menuitem">
             <Icon name="archive" />
             <span>{note.isArchived ? 'Restore note' : 'Archive'}</span>
+          </button>
+          <button
+            type="button"
+            className="note-actionMenu__item note-actionMenu__item--danger"
+            onClick={handleDelete}
+            role="menuitem"
+          >
+            <Icon name="trash" />
+            <span>Delete note</span>
           </button>
         </div>
       )}
