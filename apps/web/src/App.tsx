@@ -18,6 +18,7 @@ type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
 type NoteViewMode = 'read' | 'edit'
 type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
 type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
+type ComposerDockDraftMode = 'auto' | AiDraftCategory
 type AiComposerMode = 'draft' | 'assist'
 type AiAssistAction =
   | 'continue-writing'
@@ -544,6 +545,13 @@ const aiDraftCategories: Array<{ description: string; label: string; value: AiDr
     description: 'A concise line with a short reflection.',
   },
 ]
+const composerDockDraftModes: Array<{ label: string; value: ComposerDockDraftMode }> = [
+  { label: 'Auto', value: 'auto' },
+  { label: 'Essay', value: 'essay' },
+  { label: 'Article', value: 'article' },
+  { label: 'Research', value: 'research-topic' },
+  { label: 'Quote', value: 'quote' },
+]
 
 const aiAssistActions: Array<{
   description: string
@@ -1043,6 +1051,7 @@ function App() {
   const [readerExplorationPendingAction, setReaderExplorationPendingAction] = useState<ReaderExplorationAction | null>(null)
   const [composerDockOpen, setComposerDockOpen] = useState(false)
   const [composerDockPrompt, setComposerDockPrompt] = useState('')
+  const [composerDockDraftMode, setComposerDockDraftMode] = useState<ComposerDockDraftMode>('auto')
   const [composerDockError, setComposerDockError] = useState<string | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
@@ -3147,7 +3156,8 @@ function App() {
       return
     }
 
-    const shouldAssistActiveNote = activeNote && view === 'editor' && !looksLikeNewDraftPrompt(prompt)
+    const forcedDraftCategory = composerDockDraftMode === 'auto' ? null : composerDockDraftMode
+    const shouldAssistActiveNote = activeNote && view === 'editor' && !forcedDraftCategory && !looksLikeNewDraftPrompt(prompt)
     setComposerDockError(null)
     setAiAssistError(null)
     setAiDraftError(null)
@@ -3165,7 +3175,7 @@ function App() {
       return
     }
 
-    const category = inferDraftCategoryFromPrompt(prompt)
+    const category = forcedDraftCategory ?? inferDraftCategoryFromPrompt(prompt)
 
     setAiAssistResult(null)
     setAiDraft(null)
@@ -4098,6 +4108,7 @@ function App() {
             canUseComposer={composerAvailable}
             contextLabel={composerDockContext}
             draft={aiDraft}
+            draftMode={composerDockDraftMode}
             error={composerDockError ?? aiAssistError ?? aiDraftError}
             isBusy={composerBusy}
             isOpen={composerDockOpen}
@@ -4105,6 +4116,7 @@ function App() {
             onAppendAssist={appendAiAssistToActiveNote}
             onClearResult={clearComposerDockResult}
             onCreateNote={createNoteFromAiDraft}
+            onDraftModeChange={setComposerDockDraftMode}
             onPromptChange={(value) => {
               setComposerDockPrompt(value)
               setComposerDockError(null)
@@ -4714,6 +4726,7 @@ function ComposerDock({
   canUseComposer,
   contextLabel,
   draft,
+  draftMode,
   error,
   isBusy,
   isOpen,
@@ -4721,6 +4734,7 @@ function ComposerDock({
   onAppendAssist,
   onClearResult,
   onCreateNote,
+  onDraftModeChange,
   onPromptChange,
   onReplaceAssist,
   onSubmit,
@@ -4734,6 +4748,7 @@ function ComposerDock({
   canUseComposer: boolean
   contextLabel: string
   draft: AiDraft | null
+  draftMode: ComposerDockDraftMode
   error: string | null
   isBusy: boolean
   isOpen: boolean
@@ -4741,6 +4756,7 @@ function ComposerDock({
   onAppendAssist: () => void
   onClearResult: () => void
   onCreateNote: () => void
+  onDraftModeChange: (mode: ComposerDockDraftMode) => void
   onPromptChange: (value: string) => void
   onReplaceAssist: () => void
   onSubmit: () => void
@@ -4757,6 +4773,10 @@ function ComposerDock({
   ]
   const assistPreview = assistResult ? summarizeInlineText(getPlainTextFromAiDraftBlocks(assistResult.blocks), 280) : ''
   const draftPreview = draft ? summarizeInlineText(getPlainTextFromAiDraftBlocks(draft.blocks), 280) : ''
+  const promptPlaceholder =
+    draftMode === 'auto'
+      ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
+      : `Draft ${getComposerDockDraftModeLabel(draftMode).toLowerCase()} about...`
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -4825,6 +4845,23 @@ function ComposerDock({
           ))}
         </div>
       )}
+
+      <div className="composer-dock__draftModes" role="radiogroup" aria-label="Draft type">
+        <span>Draft</span>
+        {composerDockDraftModes.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            className={draftMode === mode.value ? 'composer-dock__draftMode--active' : ''}
+            disabled={isBusy}
+            onClick={() => onDraftModeChange(mode.value)}
+            role="radio"
+            aria-checked={draftMode === mode.value}
+          >
+            {mode.label}
+          </button>
+        ))}
+      </div>
 
       {isBusy && (
         <div className="composer-dock__thinking" aria-live="polite">
@@ -4898,7 +4935,7 @@ function ComposerDock({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={handlePromptKeyDown}
-          placeholder={showNoteActions ? 'Ask about this note...' : 'Draft a note about...'}
+          placeholder={promptPlaceholder}
           rows={3}
           disabled={isBusy}
         />
@@ -8550,6 +8587,10 @@ function inferDraftCategoryFromPrompt(prompt: string): AiDraftCategory {
   }
 
   return 'essay'
+}
+
+function getComposerDockDraftModeLabel(mode: ComposerDockDraftMode) {
+  return composerDockDraftModes.find((option) => option.value === mode)?.label ?? 'Draft'
 }
 
 function QuickSwitcher({

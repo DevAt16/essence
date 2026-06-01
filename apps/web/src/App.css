@@ -1998,6 +1998,48 @@
   opacity: 0.55;
 }
 
+.composer-dock__draftModes {
+  display: grid;
+  grid-template-columns: auto repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px;
+}
+
+.composer-dock__draftModes > span {
+  color: var(--ink-muted);
+  padding: 0 7px;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-dock__draftModes button {
+  min-width: 0;
+  min-height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  padding: 0 7px;
+  font-size: 0.74rem;
+}
+
+.composer-dock__draftModes button:hover,
+.composer-dock__draftModes button:focus-visible,
+.composer-dock__draftModes .composer-dock__draftMode--active {
+  background: var(--paper-soft);
+  color: var(--ink);
+}
+
+.composer-dock__draftModes button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .composer-dock__thinking,
 .composer-dock__result {
   border: 1px solid var(--line);
@@ -10814,6 +10856,14 @@ textarea:focus-visible {
     right: 14px;
     width: auto;
     max-height: calc(100dvh - 124px - env(safe-area-inset-bottom));
+  }
+
+  .composer-dock__draftModes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .composer-dock__draftModes > span {
+    display: none;
   }
 
   .topbar,
