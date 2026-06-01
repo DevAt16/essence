@@ -516,10 +516,11 @@ app.post('/api/ai/draft', async (request, response, next) => {
       return
     }
 
+    const runtime = await getEffectiveComposerConfig(user.id)
     const rawDraft = await generateAiJson(
-      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext),
+      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext, runtime.prompt),
       geminiDraftResponseSchema,
-      { temperature: 0.72, userId: user.id },
+      { runtime, temperature: 0.72, userId: user.id },
     )
     const draft = normalizeAiDraft(rawDraft, requestContext)
 
@@ -543,10 +544,11 @@ app.post('/api/ai/assist', async (request, response, next) => {
       return
     }
 
+    const runtime = await getEffectiveComposerConfig(user.id)
     const rawResult = await generateAiJson(
-      buildGeminiAssistPrompt(requestContext),
+      buildGeminiAssistPrompt(requestContext, runtime.prompt),
       geminiAssistResponseSchema,
-      { temperature: requestContext.meta.temperature, userId: user.id },
+      { runtime, temperature: requestContext.meta.temperature, userId: user.id },
     )
     const result = normalizeAiAssistResult(rawResult, requestContext)
 
@@ -1183,6 +1185,14 @@ const aiAssistActionMeta = {
   },
 }
 
+const defaultComposerSystemPrompt = [
+  'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
+  'Create original prose suitable for a minimalist note-taking app.',
+  'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
+  'Do not invent citations, studies, URLs, books, source names, or facts you cannot ground in the provided context.',
+  'If source verification is needed, include a short note telling the user what to verify rather than pretending it was checked.',
+].join('\n')
+
 const geminiDraftResponseSchema = {
   type: 'object',
   properties: {
@@ -1388,27 +1398,26 @@ function normalizeComposerContextItem(value) {
   }
 }
 
-function buildGeminiDraftPrompt(topic, meta, composerContext) {
+function buildGeminiDraftPrompt(topic, meta, composerContext, composerPrompt = defaultComposerSystemPrompt) {
   return [
-    'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
+    composerPrompt,
     `Topic: ${topic}`,
     `Requested note type: ${meta.label}`,
     meta.guidance,
     formatComposerContextForPrompt(composerContext),
-    'Create original prose suitable for a minimalist note-taking app.',
-    'Do not invent citations, studies, URLs, books, or source names. If the topic requires sources, include a short verification note instead of pretending sources were checked.',
-    'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
     'Return only JSON matching the schema. Use block types paragraph, heading, quote, bullet-list, or code.',
-  ].join('\n\n')
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
-function buildGeminiAssistPrompt(context) {
+function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystemPrompt) {
   const selectedSection = context.note.selectedText
     ? [`Selected block to focus on:`, context.note.selectedText].join('\n')
     : 'No selected block was provided. Work from the full note context.'
 
   return [
-    'You are Essence Composer, an active-note assistant for students, researchers, and deep readers.',
+    composerPrompt,
     `Action: ${context.meta.label}`,
     context.meta.guidance,
     context.instruction ? `User instruction: ${context.instruction}` : '',
@@ -1455,11 +1464,21 @@ function normalizeComposerSettingsPayload(body) {
   const provider = normalizeComposerSettingsProvider(body?.provider)
   const model = normalizePlainText(body?.model, 120)
   const ollamaBaseUrl = normalizePlainText(body?.ollamaBaseUrl, 300)
+  const promptMode = normalizeComposerPromptMode(body?.promptMode)
+  const customPrompt = normalizeMultilineText(body?.customPrompt, 4000)
   const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
   const clearApiKey = body?.clearApiKey === true
 
   if (provider === undefined) {
     return { ok: false, error: 'Choose a supported Composer provider.' }
+  }
+
+  if (!promptMode) {
+    return { ok: false, error: 'Choose System prompt or Custom prompt.' }
+  }
+
+  if (promptMode === 'custom' && customPrompt.length < 20) {
+    return { ok: false, error: 'Add a custom prompt with at least 20 characters, or switch back to System prompt.' }
   }
 
   if (ollamaBaseUrl) {
@@ -1475,8 +1494,10 @@ function normalizeComposerSettingsPayload(body) {
   }
 
   const settings = {
+    customPrompt,
     model,
     ollamaBaseUrl,
+    promptMode,
     provider,
   }
 
@@ -1501,8 +1522,27 @@ function normalizeComposerSettingsProvider(value) {
   return isSupportedAiProvider(provider) ? provider : undefined
 }
 
+function normalizeComposerPromptMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : 'system'
+
+  if (mode === 'system' || mode === 'custom') {
+    return mode
+  }
+
+  return ''
+}
+
 function normalizePlainText(value, maxLength) {
   const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return normalized ? normalized.slice(0, maxLength) : ''
+}
+
+function normalizeMultilineText(value, maxLength) {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+
   return normalized ? normalized.slice(0, maxLength) : ''
 }
 
@@ -1513,9 +1553,12 @@ function serializeComposerSettingsResponse(settings, runtime) {
       apiKeyConfigured: Boolean(settings?.apiKeyCiphertext),
       apiKeyProvider: settings?.apiKeyProvider ?? '',
       apiKeyUpdatedAt: settings?.apiKeyUpdatedAt ?? null,
+      customPrompt: settings?.customPrompt ?? '',
       model: settings?.model ?? '',
       ollamaBaseUrl: settings?.ollamaBaseUrl ?? '',
+      promptMode: settings?.promptMode === 'custom' ? 'custom' : 'system',
       provider: settings?.provider ?? 'server',
+      systemPrompt: defaultComposerSystemPrompt,
       updatedAt: settings?.updatedAt ?? null,
     },
   }
@@ -1527,6 +1570,7 @@ function serializeComposerRuntime(runtime) {
     apiKeyConfigured: runtime.provider === 'gemini' ? Boolean(runtime.apiKey) : false,
     localOnly: runtime.provider === 'ollama' || runtime.provider === 'gemini-cli' || runtime.provider === 'codex-cli',
     model: runtime.model,
+    promptMode: runtime.promptMode,
     provider: runtime.provider,
     source: runtime.source,
     status: getComposerRuntimeStatus(runtime),
@@ -1540,13 +1584,33 @@ async function getEffectiveComposerConfig(userId) {
   const model = getEffectiveComposerModel(provider, settings?.model)
   const apiKey = provider === 'gemini' ? getEffectiveGeminiApiKey(settings) : ''
   const ollamaBaseUrl = provider === 'ollama' ? getOllamaBaseUrl(settings?.ollamaBaseUrl) : ''
+  const promptSettings = getEffectiveComposerPrompt(settings)
 
   return {
     apiKey,
     model,
     ollamaBaseUrl,
+    prompt: promptSettings.prompt,
+    promptMode: promptSettings.promptMode,
     provider,
     source: savedProvider ? 'settings' : 'environment',
+  }
+}
+
+function getEffectiveComposerPrompt(settings) {
+  const promptMode = settings?.promptMode === 'custom' ? 'custom' : 'system'
+  const customPrompt = normalizeMultilineText(settings?.customPrompt, 4000)
+
+  if (promptMode === 'custom' && customPrompt) {
+    return {
+      prompt: customPrompt,
+      promptMode,
+    }
+  }
+
+  return {
+    prompt: defaultComposerSystemPrompt,
+    promptMode: 'system',
   }
 }
 
@@ -1851,7 +1915,7 @@ async function runCliVersionCheck(command, cwd, timeoutMs, label) {
 }
 
 async function generateAiJson(prompt, schema, options = {}) {
-  const runtime = await getEffectiveComposerConfig(options.userId)
+  const runtime = options.runtime ?? await getEffectiveComposerConfig(options.userId)
   const provider = runtime.provider
 
   if (provider === 'ollama') {

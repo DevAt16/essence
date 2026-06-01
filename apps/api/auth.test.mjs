@@ -195,8 +195,10 @@ test('local Composer settings can override the environment provider', async () =
     const saveResponse = await apiRequest(
       '/api/composer/settings',
       {
+        customPrompt: 'Use a direct, Socratic style with compact paragraphs and careful uncertainty.',
         model: 'llama3.2',
         ollamaBaseUrl: 'http://127.0.0.1:11434',
+        promptMode: 'custom',
         provider: 'ollama',
       },
       { method: 'PUT' },
@@ -205,8 +207,12 @@ test('local Composer settings can override the environment provider', async () =
     assert.equal(saveResponse.status, 200)
     assert.equal(saveResponse.body.settings.provider, 'ollama')
     assert.equal(saveResponse.body.settings.model, 'llama3.2')
+    assert.equal(saveResponse.body.settings.promptMode, 'custom')
+    assert.match(saveResponse.body.settings.customPrompt, /Socratic style/)
+    assert.match(saveResponse.body.settings.systemPrompt, /Essence Composer/)
     assert.equal(saveResponse.body.runtime.provider, 'ollama')
     assert.equal(saveResponse.body.runtime.model, 'llama3.2')
+    assert.equal(saveResponse.body.runtime.promptMode, 'custom')
     assert.equal(saveResponse.body.runtime.source, 'settings')
     assert.equal(saveResponse.body.runtime.status, 'ok')
 
@@ -214,6 +220,7 @@ test('local Composer settings can override the environment provider', async () =
 
     assert.equal(getResponse.status, 200)
     assert.equal(getResponse.body.settings.provider, 'ollama')
+    assert.equal(getResponse.body.settings.promptMode, 'custom')
     assert.equal(getResponse.body.runtime.provider, 'ollama')
   } finally {
     await pool.query("delete from composer_settings where user_id = 'local'")

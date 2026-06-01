@@ -3085,9 +3085,9 @@
   gap: 7px;
 }
 
-.settings-field input {
+.settings-field input,
+.settings-field textarea {
   width: 100%;
-  min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.055);
@@ -3096,14 +3096,31 @@
   outline: 0;
 }
 
-.settings-field input:focus {
+.settings-field input {
+  min-height: 42px;
+}
+
+.settings-field textarea {
+  min-height: 138px;
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.settings-field input:focus,
+.settings-field textarea:focus {
   border-color: var(--line-dark);
   box-shadow: 0 0 0 4px var(--focus-soft);
 }
 
-.settings-field input:disabled {
+.settings-field input:disabled,
+.settings-field textarea:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.settings-field textarea[readonly] {
+  color: var(--ink-subtle);
 }
 
 .settings-error,
@@ -3137,6 +3154,10 @@
 
 .settings-choiceGrid--composer {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.settings-choiceGrid--prompt {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .settings-choiceBlock {

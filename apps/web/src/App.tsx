@@ -219,12 +219,15 @@ interface ApiReadinessState {
 }
 
 type ComposerProviderValue = 'server' | 'gemini' | 'ollama' | 'gemini-cli' | 'codex-cli'
+type ComposerPromptMode = 'system' | 'custom'
 
 interface ComposerSettingsDraft {
   apiKey: string
   clearApiKey: boolean
+  customPrompt: string
   model: string
   ollamaBaseUrl: string
+  promptMode: ComposerPromptMode
   provider: ComposerProviderValue
 }
 
@@ -233,6 +236,7 @@ interface ComposerRuntimeState {
   apiKeyConfigured: boolean
   localOnly: boolean
   model: string
+  promptMode: ComposerPromptMode
   provider: Exclude<ComposerProviderValue, 'server'> | 'disabled' | 'unknown'
   source: 'environment' | 'settings' | string
   status: string
@@ -246,9 +250,12 @@ interface ComposerSettingsState {
     apiKeyConfigured: boolean
     apiKeyProvider: string
     apiKeyUpdatedAt: string | null
+    customPrompt: string
     model: string
     ollamaBaseUrl: string
+    promptMode: ComposerPromptMode
     provider: ComposerProviderValue
+    systemPrompt: string
     updatedAt: string | null
   }
 }
@@ -400,9 +407,12 @@ const initialComposerSettingsState: ComposerSettingsState = {
     apiKeyConfigured: false,
     apiKeyProvider: '',
     apiKeyUpdatedAt: null,
+    customPrompt: '',
     model: '',
     ollamaBaseUrl: '',
+    promptMode: 'system',
     provider: 'server',
+    systemPrompt: '',
     updatedAt: null,
   },
 }
@@ -7862,6 +7872,8 @@ function SettingsDialog({
   const composerSettingsNote = getComposerSettingsNote(apiReadiness, composerAvailable, composerSettingsState.runtime)
   const composerConfigBusy = isComposerSaving || isComposerTesting || composerSettingsState.loadState === 'loading'
   const composerSourceLabel = composerSettingsState.runtime?.source === 'settings' ? 'Settings' : 'Server default'
+  const composerPromptValue =
+    composerDraft.promptMode === 'system' ? composerSettingsState.settings.systemPrompt : composerDraft.customPrompt
 
   useEffect(() => {
     setDraft(getProfileDraftFromUser(currentUser))
@@ -8140,6 +8152,51 @@ function SettingsDialog({
               </label>
             </div>
 
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Prompt</span>
+              <div className="settings-choiceGrid settings-choiceGrid--prompt" role="radiogroup" aria-label="Composer prompt mode">
+                <button
+                  type="button"
+                  className={`settings-choice ${composerDraft.promptMode === 'system' ? 'settings-choice--active' : ''}`}
+                  disabled={composerConfigBusy}
+                  onClick={() => updateComposerDraft('promptMode', 'system')}
+                  role="radio"
+                  aria-checked={composerDraft.promptMode === 'system'}
+                >
+                  <span className="settings-choice__dot settings-choice__dot--provider-server" aria-hidden="true" />
+                  <span>
+                    <strong>System prompt</strong>
+                    <small>Use Essence Composer's built-in instruction.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`settings-choice ${composerDraft.promptMode === 'custom' ? 'settings-choice--active' : ''}`}
+                  disabled={composerConfigBusy}
+                  onClick={() => updateComposerDraft('promptMode', 'custom')}
+                  role="radio"
+                  aria-checked={composerDraft.promptMode === 'custom'}
+                >
+                  <span className="settings-choice__dot settings-choice__dot--provider-gemini" aria-hidden="true" />
+                  <span>
+                    <strong>Custom prompt</strong>
+                    <small>Write your own Composer instruction.</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <label className="settings-field">
+              <span>{composerDraft.promptMode === 'system' ? 'System prompt' : 'Custom prompt'}</span>
+              <textarea
+                value={composerPromptValue}
+                readOnly={composerDraft.promptMode === 'system'}
+                onChange={(event) => updateComposerDraft('customPrompt', event.target.value)}
+                placeholder="Describe how Composer should think, write, and respond."
+                disabled={composerConfigBusy && composerDraft.promptMode === 'custom'}
+              />
+            </label>
+
             {composerSettingsError && <div className="settings-error">{composerSettingsError}</div>}
             {composerSettingsMessage && <div className="settings-success">{composerSettingsMessage}</div>}
 
@@ -8235,8 +8292,10 @@ function getComposerSettingsDraft(state: ComposerSettingsState): ComposerSetting
   return {
     apiKey: '',
     clearApiKey: false,
+    customPrompt: state.settings.customPrompt,
     model: state.settings.model,
     ollamaBaseUrl: state.settings.ollamaBaseUrl,
+    promptMode: state.settings.promptMode,
     provider: state.settings.provider,
   }
 }
@@ -9289,9 +9348,12 @@ function normalizeRemoteComposerSettings(payload: unknown): ComposerSettingsStat
       apiKeyConfigured: settings.apiKeyConfigured === true,
       apiKeyProvider: normalizeStringValue(settings.apiKeyProvider),
       apiKeyUpdatedAt: normalizeNullableStringValue(settings.apiKeyUpdatedAt),
+      customPrompt: normalizeStringValue(settings.customPrompt),
       model: normalizeStringValue(settings.model),
       ollamaBaseUrl: normalizeStringValue(settings.ollamaBaseUrl),
+      promptMode: normalizeComposerPromptModeValue(settings.promptMode),
       provider: normalizeComposerProviderValue(settings.provider),
+      systemPrompt: normalizeStringValue(settings.systemPrompt),
       updatedAt: normalizeNullableStringValue(settings.updatedAt),
     },
   }
@@ -9310,6 +9372,7 @@ function normalizeRemoteComposerRuntime(value: unknown): ComposerRuntimeState | 
     apiKeyConfigured: candidate.apiKeyConfigured === true,
     localOnly: candidate.localOnly === true,
     model: normalizeStringValue(candidate.model),
+    promptMode: normalizeComposerPromptModeValue(candidate.promptMode),
     provider: isComposerRuntimeProvider(provider) ? provider : 'unknown',
     source: normalizeStringValue(candidate.source, 'environment'),
     status: normalizeStringValue(candidate.status, 'unknown'),
@@ -9329,6 +9392,10 @@ function normalizeComposerProviderValue(value: unknown): ComposerProviderValue {
   }
 
   return 'server'
+}
+
+function normalizeComposerPromptModeValue(value: unknown): ComposerPromptMode {
+  return normalizeStringValue(value).toLowerCase() === 'custom' ? 'custom' : 'system'
 }
 
 function isComposerRuntimeProvider(

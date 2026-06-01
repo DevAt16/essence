@@ -184,6 +184,8 @@ export async function getComposerSettings(userId = localUserId) {
         provider,
         model,
         ollama_base_url as "ollamaBaseUrl",
+        prompt_mode as "promptMode",
+        custom_prompt as "customPrompt",
         api_key_ciphertext as "apiKeyCiphertext",
         api_key_provider as "apiKeyProvider",
         api_key_updated_at as "apiKeyUpdatedAt",
@@ -204,6 +206,8 @@ export async function saveComposerSettings(userId = localUserId, settings = {}) 
   const provider = normalizeOptionalString(settings.provider, 32)
   const model = normalizeOptionalString(settings.model, 120) ?? ''
   const ollamaBaseUrl = normalizeOptionalString(settings.ollamaBaseUrl, 300) ?? ''
+  const promptMode = settings.promptMode === 'custom' ? 'custom' : 'system'
+  const customPrompt = normalizeLongText(settings.customPrompt, 4000)
   const apiKeyCiphertext = hasApiKey ? normalizeOptionalString(settings.apiKeyCiphertext, 4000) : null
   const apiKeyProvider = hasApiKey ? normalizeOptionalString(settings.apiKeyProvider, 32) : null
 
@@ -214,6 +218,8 @@ export async function saveComposerSettings(userId = localUserId, settings = {}) 
         provider,
         model,
         ollama_base_url,
+        prompt_mode,
+        custom_prompt,
         api_key_ciphertext,
         api_key_provider,
         api_key_updated_at,
@@ -224,6 +230,8 @@ export async function saveComposerSettings(userId = localUserId, settings = {}) 
         $2,
         $3,
         $4,
+        $8,
+        $9,
         case when $5 then $6 else null end,
         case when $5 then $7 else null end,
         case when $5 and $6 is not null then now() else null end,
@@ -234,6 +242,8 @@ export async function saveComposerSettings(userId = localUserId, settings = {}) 
         provider = excluded.provider,
         model = excluded.model,
         ollama_base_url = excluded.ollama_base_url,
+        prompt_mode = excluded.prompt_mode,
+        custom_prompt = excluded.custom_prompt,
         api_key_ciphertext = case when $5 then excluded.api_key_ciphertext else composer_settings.api_key_ciphertext end,
         api_key_provider = case when $5 then excluded.api_key_provider else composer_settings.api_key_provider end,
         api_key_updated_at = case
@@ -247,13 +257,25 @@ export async function saveComposerSettings(userId = localUserId, settings = {}) 
         provider,
         model,
         ollama_base_url as "ollamaBaseUrl",
+        prompt_mode as "promptMode",
+        custom_prompt as "customPrompt",
         api_key_ciphertext as "apiKeyCiphertext",
         api_key_provider as "apiKeyProvider",
         api_key_updated_at as "apiKeyUpdatedAt",
         created_at as "createdAt",
         updated_at as "updatedAt"
     `,
-    [userId || localUserId, provider, model, ollamaBaseUrl, hasApiKey, apiKeyCiphertext, apiKeyProvider],
+    [
+      userId || localUserId,
+      provider,
+      model,
+      ollamaBaseUrl,
+      hasApiKey,
+      apiKeyCiphertext,
+      apiKeyProvider,
+      promptMode,
+      customPrompt,
+    ],
   )
 
   return result.rows[0] ?? null
@@ -1505,6 +1527,15 @@ function normalizeOptionalString(value, maxLength) {
   const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
 
   return normalized ? normalized.slice(0, maxLength) : null
+}
+
+function normalizeLongText(value, maxLength) {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+
+  return normalized ? normalized.slice(0, maxLength) : ''
 }
 
 function normalizeUsername(value) {

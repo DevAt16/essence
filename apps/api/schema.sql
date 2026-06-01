@@ -73,6 +73,8 @@ create table if not exists composer_settings (
   provider text null,
   model text not null default '',
   ollama_base_url text not null default '',
+  prompt_mode text not null default 'system',
+  custom_prompt text not null default '',
   api_key_ciphertext text null,
   api_key_provider text null,
   api_key_updated_at timestamptz null,
@@ -82,6 +84,8 @@ create table if not exists composer_settings (
 
 alter table composer_settings add column if not exists model text not null default '';
 alter table composer_settings add column if not exists ollama_base_url text not null default '';
+alter table composer_settings add column if not exists prompt_mode text not null default 'system';
+alter table composer_settings add column if not exists custom_prompt text not null default '';
 alter table composer_settings add column if not exists api_key_ciphertext text null;
 alter table composer_settings add column if not exists api_key_provider text null;
 alter table composer_settings add column if not exists api_key_updated_at timestamptz null;
