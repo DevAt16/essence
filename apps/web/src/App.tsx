@@ -1844,7 +1844,7 @@ function App() {
   )
   const activeComposerContextPack = useMemo(
     () =>
-      activeNote
+      view === 'editor' && activeNote
         ? buildComposerNoteContextPack({
             backlinks: activeBacklinks,
             collectionNameById,
@@ -1854,7 +1854,7 @@ function App() {
             selectedBlockId: noteViewMode === 'edit' ? selectedBlockId : null,
           })
         : null,
-    [activeBacklinks, activeLinkedNotes, activeNote, collectionNameById, foldersById, noteViewMode, selectedBlockId],
+    [activeBacklinks, activeLinkedNotes, activeNote, collectionNameById, foldersById, noteViewMode, selectedBlockId, view],
   )
   const composerDockContextSummary = getComposerContextSummary(activeComposerContextPack)
   const selectedNoteRevision = useMemo(
@@ -10037,6 +10037,152 @@ function createComposerContextItem(entry: ComposerHistoryEntry): ComposerContext
     summary: summarizeInlineText(entry.summary, 260),
     title: summarizeInlineText(entry.title, 160),
   }
+}
+
+function buildComposerNoteContextPack({
+  backlinks,
+  collectionNameById,
+  foldersById,
+  linkedNotes,
+  note,
+  selectedBlockId,
+}: {
+  backlinks: Note[]
+  collectionNameById: Record<CollectionId, string>
+  foldersById: Record<string, Folder>
+  linkedNotes: Note[]
+  note: Note
+  selectedBlockId: string | null
+}): ComposerNoteContextPack {
+  const selectedBlockIndex = selectedBlockId ? note.blocks.findIndex((block) => block.id === selectedBlockId) : -1
+  const windowStart = selectedBlockIndex >= 0 ? Math.max(0, selectedBlockIndex - 2) : 0
+  const windowEnd =
+    selectedBlockIndex >= 0 ? Math.min(note.blocks.length, selectedBlockIndex + 3) : Math.min(note.blocks.length, 4)
+  const neighboringBlocks = note.blocks
+    .slice(windowStart, windowEnd)
+    .map((block, index) => {
+      const blockIndex = windowStart + index
+      let role: ComposerNoteContextBlock['role'] = 'after'
+
+      if (selectedBlockIndex === -1) {
+        role = index === 0 ? 'selected' : 'after'
+      } else if (blockIndex < selectedBlockIndex) {
+        role = 'before'
+      } else if (blockIndex === selectedBlockIndex) {
+        role = 'selected'
+      }
+
+      return createComposerNoteContextBlock(block, role)
+    })
+    .filter((block): block is ComposerNoteContextBlock => Boolean(block))
+
+  return {
+    backlinks: backlinks.slice(0, 5).map(createComposerNoteContextReference),
+    blockCount: note.blocks.length,
+    collection: collectionNameById[note.collectionId] ?? humanizeCollectionId(note.collectionId),
+    currentHeading: selectedBlockIndex >= 0 ? getComposerCurrentHeading(note.blocks, selectedBlockIndex) : '',
+    folderPath: getFolderPathLabel(note.folderId, foldersById),
+    linkedNotes: linkedNotes.slice(0, 5).map(createComposerNoteContextReference),
+    neighboringBlocks,
+    outline: getComposerNoteOutline(note.blocks),
+    sources: note.sources
+      .map(createComposerNoteContextSource)
+      .filter((source): source is ComposerNoteContextSource => Boolean(source))
+      .slice(0, 6),
+    wordCount: countWordsFromBlocks(note.blocks),
+  }
+}
+
+function createComposerNoteContextBlock(
+  block: NoteBlock,
+  role: ComposerNoteContextBlock['role'],
+): ComposerNoteContextBlock | null {
+  const text = summarizeInlineText(getPlainTextFromBlocks([block]), 900)
+
+  if (!text) {
+    return null
+  }
+
+  return {
+    role,
+    text,
+    type: block.type,
+  }
+}
+
+function createComposerNoteContextReference(note: Note): ComposerNoteContextReference {
+  return {
+    status: summarizeInlineText(note.status, 60),
+    summary: summarizeInlineText(summarizeNotePreview(note), 260),
+    title: summarizeInlineText(note.title, 160),
+  }
+}
+
+function createComposerNoteContextSource(source: NoteSource): ComposerNoteContextSource | null {
+  const title = summarizeInlineText(source.title, 180)
+  const author = summarizeInlineText(source.author, 120)
+  const year = summarizeInlineText(source.year, 40)
+  const url = summarizeInlineText(source.url, 240)
+
+  if (!title && !author && !year && !url) {
+    return null
+  }
+
+  return {
+    author,
+    sourceType: source.sourceType,
+    title,
+    url,
+    year,
+  }
+}
+
+function getComposerNoteOutline(blocks: NoteBlock[]) {
+  return blocks
+    .filter((block) => block.type === 'heading')
+    .map((block) => summarizeInlineText(block.text ?? '', 120))
+    .filter(Boolean)
+    .slice(0, 12)
+}
+
+function getComposerCurrentHeading(blocks: NoteBlock[], selectedBlockIndex: number) {
+  for (let index = selectedBlockIndex; index >= 0; index -= 1) {
+    const block = blocks[index]
+
+    if (block?.type === 'heading') {
+      return summarizeInlineText(block.text ?? '', 120)
+    }
+  }
+
+  return ''
+}
+
+function getComposerContextSummary(contextPack: ComposerNoteContextPack | null) {
+  if (!contextPack) {
+    return ''
+  }
+
+  const pieces = ['full note']
+
+  if (contextPack.neighboringBlocks.some((block) => block.role === 'selected')) {
+    pieces.push('nearby block')
+  }
+
+  if (contextPack.outline.length > 0) {
+    pieces.push(`${contextPack.outline.length} headings`)
+  }
+
+  if (contextPack.sources.length > 0) {
+    pieces.push(`${contextPack.sources.length} sources`)
+  }
+
+  const relationshipCount = contextPack.linkedNotes.length + contextPack.backlinks.length
+
+  if (relationshipCount > 0) {
+    pieces.push(`${relationshipCount} links`)
+  }
+
+  return `Context: ${pieces.join(' + ')}`
 }
 
 function getPlainTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {

@@ -1329,6 +1329,7 @@ function normalizeAiAssistRequest(body) {
   const note = body?.note && typeof body.note === 'object' ? body.note : {}
   const composerContext = normalizeComposerRequestContext(body?.context)
   const instruction = normalizeDraftString(body?.instruction, '', 1000)
+  const contextPack = normalizeComposerNoteContextPack(note.contextPack)
   const title = normalizeDraftString(note.title, 'Untitled Note', 180)
   const status = normalizeDraftString(note.status, '', 60)
   const text = normalizeDraftString(note.text, '', 12000)
@@ -1356,6 +1357,7 @@ function normalizeAiAssistRequest(body) {
     instruction,
     meta,
     note: {
+      contextPack,
       selectedText,
       status,
       tags,
@@ -1398,6 +1400,120 @@ function normalizeComposerContextItem(value) {
   }
 }
 
+function normalizeComposerNoteContextPack(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const blockCount = normalizeComposerContextNumber(value.blockCount, 0, 2000)
+  const wordCount = normalizeComposerContextNumber(value.wordCount, 0, 250000)
+  const outline = Array.isArray(value.outline)
+    ? value.outline.map((heading) => normalizeDraftString(heading, '', 120)).filter(Boolean).slice(0, 12)
+    : []
+  const neighboringBlocks = Array.isArray(value.neighboringBlocks)
+    ? value.neighboringBlocks
+        .map(normalizeComposerNoteContextBlock)
+        .filter((block) => block !== null)
+        .slice(0, 5)
+    : []
+  const sources = Array.isArray(value.sources)
+    ? value.sources.map(normalizeComposerNoteContextSource).filter((source) => source !== null).slice(0, 6)
+    : []
+  const linkedNotes = Array.isArray(value.linkedNotes)
+    ? value.linkedNotes.map(normalizeComposerNoteContextReference).filter((note) => note !== null).slice(0, 5)
+    : []
+  const backlinks = Array.isArray(value.backlinks)
+    ? value.backlinks.map(normalizeComposerNoteContextReference).filter((note) => note !== null).slice(0, 5)
+    : []
+
+  return {
+    backlinks,
+    blockCount,
+    collection: normalizeDraftString(value.collection, '', 120),
+    currentHeading: normalizeDraftString(value.currentHeading, '', 120),
+    folderPath: normalizeDraftString(value.folderPath, '', 160),
+    linkedNotes,
+    neighboringBlocks,
+    outline,
+    sources,
+    wordCount,
+  }
+}
+
+function normalizeComposerNoteContextBlock(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const role = ['before', 'selected', 'after'].includes(value.role) ? value.role : 'selected'
+  const type = supportedDraftBlockTypes.has(value.type) ? value.type : 'paragraph'
+  const text = normalizeDraftString(value.text, '', 900)
+
+  if (!text) {
+    return null
+  }
+
+  return { role, text, type }
+}
+
+function normalizeComposerNoteContextReference(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const title = normalizeDraftString(value.title, '', 160)
+  const summary = normalizeDraftString(value.summary, '', 260)
+
+  if (!title && !summary) {
+    return null
+  }
+
+  return {
+    status: normalizeDraftString(value.status, '', 60),
+    summary,
+    title,
+  }
+}
+
+function normalizeComposerNoteContextSource(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const title = normalizeDraftString(value.title, '', 180)
+  const author = normalizeDraftString(value.author, '', 120)
+  const year = normalizeDraftString(value.year, '', 40)
+  const url = normalizeDraftString(value.url, '', 240)
+
+  if (!title && !author && !year && !url) {
+    return null
+  }
+
+  return {
+    author,
+    sourceType: normalizeComposerSourceType(value.sourceType),
+    title,
+    url,
+    year,
+  }
+}
+
+function normalizeComposerSourceType(value) {
+  const sourceType = typeof value === 'string' ? value : ''
+
+  return ['book', 'paper', 'article', 'web', 'dataset', 'other'].includes(sourceType) ? sourceType : 'other'
+}
+
+function normalizeComposerContextNumber(value, minimum, maximum) {
+  const numberValue = Number(value)
+
+  if (!Number.isFinite(numberValue)) {
+    return 0
+  }
+
+  return Math.min(maximum, Math.max(minimum, Math.round(numberValue)))
+}
+
 function buildGeminiDraftPrompt(topic, meta, composerContext, composerPrompt = defaultComposerSystemPrompt) {
   return [
     composerPrompt,
@@ -1426,6 +1542,7 @@ function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystem
     `Note title: ${context.note.title}`,
     context.note.status ? `Note status: ${context.note.status}` : '',
     context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
+    formatComposerNoteContextPack(context.note.contextPack),
     selectedSection,
     formatComposerContextForPrompt(context.composerContext),
     'Full note context:',
@@ -1434,6 +1551,66 @@ function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystem
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function formatComposerNoteContextPack(contextPack) {
+  if (!contextPack) {
+    return ''
+  }
+
+  const location = [contextPack.collection, contextPack.folderPath].filter(Boolean).join(' / ')
+  const shape = [
+    contextPack.wordCount > 0 ? `${contextPack.wordCount} words` : '',
+    contextPack.blockCount > 0 ? `${contextPack.blockCount} blocks` : '',
+  ]
+    .filter(Boolean)
+    .join(' across ')
+  const sections = [
+    'Structured note context. Use this to understand where the user is writing, but let the selected block and direct instruction take priority.',
+    location ? `Location: ${location}` : '',
+    shape ? `Note shape: ${shape}.` : '',
+    contextPack.currentHeading ? `Current section: ${contextPack.currentHeading}` : '',
+    contextPack.outline.length > 0 ? `Outline:\n${contextPack.outline.map((heading, index) => `${index + 1}. ${heading}`).join('\n')}` : '',
+    contextPack.neighboringBlocks.length > 0
+      ? `Nearby blocks:\n${contextPack.neighboringBlocks
+          .map((block, index) => `${index + 1}. ${block.role} ${block.type}: ${block.text}`)
+          .join('\n')}`
+      : '',
+    contextPack.sources.length > 0
+      ? `Known sources:\n${contextPack.sources.map(formatComposerNoteContextSource).join('\n')}`
+      : '',
+    contextPack.linkedNotes.length > 0
+      ? `Linked notes:\n${contextPack.linkedNotes.map(formatComposerNoteContextReference).join('\n')}`
+      : '',
+    contextPack.backlinks.length > 0
+      ? `Notes linking here:\n${contextPack.backlinks.map(formatComposerNoteContextReference).join('\n')}`
+      : '',
+  ]
+
+  return sections.filter(Boolean).join('\n\n')
+}
+
+function formatComposerNoteContextSource(source) {
+  const details = [
+    source.author ? `by ${source.author}` : '',
+    source.year ? `(${source.year})` : '',
+    source.url ? source.url : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return `- ${source.title || 'Untitled source'} [${source.sourceType}]${details ? ` ${details}` : ''}`
+}
+
+function formatComposerNoteContextReference(note) {
+  const details = [
+    note.status ? `status: ${note.status}` : '',
+    note.summary ? `summary: ${note.summary}` : '',
+  ]
+    .filter(Boolean)
+    .join('; ')
+
+  return `- ${note.title || 'Untitled note'}${details ? ` (${details})` : ''}`
 }
 
 function formatComposerContextForPrompt(composerContext) {
