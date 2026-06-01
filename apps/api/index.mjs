@@ -2,7 +2,9 @@ import 'dotenv/config'
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -729,7 +731,7 @@ function validateRuntimeConfig() {
     const aiProvider = readAiProvider()
 
     if (!isSupportedAiProvider(aiProvider)) {
-      errors.push('AI_PROVIDER must be "gemini", "ollama", or "gemini-cli".')
+      errors.push('AI_PROVIDER must be "gemini", "ollama", "gemini-cli", or "codex-cli".')
     } else if (aiProvider === 'gemini' && !process.env.GEMINI_API_KEY?.trim()) {
       errors.push('GEMINI_API_KEY is required when AI_PROVIDER=gemini and AI_ENABLED is not false.')
     }
@@ -1415,6 +1417,10 @@ async function generateAiJson(prompt, schema, options = {}) {
     return generateGeminiCliJson(prompt, schema, options)
   }
 
+  if (provider === 'codex-cli') {
+    return generateCodexCliJson(prompt, schema, options)
+  }
+
   return generateGeminiJson(prompt, schema, options)
 }
 
@@ -1692,6 +1698,137 @@ function extractGeminiCliResponseText(stdout) {
   }
 
   return output
+}
+
+async function generateCodexCliJson(prompt, schema, options = {}) {
+  const model = getCodexCliModel()
+  const timeoutMs = getCodexCliTimeoutMs()
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'essence-codex-'))
+  const schemaPath = path.join(tempDirectory, 'schema.json')
+  const outputPath = path.join(tempDirectory, 'response.json')
+  const codexPrompt = [
+    prompt,
+    'Return valid JSON only. Do not wrap the response in Markdown fences.',
+    'Your final response must match the provided output schema.',
+  ].join('\n\n')
+  const args = [
+    'exec',
+    '--sandbox',
+    'read-only',
+    '--ask-for-approval',
+    'never',
+    '--ephemeral',
+    '--skip-git-repo-check',
+    '--output-schema',
+    schemaPath,
+    '--output-last-message',
+    outputPath,
+    '--color',
+    'never',
+  ]
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  args.push('-')
+
+  try {
+    await writeFile(schemaPath, JSON.stringify(schema), 'utf8')
+    await runCodexCli(args, codexPrompt, { ...options, timeoutMs })
+
+    const responseText = (await readFile(outputPath, 'utf8').catch(() => '')).trim()
+
+    if (!responseText) {
+      const error = new Error('Codex CLI returned an empty Composer response.')
+      error.status = 502
+      throw error
+    }
+
+    try {
+      return parseJsonText(responseText)
+    } catch {
+      const error = new Error('Codex CLI returned content the app could not parse. Try again.')
+      error.status = 502
+      throw error
+    }
+  } finally {
+    await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
+  }
+}
+
+async function runCodexCli(args, input, options = {}) {
+  const command = getCodexCliCommand()
+  const cwd = getCodexCliCwd()
+  const timeoutMs = options.timeoutMs ?? getCodexCliTimeoutMs()
+
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    let didTimeout = false
+    let settled = false
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const timeout = setTimeout(() => {
+      didTimeout = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
+
+    const settle = (callback) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeout)
+      callback()
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = appendLimitedProcessOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr = appendLimitedProcessOutput(stderr, chunk)
+    })
+
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+
+    child.on('error', (cause) => {
+      settle(() => {
+        const error = new Error('Codex CLI could not be started. Install Codex CLI or set CODEX_CLI_COMMAND.')
+        error.cause = cause
+        error.status = 502
+        reject(error)
+      })
+    })
+
+    child.on('close', (code, signal) => {
+      settle(() => {
+        if (didTimeout) {
+          const error = new Error(`Codex CLI timed out after ${timeoutMs}ms.`)
+          error.status = 504
+          reject(error)
+          return
+        }
+
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
+          const error = new Error(`Codex CLI request failed. ${truncateErrorDetail(detail)}`)
+          error.status = code === 429 ? 429 : 502
+          reject(error)
+          return
+        }
+
+        resolve({ stderr, stdout, timeoutMs })
+      })
+    })
+  })
 }
 
 function appendLimitedProcessOutput(currentValue, chunk) {
@@ -2277,7 +2414,7 @@ function readAiProvider() {
 }
 
 function isSupportedAiProvider(provider) {
-  return provider === 'gemini' || provider === 'ollama' || provider === 'gemini-cli'
+  return provider === 'gemini' || provider === 'ollama' || provider === 'gemini-cli' || provider === 'codex-cli'
 }
 
 function getAiProvider() {
@@ -2287,9 +2424,41 @@ function getAiProvider() {
     return provider
   }
 
-  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini", "ollama", or "gemini-cli".`)
+  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini", "ollama", "gemini-cli", or "codex-cli".`)
   error.status = 503
   throw error
+}
+
+function getCodexCliCommand() {
+  return process.env.CODEX_CLI_COMMAND?.trim() || 'codex'
+}
+
+function getCodexCliCwd() {
+  const configuredCwd = process.env.CODEX_CLI_CWD?.trim()
+  const cwd = configuredCwd ? path.resolve(configuredCwd) : apiDirectory
+
+  if (!existsSync(cwd)) {
+    const error = new Error('Invalid CODEX_CLI_CWD.')
+    error.status = 503
+    throw error
+  }
+
+  return cwd
+}
+
+function getCodexCliModel() {
+  return process.env.CODEX_CLI_MODEL?.trim() || ''
+}
+
+function getCodexCliTimeoutMs() {
+  const rawValue = process.env.CODEX_CLI_TIMEOUT_MS?.trim()
+  const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 120_000
+
+  if (!Number.isFinite(parsedValue)) {
+    return 120_000
+  }
+
+  return Math.min(600_000, Math.max(10_000, parsedValue))
 }
 
 function getGeminiCliCommand() {
@@ -2355,6 +2524,10 @@ function getAiModelLabel() {
     return getGeminiCliModel() || 'Gemini CLI default'
   }
 
+  if (provider === 'codex-cli') {
+    return getCodexCliModel() || 'Codex CLI default'
+  }
+
   return 'unknown'
 }
 
@@ -2377,6 +2550,15 @@ function getAiReadinessStatus() {
     try {
       getGeminiCliCwd()
       return getGeminiCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
+  }
+
+  if (provider === 'codex-cli') {
+    try {
+      getCodexCliCwd()
+      return getCodexCliCommand() ? 'ok' : 'missing'
     } catch {
       return 'invalid'
     }

@@ -7916,6 +7916,10 @@ function getComposerRuntimeLabel(readiness: ApiReadinessState) {
     return 'Gemini CLI'
   }
 
+  if (provider === 'codex-cli') {
+    return 'Codex CLI'
+  }
+
   return 'Composer'
 }
 
@@ -7940,6 +7944,10 @@ function getComposerProviderLabel(readiness: ApiReadinessState) {
 
   if (provider === 'gemini-cli') {
     return 'Gemini CLI local'
+  }
+
+  if (provider === 'codex-cli') {
+    return 'Codex CLI local'
   }
 
   if (provider === 'disabled') {
@@ -8031,6 +8039,12 @@ function getComposerSettingsNote(readiness: ApiReadinessState, composerAvailable
     return composerAvailable
       ? 'Composer requests go through the Essence API to your local Gemini CLI. The browser never starts CLI processes directly.'
       : 'The API is set to Gemini CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
+  }
+
+  if (readiness.aiProvider === 'codex-cli') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Codex CLI in a read-only, non-interactive run.'
+      : 'The API is set to Codex CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
   }
 
   return 'Composer provider details come from the API readiness check.'

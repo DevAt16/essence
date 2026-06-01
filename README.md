@@ -92,6 +92,23 @@ VITE_AI_ALLOW_LOCAL_USER=true
 
 Leave `GEMINI_CLI_MODEL` empty to use the CLI default, or set a model supported by your Gemini CLI setup. `GEMINI_CLI_CWD` is optional; when empty, Essence runs the CLI from the API directory.
 
+### Codex CLI
+
+If you use OpenAI Codex CLI locally, Composer can run it in non-interactive mode through the API. Install and authenticate Codex CLI first, then use:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=codex-cli
+AI_ALLOW_LOCAL_USER=true
+CODEX_CLI_COMMAND=codex
+CODEX_CLI_MODEL=
+CODEX_CLI_CWD=
+CODEX_CLI_TIMEOUT_MS=120000
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+Leave `CODEX_CLI_MODEL` empty to use the CLI default. Composer runs `codex exec` with read-only sandboxing, no approvals, an output schema, and an ephemeral session.
+
 Then run:
 
 ```bash

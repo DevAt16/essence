@@ -109,6 +109,29 @@ test('ready endpoint reports Gemini CLI Composer provider', async () => {
   }
 })
 
+test('ready endpoint reports Codex CLI Composer provider', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousCodexCliModel = process.env.CODEX_CLI_MODEL
+
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'codex-cli'
+  process.env.CODEX_CLI_MODEL = 'codex-cli-test-model'
+
+  try {
+    const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
+
+    assert.equal(response.status, 200)
+    assert.equal(response.body.checks.aiComposer, 'ok')
+    assert.equal(response.body.checks.aiModel, 'codex-cli-test-model')
+    assert.equal(response.body.checks.aiProvider, 'codex-cli')
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('CODEX_CLI_MODEL', previousCodexCliModel)
+  }
+})
+
 test('CORS preflight allows configured development origin', async () => {
   const response = await apiRequest('/api/state', undefined, {
     headers: {
