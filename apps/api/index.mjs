@@ -1715,8 +1715,6 @@ async function generateCodexCliJson(prompt, schema, options = {}) {
     'exec',
     '--sandbox',
     'read-only',
-    '--ask-for-approval',
-    'never',
     '--ephemeral',
     '--skip-git-repo-check',
     '--output-schema',

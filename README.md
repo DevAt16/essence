@@ -107,7 +107,7 @@ CODEX_CLI_TIMEOUT_MS=120000
 VITE_AI_ALLOW_LOCAL_USER=true
 ```
 
-Leave `CODEX_CLI_MODEL` empty to use the CLI default. Composer runs `codex exec` with read-only sandboxing, no approvals, an output schema, and an ephemeral session.
+Leave `CODEX_CLI_MODEL` empty to use the CLI default. Composer runs `codex exec` with read-only sandboxing, an output schema, and an ephemeral session.
 
 Then run:
 
