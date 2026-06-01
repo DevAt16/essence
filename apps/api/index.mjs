@@ -1847,7 +1847,7 @@ function truncateErrorDetail(value) {
     return normalizedValue
   }
 
-  return `${normalizedValue.slice(0, 357).trimEnd()}...`
+  return `...${normalizedValue.slice(-357).trimStart()}`
 }
 
 function extractGeminiText(payload) {
