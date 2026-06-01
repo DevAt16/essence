@@ -218,6 +218,41 @@ interface ApiReadinessState {
   ok: boolean
 }
 
+type ComposerProviderValue = 'server' | 'gemini' | 'ollama' | 'gemini-cli' | 'codex-cli'
+
+interface ComposerSettingsDraft {
+  apiKey: string
+  clearApiKey: boolean
+  model: string
+  ollamaBaseUrl: string
+  provider: ComposerProviderValue
+}
+
+interface ComposerRuntimeState {
+  access: string
+  apiKeyConfigured: boolean
+  localOnly: boolean
+  model: string
+  provider: Exclude<ComposerProviderValue, 'server'> | 'disabled' | 'unknown'
+  source: 'environment' | 'settings' | string
+  status: string
+}
+
+interface ComposerSettingsState {
+  error: string | null
+  loadState: 'idle' | 'loading' | 'ready' | 'unavailable'
+  runtime: ComposerRuntimeState | null
+  settings: {
+    apiKeyConfigured: boolean
+    apiKeyProvider: string
+    apiKeyUpdatedAt: string | null
+    model: string
+    ollamaBaseUrl: string
+    provider: ComposerProviderValue
+    updatedAt: string | null
+  }
+}
+
 interface AiDraftBlock {
   citation?: string
   items?: string[]
@@ -357,6 +392,31 @@ const initialApiReadinessState: ApiReadinessState = {
   loadState: 'loading',
   ok: false,
 }
+const initialComposerSettingsState: ComposerSettingsState = {
+  error: null,
+  loadState: 'idle',
+  runtime: null,
+  settings: {
+    apiKeyConfigured: false,
+    apiKeyProvider: '',
+    apiKeyUpdatedAt: null,
+    model: '',
+    ollamaBaseUrl: '',
+    provider: 'server',
+    updatedAt: null,
+  },
+}
+const composerProviderOptions: Array<{
+  description: string
+  label: string
+  value: ComposerProviderValue
+}> = [
+  { description: 'Use the API server fallback.', label: 'Server default', value: 'server' },
+  { description: 'Use a Gemini API key.', label: 'Gemini API', value: 'gemini' },
+  { description: 'Use a local Ollama model.', label: 'Ollama', value: 'ollama' },
+  { description: 'Use the local Gemini CLI.', label: 'Gemini CLI', value: 'gemini-cli' },
+  { description: 'Use the local Codex CLI.', label: 'Codex CLI', value: 'codex-cli' },
+]
 
 const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
@@ -917,6 +977,11 @@ function App() {
   const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [apiReadiness, setApiReadiness] = useState<ApiReadinessState>(initialApiReadinessState)
+  const [composerSettingsState, setComposerSettingsState] = useState<ComposerSettingsState>(initialComposerSettingsState)
+  const [composerSettingsSaving, setComposerSettingsSaving] = useState(false)
+  const [composerSettingsTesting, setComposerSettingsTesting] = useState(false)
+  const [composerSettingsMessage, setComposerSettingsMessage] = useState<string | null>(null)
+  const [composerSettingsError, setComposerSettingsError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -1032,7 +1097,7 @@ function App() {
   const composerAvailable = remoteAccountActive || localComposerAvailable
   const composerLockedMessage =
     'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
-  const composerRuntimeLabel = getComposerRuntimeLabel(apiReadiness)
+  const composerRuntimeLabel = getComposerRuntimeLabel(composerSettingsState.runtime?.provider ?? apiReadiness.aiProvider)
   const composerBusy = aiGenerating || aiAssisting
 
   if (initialLocalStateRef.current == null) {
@@ -1084,6 +1149,27 @@ function App() {
     }
   }, [])
 
+  const refreshComposerSettings = useCallback(async () => {
+    setComposerSettingsState((currentSettings) => ({
+      ...currentSettings,
+      error: null,
+      loadState: 'loading',
+    }))
+
+    try {
+      const settings = await fetchRemoteComposerSettings()
+      setComposerSettingsState(settings)
+      setComposerSettingsError(null)
+    } catch (error) {
+      console.warn('Unable to load Composer settings.', error)
+      setComposerSettingsState({
+        ...initialComposerSettingsState,
+        error: error instanceof Error && error.message ? error.message : 'Composer settings could not be loaded.',
+        loadState: 'unavailable',
+      })
+    }
+  }, [])
+
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
   const collectionNameById = useMemo(() => buildCollectionNameLookup(collections), [collections])
 
@@ -1117,8 +1203,15 @@ function App() {
   useEffect(() => {
     if (settingsOpen) {
       void refreshApiReadiness()
+      void refreshComposerSettings()
     }
-  }, [refreshApiReadiness, settingsOpen])
+  }, [refreshApiReadiness, refreshComposerSettings, settingsOpen])
+
+  useEffect(() => {
+    if (composerAvailable) {
+      void refreshComposerSettings()
+    }
+  }, [composerAvailable, refreshComposerSettings])
 
   const activeFolder = activeFolderId ? foldersById[activeFolderId] ?? null : null
   const selectedBlock = useMemo(
@@ -2143,13 +2236,17 @@ function App() {
     setQuickSwitcherOpen(false)
     setNoteHistoryOpen(false)
     setProfileError(null)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
     setSettingsOpen(true)
   }
 
   const closeSettings = () => {
-    if (!profileSaving) {
+    if (!profileSaving && !composerSettingsSaving && !composerSettingsTesting) {
       setSettingsOpen(false)
       setProfileError(null)
+      setComposerSettingsError(null)
+      setComposerSettingsMessage(null)
     }
   }
 
@@ -2186,6 +2283,60 @@ function App() {
       flashSaveFeedback('Profile update failed')
     } finally {
       setProfileSaving(false)
+    }
+  }
+
+  const saveComposerSettings = async (draft: ComposerSettingsDraft) => {
+    setComposerSettingsSaving(true)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
+
+    try {
+      const settings = await updateRemoteComposerSettings(draft)
+      setComposerSettingsState(settings)
+      setComposerSettingsMessage('Composer settings saved')
+      await refreshApiReadiness()
+      flashSaveFeedback('Composer updated')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to update Composer settings.', error)
+      setComposerSettingsError(
+        error instanceof Error && error.message ? error.message : 'Composer settings could not be saved.',
+      )
+      flashSaveFeedback('Composer update failed')
+    } finally {
+      setComposerSettingsSaving(false)
+    }
+  }
+
+  const testComposerSettings = async () => {
+    setComposerSettingsTesting(true)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
+
+    try {
+      const result = await testRemoteComposerSettings()
+      setComposerSettingsState((currentSettings) => ({
+        ...currentSettings,
+        runtime: result.runtime,
+      }))
+      setComposerSettingsMessage(result.message)
+      flashSaveFeedback('Composer checked')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to test Composer settings.', error)
+      setComposerSettingsError(
+        error instanceof Error && error.message ? error.message : 'Composer could not verify this runtime.',
+      )
+      flashSaveFeedback('Composer check failed')
+    } finally {
+      setComposerSettingsTesting(false)
     }
   }
 
@@ -3847,6 +3998,11 @@ function App() {
           colorTheme={colorTheme}
           composerAvailable={composerAvailable}
           currentUser={currentUser}
+          composerSettingsError={composerSettingsError ?? composerSettingsState.error}
+          composerSettingsMessage={composerSettingsMessage}
+          composerSettingsState={composerSettingsState}
+          isComposerSaving={composerSettingsSaving}
+          isComposerTesting={composerSettingsTesting}
           isSaving={profileSaving}
           navigationSidebarVisible={navigationSidebarVisible}
           noteCount={notes.length}
@@ -3856,6 +4012,9 @@ function App() {
           onAmbienceChange={setAmbienceMode}
           onColorThemeChange={setColorTheme}
           onClose={closeSettings}
+          onComposerRefresh={refreshComposerSettings}
+          onComposerSave={saveComposerSettings}
+          onComposerTest={testComposerSettings}
           onNavigationSidebarChange={setNavigationSidebarVisible}
           onOpenAuth={openAuthScreen}
           onSaveProfile={saveProfileSettings}
@@ -7613,15 +7772,23 @@ function SettingsDialog({
   colorTheme,
   composerAvailable,
   composerHistoryCount,
+  composerSettingsError,
+  composerSettingsMessage,
+  composerSettingsState,
   currentUser,
   error,
   folderCount,
+  isComposerSaving,
+  isComposerTesting,
   isSaving,
   navigationSidebarVisible,
   noteCount,
   onAmbienceChange,
   onColorThemeChange,
   onClose,
+  onComposerRefresh,
+  onComposerSave,
+  onComposerTest,
   onNavigationSidebarChange,
   onOpenAuth,
   onSaveProfile,
@@ -7632,31 +7799,48 @@ function SettingsDialog({
   colorTheme: ColorTheme
   composerAvailable: boolean
   composerHistoryCount: number
+  composerSettingsError: string | null
+  composerSettingsMessage: string | null
+  composerSettingsState: ComposerSettingsState
   currentUser: AuthUser | null
   error: string | null
   folderCount: number
+  isComposerSaving: boolean
+  isComposerTesting: boolean
   isSaving: boolean
   navigationSidebarVisible: boolean
   noteCount: number
   onAmbienceChange: (mode: AmbienceMode) => void
   onColorThemeChange: (theme: ColorTheme) => void
   onClose: () => void
+  onComposerRefresh: () => void
+  onComposerSave: (draft: ComposerSettingsDraft) => void
+  onComposerTest: () => void
   onNavigationSidebarChange: (visible: boolean) => void
   onOpenAuth: () => void
   onSaveProfile: (draft: ProfileDraft) => void
   onSignOut: () => void
 }) {
   const [draft, setDraft] = useState<ProfileDraft>(() => getProfileDraftFromUser(currentUser))
+  const [composerDraft, setComposerDraft] = useState<ComposerSettingsDraft>(() =>
+    getComposerSettingsDraft(composerSettingsState),
+  )
   const isLocal = !currentUser || currentUser.isLocal
-  const composerProviderLabel = getComposerProviderLabel(apiReadiness)
-  const composerModelLabel = getComposerModelLabel(apiReadiness)
-  const composerStatusLabel = getComposerStatusLabel(apiReadiness)
-  const composerAccessLabel = getComposerAccessLabel(apiReadiness, composerAvailable)
-  const composerSettingsNote = getComposerSettingsNote(apiReadiness, composerAvailable)
+  const composerProviderLabel = getComposerProviderLabel(apiReadiness, composerSettingsState.runtime)
+  const composerModelLabel = getComposerModelLabel(apiReadiness, composerSettingsState.runtime)
+  const composerStatusLabel = getComposerStatusLabel(apiReadiness, composerSettingsState.runtime)
+  const composerAccessLabel = getComposerAccessLabel(apiReadiness, composerAvailable, composerSettingsState.runtime)
+  const composerSettingsNote = getComposerSettingsNote(apiReadiness, composerAvailable, composerSettingsState.runtime)
+  const composerConfigBusy = isComposerSaving || isComposerTesting || composerSettingsState.loadState === 'loading'
+  const composerSourceLabel = composerSettingsState.runtime?.source === 'settings' ? 'Settings' : 'Server default'
 
   useEffect(() => {
     setDraft(getProfileDraftFromUser(currentUser))
   }, [currentUser])
+
+  useEffect(() => {
+    setComposerDraft(getComposerSettingsDraft(composerSettingsState))
+  }, [composerSettingsState])
 
   const updateDraft = (field: keyof ProfileDraft, value: string) => {
     setDraft((currentDraft) => ({
@@ -7668,6 +7852,21 @@ function SettingsDialog({
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSaveProfile(draft)
+  }
+
+  function updateComposerDraft<Field extends keyof ComposerSettingsDraft>(
+    field: Field,
+    value: ComposerSettingsDraft[Field],
+  ) {
+    setComposerDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }))
+  }
+
+  const handleComposerSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onComposerSave(composerDraft)
   }
 
   const accountStatus = currentUser && !currentUser.isLocal ? currentUser.email : 'Local-only workspace'
@@ -7809,7 +8008,7 @@ function SettingsDialog({
             </label>
           </section>
 
-          <section className="settings-section" aria-label="Composer settings">
+          <form className="settings-section" aria-label="Composer settings" onSubmit={handleComposerSubmit}>
             <div className="settings-section__header">
               <div>
                 <span>Composer</span>
@@ -7831,10 +8030,112 @@ function SettingsDialog({
                 <span>Access</span>
                 <strong>{composerAccessLabel}</strong>
               </div>
+              <div className="settings-runtimeItem">
+                <span>Source</span>
+                <strong>{composerSourceLabel}</strong>
+              </div>
             </div>
 
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Provider</span>
+              <div className="settings-choiceGrid settings-choiceGrid--composer" role="radiogroup" aria-label="Composer provider">
+                {composerProviderOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`settings-choice ${composerDraft.provider === option.value ? 'settings-choice--active' : ''}`}
+                    disabled={composerConfigBusy}
+                    onClick={() => updateComposerDraft('provider', option.value)}
+                    role="radio"
+                    aria-checked={composerDraft.provider === option.value}
+                  >
+                    <span
+                      className={`settings-choice__dot settings-choice__dot--provider-${option.value}`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-profileGrid">
+              <label className="settings-field">
+                <span>Model</span>
+                <input
+                  value={composerDraft.model}
+                  onChange={(event) => updateComposerDraft('model', event.target.value)}
+                  placeholder={getComposerModelPlaceholder(composerDraft.provider)}
+                  disabled={composerConfigBusy || composerDraft.provider === 'server'}
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Ollama URL</span>
+                <input
+                  value={composerDraft.ollamaBaseUrl}
+                  onChange={(event) => updateComposerDraft('ollamaBaseUrl', event.target.value)}
+                  placeholder="http://127.0.0.1:11434"
+                  disabled={composerConfigBusy || composerDraft.provider !== 'ollama'}
+                />
+              </label>
+            </div>
+
+            <div className="settings-profileGrid">
+              <label className="settings-field">
+                <span>Gemini API key</span>
+                <input
+                  autoComplete="off"
+                  type="password"
+                  value={composerDraft.apiKey}
+                  onChange={(event) => updateComposerDraft('apiKey', event.target.value)}
+                  placeholder={composerSettingsState.settings.apiKeyConfigured ? 'Saved key active' : 'Paste API key'}
+                  disabled={composerConfigBusy || composerDraft.provider !== 'gemini'}
+                />
+              </label>
+
+              <label className="settings-toggle settings-toggle--inline">
+                <input
+                  type="checkbox"
+                  checked={composerDraft.clearApiKey}
+                  disabled={composerConfigBusy || !composerSettingsState.settings.apiKeyConfigured}
+                  onChange={(event) => updateComposerDraft('clearApiKey', event.target.checked)}
+                />
+                <span>
+                  <strong>Clear saved key</strong>
+                  <small>{composerSettingsState.settings.apiKeyConfigured ? 'Remove the stored key on save.' : 'No stored key.'}</small>
+                </span>
+              </label>
+            </div>
+
+            {composerSettingsError && <div className="settings-error">{composerSettingsError}</div>}
+            {composerSettingsMessage && <div className="settings-success">{composerSettingsMessage}</div>}
+
             <p className="settings-note">{composerSettingsNote}</p>
-          </section>
+
+            <div className="settings-section__actions">
+              <button type="button" className="ghost-button" onClick={onComposerRefresh} disabled={composerConfigBusy}>
+                <Icon name="redo" />
+                <span>Refresh</span>
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={onComposerTest}
+                disabled={composerConfigBusy || composerSettingsState.loadState !== 'ready'}
+              >
+                <Icon name="spark" />
+                <span>{isComposerTesting ? 'Testing...' : 'Test'}</span>
+              </button>
+              <button type="submit" className="primary-button" disabled={composerConfigBusy}>
+                <Icon name="check" />
+                <span>{isComposerSaving ? 'Saving...' : 'Save Composer'}</span>
+              </button>
+            </div>
+          </form>
 
           <section className="settings-section" aria-label="Data and account settings">
             <div className="settings-section__header">
@@ -7901,8 +8202,33 @@ function SettingsDialog({
   )
 }
 
-function getComposerRuntimeLabel(readiness: ApiReadinessState) {
-  const provider = readiness.aiProvider.toLowerCase()
+function getComposerSettingsDraft(state: ComposerSettingsState): ComposerSettingsDraft {
+  return {
+    apiKey: '',
+    clearApiKey: false,
+    model: state.settings.model,
+    ollamaBaseUrl: state.settings.ollamaBaseUrl,
+    provider: state.settings.provider,
+  }
+}
+
+function getComposerModelPlaceholder(provider: ComposerProviderValue) {
+  switch (provider) {
+    case 'gemini':
+      return 'gemini-3-flash-preview'
+    case 'ollama':
+      return 'llama3.1'
+    case 'gemini-cli':
+      return 'Gemini CLI default'
+    case 'codex-cli':
+      return 'Codex CLI default'
+    default:
+      return 'Server default'
+  }
+}
+
+function getComposerRuntimeLabel(providerValue: string) {
+  const provider = providerValue.toLowerCase()
 
   if (provider === 'ollama') {
     return 'Ollama'
@@ -7923,7 +8249,11 @@ function getComposerRuntimeLabel(readiness: ApiReadinessState) {
   return 'Composer'
 }
 
-function getComposerProviderLabel(readiness: ApiReadinessState) {
+function getComposerProviderLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return getComposerProviderLabelFromProvider(runtime.provider)
+  }
+
   if (readiness.loadState === 'loading') {
     return 'Checking...'
   }
@@ -7932,7 +8262,11 @@ function getComposerProviderLabel(readiness: ApiReadinessState) {
     return 'API unavailable'
   }
 
-  const provider = readiness.aiProvider.toLowerCase()
+  return getComposerProviderLabelFromProvider(readiness.aiProvider)
+}
+
+function getComposerProviderLabelFromProvider(providerValue: string) {
+  const provider = providerValue.toLowerCase()
 
   if (provider === 'ollama') {
     return 'Ollama local'
@@ -7954,10 +8288,14 @@ function getComposerProviderLabel(readiness: ApiReadinessState) {
     return 'Disabled'
   }
 
-  return humanizeStatusLabel(readiness.aiProvider)
+  return humanizeStatusLabel(providerValue)
 }
 
-function getComposerModelLabel(readiness: ApiReadinessState) {
+function getComposerModelLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return runtime.model || 'Not reported'
+  }
+
   if (readiness.loadState === 'loading') {
     return 'Checking...'
   }
@@ -7973,7 +8311,11 @@ function getComposerModelLabel(readiness: ApiReadinessState) {
   return readiness.aiModel || 'Not reported'
 }
 
-function getComposerStatusLabel(readiness: ApiReadinessState) {
+function getComposerStatusLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return getComposerStatusLabelFromStatus(runtime.status)
+  }
+
   if (readiness.loadState === 'loading') {
     return 'Checking'
   }
@@ -7982,7 +8324,11 @@ function getComposerStatusLabel(readiness: ApiReadinessState) {
     return 'Unavailable'
   }
 
-  switch (readiness.aiComposer) {
+  return getComposerStatusLabelFromStatus(readiness.aiComposer)
+}
+
+function getComposerStatusLabelFromStatus(status: string) {
+  switch (status) {
     case 'ok':
       return 'Ready'
     case 'missing':
@@ -7992,11 +8338,23 @@ function getComposerStatusLabel(readiness: ApiReadinessState) {
     case 'disabled':
       return 'Disabled'
     default:
-      return humanizeStatusLabel(readiness.aiComposer)
+      return humanizeStatusLabel(status)
   }
 }
 
-function getComposerAccessLabel(readiness: ApiReadinessState, composerAvailable: boolean) {
+function getComposerAccessLabel(
+  readiness: ApiReadinessState,
+  composerAvailable: boolean,
+  runtime: ComposerRuntimeState | null,
+) {
+  if (runtime?.access === 'local-enabled') {
+    return 'Local workspace'
+  }
+
+  if (runtime) {
+    return composerAvailable ? 'Approved account' : 'Invite required'
+  }
+
   if (readiness.loadState === 'loading') {
     return 'Checking...'
   }
@@ -8012,36 +8370,43 @@ function getComposerAccessLabel(readiness: ApiReadinessState, composerAvailable:
   return composerAvailable ? 'Approved account' : 'Invite required'
 }
 
-function getComposerSettingsNote(readiness: ApiReadinessState, composerAvailable: boolean) {
-  if (readiness.loadState === 'loading') {
+function getComposerSettingsNote(
+  readiness: ApiReadinessState,
+  composerAvailable: boolean,
+  runtime: ComposerRuntimeState | null,
+) {
+  const provider = runtime?.provider ?? readiness.aiProvider
+  const status = runtime?.status ?? readiness.aiComposer
+
+  if (!runtime && readiness.loadState === 'loading') {
     return 'Checking the API runtime so Settings can show which Composer provider is active.'
   }
 
-  if (readiness.loadState === 'unavailable') {
+  if (!runtime && readiness.loadState === 'unavailable') {
     return 'The web app cannot reach the API right now. Start the API server to verify the active Composer provider.'
   }
 
-  if (readiness.aiComposer === 'disabled') {
+  if (status === 'disabled') {
     return 'Composer API calls are disabled. Manual notes and local writing still work.'
   }
 
-  if (readiness.aiProvider === 'ollama') {
+  if (provider === 'ollama') {
     return composerAvailable
       ? 'Composer requests go through the Essence API to your local Ollama model. The browser does not call Ollama directly.'
       : 'The API is set to Ollama, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
   }
 
-  if (readiness.aiProvider === 'gemini') {
+  if (provider === 'gemini') {
     return 'Composer requests go through the Essence API to Gemini. The Gemini key stays server-only.'
   }
 
-  if (readiness.aiProvider === 'gemini-cli') {
+  if (provider === 'gemini-cli') {
     return composerAvailable
       ? 'Composer requests go through the Essence API to your local Gemini CLI. The browser never starts CLI processes directly.'
       : 'The API is set to Gemini CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
   }
 
-  if (readiness.aiProvider === 'codex-cli') {
+  if (provider === 'codex-cli') {
     return composerAvailable
       ? 'Composer requests go through the Essence API to your local Codex CLI in a read-only, non-interactive run.'
       : 'The API is set to Codex CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
@@ -8819,6 +9184,143 @@ async function fetchApiReadiness(): Promise<ApiReadinessState> {
     loadState: 'ready',
     ok: payload.ok === true,
   }
+}
+
+async function fetchRemoteComposerSettings(): Promise<ComposerSettingsState> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings'), {
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to load Composer settings: ${response.status}`)
+  }
+
+  return normalizeRemoteComposerSettings(await response.json().catch(() => ({})))
+}
+
+async function updateRemoteComposerSettings(draft: ComposerSettingsDraft): Promise<ComposerSettingsState> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings'), {
+    method: 'PUT',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(draft),
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to update Composer settings: ${response.status}`)
+  }
+
+  return normalizeRemoteComposerSettings(await response.json().catch(() => ({})))
+}
+
+async function testRemoteComposerSettings(): Promise<{ message: string; runtime: ComposerRuntimeState | null }> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings/test'), {
+    method: 'POST',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to test Composer settings: ${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as { result?: unknown; runtime?: unknown }
+  const result = payload.result && typeof payload.result === 'object' ? payload.result as { message?: unknown } : {}
+
+  return {
+    message: typeof result.message === 'string' && result.message.trim() ? result.message.trim() : 'Composer runtime checked.',
+    runtime: normalizeRemoteComposerRuntime(payload.runtime),
+  }
+}
+
+function normalizeRemoteComposerSettings(payload: unknown): ComposerSettingsState {
+  const candidate = (payload ?? {}) as { runtime?: unknown; settings?: unknown }
+  const settings = candidate.settings && typeof candidate.settings === 'object'
+    ? candidate.settings as Record<string, unknown>
+    : {}
+
+  return {
+    error: null,
+    loadState: 'ready',
+    runtime: normalizeRemoteComposerRuntime(candidate.runtime),
+    settings: {
+      apiKeyConfigured: settings.apiKeyConfigured === true,
+      apiKeyProvider: normalizeStringValue(settings.apiKeyProvider),
+      apiKeyUpdatedAt: normalizeNullableStringValue(settings.apiKeyUpdatedAt),
+      model: normalizeStringValue(settings.model),
+      ollamaBaseUrl: normalizeStringValue(settings.ollamaBaseUrl),
+      provider: normalizeComposerProviderValue(settings.provider),
+      updatedAt: normalizeNullableStringValue(settings.updatedAt),
+    },
+  }
+}
+
+function normalizeRemoteComposerRuntime(value: unknown): ComposerRuntimeState | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const candidate = value as Record<string, unknown>
+  const provider = normalizeStringValue(candidate.provider).toLowerCase()
+
+  return {
+    access: normalizeStringValue(candidate.access, 'unknown'),
+    apiKeyConfigured: candidate.apiKeyConfigured === true,
+    localOnly: candidate.localOnly === true,
+    model: normalizeStringValue(candidate.model),
+    provider: isComposerRuntimeProvider(provider) ? provider : 'unknown',
+    source: normalizeStringValue(candidate.source, 'environment'),
+    status: normalizeStringValue(candidate.status, 'unknown'),
+  }
+}
+
+function normalizeComposerProviderValue(value: unknown): ComposerProviderValue {
+  const provider = normalizeStringValue(value).toLowerCase()
+
+  if (
+    provider === 'gemini' ||
+    provider === 'ollama' ||
+    provider === 'gemini-cli' ||
+    provider === 'codex-cli'
+  ) {
+    return provider
+  }
+
+  return 'server'
+}
+
+function isComposerRuntimeProvider(
+  value: string,
+): value is Exclude<ComposerProviderValue, 'server'> | 'disabled' | 'unknown' {
+  return (
+    value === 'gemini' ||
+    value === 'ollama' ||
+    value === 'gemini-cli' ||
+    value === 'codex-cli' ||
+    value === 'disabled' ||
+    value === 'unknown'
+  )
+}
+
+function normalizeStringValue(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+function normalizeNullableStringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function normalizeReadinessField(value: unknown, fallback: string) {

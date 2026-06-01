@@ -36,6 +36,7 @@ beforeEach(() => {
 })
 
 after(async () => {
+  await pool.query("delete from composer_settings where user_id = 'local'")
   await pool.query("delete from approved_users where email like 'gate1-test-%@example.com'")
   await pool.query("delete from users where email like 'gate1-test-%@example.com'")
 
@@ -175,6 +176,52 @@ test('Codex CLI output schema makes optional object fields nullable and required
   assert.deepEqual(blockSchema.properties.text.type, ['string', 'null'])
   assert.deepEqual(blockSchema.properties.items.type, ['array', 'null'])
   assert.deepEqual(blockSchema.properties.citation.type, ['string', 'null'])
+})
+
+test('local Composer settings can override the environment provider', async () => {
+  const previousAiAllowLocalUser = process.env.AI_ALLOW_LOCAL_USER
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousOllamaModel = process.env.OLLAMA_MODEL
+
+  process.env.AI_ALLOW_LOCAL_USER = 'true'
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'gemini'
+  process.env.OLLAMA_MODEL = 'env-ollama-model'
+
+  try {
+    await pool.query("delete from composer_settings where user_id = 'local'")
+
+    const saveResponse = await apiRequest(
+      '/api/composer/settings',
+      {
+        model: 'llama3.2',
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        provider: 'ollama',
+      },
+      { method: 'PUT' },
+    )
+
+    assert.equal(saveResponse.status, 200)
+    assert.equal(saveResponse.body.settings.provider, 'ollama')
+    assert.equal(saveResponse.body.settings.model, 'llama3.2')
+    assert.equal(saveResponse.body.runtime.provider, 'ollama')
+    assert.equal(saveResponse.body.runtime.model, 'llama3.2')
+    assert.equal(saveResponse.body.runtime.source, 'settings')
+    assert.equal(saveResponse.body.runtime.status, 'ok')
+
+    const getResponse = await apiRequest('/api/composer/settings', undefined, { method: 'GET' })
+
+    assert.equal(getResponse.status, 200)
+    assert.equal(getResponse.body.settings.provider, 'ollama')
+    assert.equal(getResponse.body.runtime.provider, 'ollama')
+  } finally {
+    await pool.query("delete from composer_settings where user_id = 'local'")
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousAiAllowLocalUser)
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('OLLAMA_MODEL', previousOllamaModel)
+  }
 })
 
 test('CORS preflight allows configured development origin', async () => {

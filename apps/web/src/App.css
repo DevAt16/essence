@@ -3101,13 +3101,25 @@
   box-shadow: 0 0 0 4px var(--focus-soft);
 }
 
-.settings-error {
+.settings-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.settings-error,
+.settings-success {
   border: 1px solid rgba(194, 91, 82, 0.22);
   border-radius: 12px;
   background: rgba(163, 65, 58, 0.09);
   color: #f2c0ba;
   padding: 10px 12px;
   font-size: 0.86rem;
+}
+
+.settings-success {
+  border-color: rgba(174, 205, 145, 0.22);
+  background: rgba(116, 145, 92, 0.11);
+  color: #d7ecc4;
 }
 
 .settings-section__actions {
@@ -3121,6 +3133,10 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.settings-choiceGrid--composer {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .settings-choiceBlock {
@@ -3154,6 +3170,11 @@
   border-color: var(--line-strong);
   background: var(--paper-soft);
   color: var(--ink);
+}
+
+.settings-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .settings-choice__dot {
@@ -3203,6 +3224,27 @@
     0 0 14px rgba(178, 158, 119, 0.18);
 }
 
+.settings-choice__dot--provider-server {
+  color: #d7c9ae;
+  box-shadow: 0 0 12px rgba(215, 201, 174, 0.24);
+}
+
+.settings-choice__dot--provider-gemini {
+  color: #86b7ff;
+  box-shadow: 0 0 14px rgba(134, 183, 255, 0.42);
+}
+
+.settings-choice__dot--provider-ollama {
+  color: #a9d58d;
+  box-shadow: 0 0 14px rgba(169, 213, 141, 0.38);
+}
+
+.settings-choice__dot--provider-gemini-cli,
+.settings-choice__dot--provider-codex-cli {
+  color: #f3d18c;
+  box-shadow: 0 0 14px rgba(243, 209, 140, 0.36);
+}
+
 .settings-choice span:last-child {
   min-width: 0;
   display: grid;
@@ -3246,6 +3288,15 @@
   font-size: 0.92rem;
 }
 
+.settings-toggle--inline {
+  min-height: 42px;
+  align-content: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 9px 12px;
+}
+
 .settings-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3254,7 +3305,7 @@
 
 .settings-runtimeGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
