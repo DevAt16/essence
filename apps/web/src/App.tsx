@@ -326,6 +326,39 @@ interface ComposerRequestContext {
   recent: ComposerContextItem[]
 }
 
+interface ComposerNoteContextBlock {
+  role: 'before' | 'selected' | 'after'
+  type: BlockType
+  text: string
+}
+
+interface ComposerNoteContextReference {
+  status?: string
+  summary?: string
+  title: string
+}
+
+interface ComposerNoteContextSource {
+  author: string
+  sourceType: NoteSourceKind
+  title: string
+  url: string
+  year: string
+}
+
+interface ComposerNoteContextPack {
+  backlinks: ComposerNoteContextReference[]
+  blockCount: number
+  collection: string
+  currentHeading: string
+  folderPath: string
+  linkedNotes: ComposerNoteContextReference[]
+  neighboringBlocks: ComposerNoteContextBlock[]
+  outline: string[]
+  sources: ComposerNoteContextSource[]
+  wordCount: number
+}
+
 type AppDialogState =
   | {
       confirmLabel: string
@@ -1809,6 +1842,21 @@ function App() {
         : [],
     [activeNote, notes, notesByNormalizedTitle],
   )
+  const activeComposerContextPack = useMemo(
+    () =>
+      activeNote
+        ? buildComposerNoteContextPack({
+            backlinks: activeBacklinks,
+            collectionNameById,
+            foldersById,
+            linkedNotes: activeLinkedNotes,
+            note: activeNote,
+            selectedBlockId: noteViewMode === 'edit' ? selectedBlockId : null,
+          })
+        : null,
+    [activeBacklinks, activeLinkedNotes, activeNote, collectionNameById, foldersById, noteViewMode, selectedBlockId],
+  )
+  const composerDockContextSummary = getComposerContextSummary(activeComposerContextPack)
   const selectedNoteRevision = useMemo(
     () => noteHistoryEntries.find((entry) => entry.id === selectedNoteRevisionId) ?? noteHistoryEntries[0] ?? null,
     [noteHistoryEntries, selectedNoteRevisionId],
@@ -3009,6 +3057,7 @@ function App() {
         }),
         instruction,
         note: {
+          contextPack: activeComposerContextPack,
           selectedText,
           status: activeNote.status,
           tags: activeNote.tags,
@@ -4107,6 +4156,7 @@ function App() {
             canReplaceAssist={Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')}
             canUseComposer={composerAvailable}
             contextLabel={composerDockContext}
+            contextSummary={composerDockContextSummary}
             draft={aiDraft}
             draftMode={composerDockDraftMode}
             error={composerDockError ?? aiAssistError ?? aiDraftError}
@@ -4725,6 +4775,7 @@ function ComposerDock({
   canReplaceAssist,
   canUseComposer,
   contextLabel,
+  contextSummary,
   draft,
   draftMode,
   error,
@@ -4747,6 +4798,7 @@ function ComposerDock({
   canReplaceAssist: boolean
   canUseComposer: boolean
   contextLabel: string
+  contextSummary: string
   draft: AiDraft | null
   draftMode: ComposerDockDraftMode
   error: string | null
@@ -4823,6 +4875,7 @@ function ComposerDock({
         <div>
           <span>{runtimeLabel}</span>
           <strong>{contextLabel}</strong>
+          {contextSummary ? <small className="composer-dock__contextSummary">{contextSummary}</small> : null}
         </div>
         <div className="composer-dock__headerActions">
           <button type="button" className="icon-button" onClick={onToggle} aria-label="Close Composer dock" title="Close">
@@ -9661,6 +9714,7 @@ async function generateRemoteAiAssist(request: {
   context: ComposerRequestContext
   instruction?: string
   note: {
+    contextPack?: ComposerNoteContextPack | null
     selectedText: string
     status: string
     tags: string[]
