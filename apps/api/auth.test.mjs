@@ -6,6 +6,7 @@ import { after, before, beforeEach, test } from 'node:test'
 import {
   app,
   clearRateLimitBucketsForTests,
+  createCodexCliOutputSchema,
   setSupabaseOtpClientForTests,
 } from './index.mjs'
 import {
@@ -130,6 +131,50 @@ test('ready endpoint reports Codex CLI Composer provider', async () => {
     restoreEnvValue('AI_PROVIDER', previousAiProvider)
     restoreEnvValue('CODEX_CLI_MODEL', previousCodexCliModel)
   }
+})
+
+test('Codex CLI output schema makes optional object fields nullable and required', () => {
+  const schema = createCodexCliOutputSchema({
+    type: 'object',
+    properties: {
+      blocks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['paragraph', 'heading', 'quote', 'bullet-list', 'code'],
+            },
+            text: {
+              type: 'string',
+            },
+            items: {
+              type: 'array',
+              items: {
+                type: 'string',
+              },
+            },
+            citation: {
+              type: 'string',
+            },
+          },
+          required: ['type'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['blocks'],
+    additionalProperties: false,
+  })
+
+  const blockSchema = schema.properties.blocks.items
+
+  assert.deepEqual(blockSchema.required, ['type', 'text', 'items', 'citation'])
+  assert.equal(blockSchema.properties.type.type, 'string')
+  assert.deepEqual(blockSchema.properties.text.type, ['string', 'null'])
+  assert.deepEqual(blockSchema.properties.items.type, ['array', 'null'])
+  assert.deepEqual(blockSchema.properties.citation.type, ['string', 'null'])
 })
 
 test('CORS preflight allows configured development origin', async () => {

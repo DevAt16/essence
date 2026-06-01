@@ -609,7 +609,7 @@ if (isMainModule()) {
   })
 }
 
-export { app }
+export { app, createCodexCliOutputSchema }
 
 function configureStaticWeb(expressApp) {
   if (!shouldServeWeb()) {
@@ -1732,7 +1732,7 @@ async function generateCodexCliJson(prompt, schema, options = {}) {
   args.push('-')
 
   try {
-    await writeFile(schemaPath, JSON.stringify(schema), 'utf8')
+    await writeFile(schemaPath, JSON.stringify(createCodexCliOutputSchema(schema)), 'utf8')
     await runCodexCli(args, codexPrompt, { ...options, timeoutMs })
 
     const responseText = (await readFile(outputPath, 'utf8').catch(() => '')).trim()
@@ -1753,6 +1753,81 @@ async function generateCodexCliJson(prompt, schema, options = {}) {
   } finally {
     await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
   }
+}
+
+function createCodexCliOutputSchema(schema) {
+  return makeOpenAiStrictSchema(schema)
+}
+
+function makeOpenAiStrictSchema(value) {
+  if (Array.isArray(value)) {
+    return value.map(makeOpenAiStrictSchema)
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  const next = { ...value }
+
+  if (next.properties && typeof next.properties === 'object' && !Array.isArray(next.properties)) {
+    const originalRequired = Array.isArray(next.required) ? new Set(next.required) : new Set()
+    const properties = Object.entries(next.properties)
+
+    next.properties = Object.fromEntries(
+      properties.map(([key, propertySchema]) => {
+        const strictPropertySchema = makeOpenAiStrictSchema(propertySchema)
+        return [key, originalRequired.has(key) ? strictPropertySchema : makeSchemaNullable(strictPropertySchema)]
+      }),
+    )
+    next.required = properties.map(([key]) => key)
+
+    if (next.additionalProperties === undefined) {
+      next.additionalProperties = false
+    }
+  }
+
+  if (next.items) {
+    next.items = makeOpenAiStrictSchema(next.items)
+  }
+
+  if (Array.isArray(next.anyOf)) {
+    next.anyOf = next.anyOf.map(makeOpenAiStrictSchema)
+  }
+
+  if (Array.isArray(next.oneOf)) {
+    next.oneOf = next.oneOf.map(makeOpenAiStrictSchema)
+  }
+
+  if (Array.isArray(next.allOf)) {
+    next.allOf = next.allOf.map(makeOpenAiStrictSchema)
+  }
+
+  return next
+}
+
+function makeSchemaNullable(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return schema
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    if (schema.anyOf.some((option) => option?.type === 'null')) {
+      return schema
+    }
+
+    return { ...schema, anyOf: [...schema.anyOf, { type: 'null' }] }
+  }
+
+  if (Array.isArray(schema.type)) {
+    return schema.type.includes('null') ? schema : { ...schema, type: [...schema.type, 'null'] }
+  }
+
+  if (typeof schema.type === 'string') {
+    return schema.type === 'null' ? schema : { ...schema, type: [schema.type, 'null'] }
+  }
+
+  return { anyOf: [schema, { type: 'null' }] }
 }
 
 async function runCodexCli(args, input, options = {}) {
