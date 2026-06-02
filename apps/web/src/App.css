@@ -4548,6 +4548,18 @@
   line-height: 1.05;
 }
 
+.library-screen .note-grid > .note-card h2 {
+  font-size: clamp(1.18rem, 1.05vw, 1.32rem);
+  letter-spacing: -0.012em;
+  line-height: 1.18;
+}
+
+.library-screen .note-grid > .note-card--feature h2 {
+  font-size: clamp(1.42rem, 1.5vw, 1.78rem);
+  letter-spacing: -0.018em;
+  line-height: 1.08;
+}
+
 .note-card p {
   margin: 0;
   color: var(--ink-subtle);
