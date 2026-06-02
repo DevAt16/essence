@@ -7355,7 +7355,12 @@ function FocusModeBar({
       <div className="focus-mode-bar__actions">
         <span className="focus-mode-bar__meta">{`${progress}% read / ${wordCount} words`}</span>
         <ModeToggle mode={mode} onChange={onModeChange} />
-        <button type="button" className="utility-button" onClick={onExit} title="Exit Focus Mode (Esc)">
+        <button
+          type="button"
+          className="utility-button focus-mode-bar__exit"
+          onClick={onExit}
+          title="Exit Focus Mode (Esc)"
+        >
           <Icon name="close" />
           <span>Exit</span>
         </button>
