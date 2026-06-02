@@ -89,6 +89,11 @@ interface TextSelectionRange {
   end: number
 }
 
+interface EditorSelectionContext {
+  blockId: string | null
+  text: string
+}
+
 interface Note {
   id: string
   title: string
@@ -1059,6 +1064,7 @@ function App() {
   const [zenMode, setZenMode] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>('edit')
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
+  const [selectedEditorText, setSelectedEditorText] = useState('')
   const [, setBlockFocusRequest] = useState<BlockFocusRequest | null>(null)
   const [slashMenuState, setSlashMenuState] = useState<SlashMenuState | null>(null)
   const [linkMenuState, setLinkMenuState] = useState<LinkMenuState | null>(null)
@@ -1086,6 +1092,7 @@ function App() {
   const [composerDockPrompt, setComposerDockPrompt] = useState('')
   const [composerDockDraftMode, setComposerDockDraftMode] = useState<ComposerDockDraftMode>('auto')
   const [composerDockError, setComposerDockError] = useState<string | null>(null)
+  const [composerBusyMessage, setComposerBusyMessage] = useState('')
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1271,7 +1278,15 @@ function App() {
     [activeNote, selectedBlockId],
   )
   const selectedBlockText = selectedBlock ? getBlockTextValue(selectedBlock) : ''
-  const composerDockContext = getComposerDockContextLabel({ activeNote, selectedBlockText, view })
+  const selectedEditorTextTrimmed = selectedEditorText.trim()
+  const activeComposerSelectionText = selectedEditorTextTrimmed || selectedBlockText
+  const composerSelectionPreview = selectedEditorTextTrimmed ? summarizeInlineText(selectedEditorTextTrimmed, 180) : ''
+  const composerDockContext = getComposerDockContextLabel({
+    activeNote,
+    hasTextSelection: selectedEditorTextTrimmed.length > 0,
+    selectedBlockText: activeComposerSelectionText,
+    view,
+  })
 
   const createHistorySnapshot = useCallback(
     (): HistorySnapshot => ({
@@ -1310,10 +1325,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    setSelectedBlockId(activeNote?.blocks[0]?.id ?? null)
+    setSelectedBlockId((currentBlockId) => {
+      if (currentBlockId && activeNote?.blocks.some((block) => block.id === currentBlockId)) {
+        return currentBlockId
+      }
+
+      return activeNote?.blocks[0]?.id ?? null
+    })
     setSlashMenuState(null)
     setLinkMenuState(null)
-  }, [activeNoteId, activeNote])
+  }, [activeNote])
+
+  useEffect(() => {
+    setSelectedEditorText('')
+  }, [activeNoteId, noteViewMode, view])
 
   useEffect(() => {
     setAiAssistResult(null)
@@ -1856,7 +1881,7 @@ function App() {
         : null,
     [activeBacklinks, activeLinkedNotes, activeNote, collectionNameById, foldersById, noteViewMode, selectedBlockId, view],
   )
-  const composerDockContextSummary = getComposerContextSummary(activeComposerContextPack)
+  const composerDockContextSummary = getComposerContextSummary(activeComposerContextPack, selectedEditorTextTrimmed)
   const selectedNoteRevision = useMemo(
     () => noteHistoryEntries.find((entry) => entry.id === selectedNoteRevisionId) ?? noteHistoryEntries[0] ?? null,
     [noteHistoryEntries, selectedNoteRevisionId],
@@ -2937,6 +2962,7 @@ function App() {
     }
 
     setAiGenerating(true)
+    setComposerBusyMessage('Drafting a new note...')
     setAiDraftError(null)
     setAiDraftTopic(topic)
     setAiDraftCategory(categoryOverride)
@@ -2970,6 +2996,7 @@ function App() {
       return false
     } finally {
       setAiGenerating(false)
+      setComposerBusyMessage('')
     }
   }
 
@@ -3026,7 +3053,7 @@ function App() {
 
     const effectiveAction = actionOverride
     const instruction = instructionOverride.trim()
-    const selectedText = noteViewMode === 'edit' ? selectedBlockText : ''
+    const selectedText = noteViewMode === 'edit' ? activeComposerSelectionText : ''
     const noteText = getPlainTextFromBlocks(activeNote.blocks)
 
     if (noteText.length < 3 && selectedText.length < 3) {
@@ -3045,6 +3072,13 @@ function App() {
     }
 
     setAiAssisting(true)
+    setComposerBusyMessage(
+      selectedEditorTextTrimmed.length > 0
+        ? 'Reading the highlighted text with the note context...'
+        : selectedText.trim()
+          ? 'Working from the selected block and surrounding note...'
+          : 'Working from the full note context...',
+    )
     setAiAssistError(null)
     setAiAssistAction(effectiveAction)
 
@@ -3090,6 +3124,7 @@ function App() {
       return false
     } finally {
       setAiAssisting(false)
+      setComposerBusyMessage('')
     }
   }
 
@@ -3110,6 +3145,7 @@ function App() {
       editorDoc: appendBlocksToEditorDocument(note, nextBlocks),
     }))
     setSelectedBlockId(nextBlocks[0].id)
+    setSelectedEditorText('')
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
     setComposerDockOpen(false)
@@ -3133,6 +3169,7 @@ function App() {
       editorDoc: replaceBlockInEditorDocument(note, selectedBlockId, nextBlocks),
     }))
     setSelectedBlockId(nextBlocks[0].id)
+    setSelectedEditorText('')
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
     setComposerDockOpen(false)
@@ -3183,6 +3220,22 @@ function App() {
       return
     }
 
+    setComposerDockError(null)
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiDraft(null)
+    setAiDraftError(null)
+
+    await generateAiAssist(action)
+  }
+
+  const runEditorSelectionComposerAction = async (action: AiAssistAction) => {
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockOpen(true)
     setComposerDockError(null)
     setAiAssistResult(null)
     setAiAssistError(null)
@@ -3744,6 +3797,14 @@ function App() {
     setSelectedBlockId(blockId)
   }
 
+  const handleEditorSelectionChange = ({ blockId, text }: EditorSelectionContext) => {
+    if (blockId) {
+      setSelectedBlockId(blockId)
+    }
+
+    setSelectedEditorText(text)
+  }
+
   const handleCollectionChange = (event: ChangeEvent<HTMLSelectElement>) => {
     if (!activeNote) {
       return
@@ -4160,6 +4221,7 @@ function App() {
             draft={aiDraft}
             draftMode={composerDockDraftMode}
             error={composerDockError ?? aiAssistError ?? aiDraftError}
+            busyMessage={composerBusyMessage}
             isBusy={composerBusy}
             isOpen={composerDockOpen}
             onAction={runComposerDockAction}
@@ -4177,7 +4239,9 @@ function App() {
             onSubmit={submitComposerDockPrompt}
             onToggle={toggleComposerDock}
             prompt={composerDockPrompt}
+            replaceAssistLabel={selectedEditorTextTrimmed ? 'Replace block' : 'Replace'}
             runtimeLabel={composerRuntimeLabel}
+            selectionPreview={composerSelectionPreview}
             showNoteActions={Boolean(activeNote && view === 'editor')}
           />
         </>
@@ -4545,10 +4609,13 @@ function App() {
                           <Suspense fallback={<ModernRichEditorFallback title={activeNote.title} />}>
                             <ModernRichEditor
                               blocks={activeNote.blocks}
+                              composerAvailable={composerAvailable}
                               editorDoc={activeNote.editorDoc}
                               key={activeNote.id}
                               onChange={replaceActiveNoteBlocks}
-                              onFocus={() => setSelectedBlockId(activeNote.blocks[0]?.id ?? null)}
+                              onComposerAction={runEditorSelectionComposerAction}
+                              onFocus={() => setSelectedBlockId((currentBlockId) => currentBlockId ?? activeNote.blocks[0]?.id ?? null)}
+                              onSelectionChange={handleEditorSelectionChange}
                               onTitleChange={handleTitleChange}
                               title={activeNote.title}
                             />
@@ -4772,6 +4839,7 @@ function ModernRichEditorFallback({ title }: { title: string }) {
 
 function ComposerDock({
   assistResult,
+  busyMessage,
   canReplaceAssist,
   canUseComposer,
   contextLabel,
@@ -4791,10 +4859,13 @@ function ComposerDock({
   onSubmit,
   onToggle,
   prompt,
+  replaceAssistLabel,
   runtimeLabel,
+  selectionPreview,
   showNoteActions,
 }: {
   assistResult: AiAssistResult | null
+  busyMessage: string
   canReplaceAssist: boolean
   canUseComposer: boolean
   contextLabel: string
@@ -4814,7 +4885,9 @@ function ComposerDock({
   onSubmit: () => void
   onToggle: () => void
   prompt: string
+  replaceAssistLabel: string
   runtimeLabel: string
+  selectionPreview: string
   showNoteActions: boolean
 }) {
   const quickActions: Array<{ action: AiAssistAction; label: string }> = [
@@ -4875,6 +4948,7 @@ function ComposerDock({
         <div>
           <span>{runtimeLabel}</span>
           <strong>{contextLabel}</strong>
+          {selectionPreview ? <small className="composer-dock__selectionPreview">{selectionPreview}</small> : null}
           {contextSummary ? <small className="composer-dock__contextSummary">{contextSummary}</small> : null}
         </div>
         <div className="composer-dock__headerActions">
@@ -4920,8 +4994,11 @@ function ComposerDock({
         <div className="composer-dock__thinking" aria-live="polite">
           <span className="composer-dock__spinner" aria-hidden="true" />
           <div>
-            <strong>Composer is thinking</strong>
-            <p>{runtimeLabel === 'Composer' ? 'Generating a response...' : `Generating with ${runtimeLabel}...`}</p>
+            <strong>{selectionPreview ? 'Reading selection' : 'Composer is thinking'}</strong>
+            <p>
+              {busyMessage ||
+                (runtimeLabel === 'Composer' ? 'Generating a response...' : `Generating with ${runtimeLabel}...`)}
+            </p>
           </div>
         </div>
       )}
@@ -4947,7 +5024,7 @@ function ComposerDock({
             {canReplaceAssist && (
               <button type="button" className="ghost-button" onClick={onReplaceAssist}>
                 <Icon name="edit" />
-                <span>Replace</span>
+                <span>{replaceAssistLabel}</span>
               </button>
             )}
           </div>
@@ -8604,14 +8681,20 @@ function humanizeStatusLabel(value: string) {
 
 function getComposerDockContextLabel({
   activeNote,
+  hasTextSelection,
   selectedBlockText,
   view,
 }: {
   activeNote: Note | null
+  hasTextSelection: boolean
   selectedBlockText: string
   view: ViewMode
 }) {
   if (activeNote && view === 'editor') {
+    if (hasTextSelection) {
+      return 'Selected text'
+    }
+
     return selectedBlockText.trim() ? 'Selected block' : activeNote.title || 'Current note'
   }
 
@@ -10157,12 +10240,17 @@ function getComposerCurrentHeading(blocks: NoteBlock[], selectedBlockIndex: numb
   return ''
 }
 
-function getComposerContextSummary(contextPack: ComposerNoteContextPack | null) {
+function getComposerContextSummary(contextPack: ComposerNoteContextPack | null, selectedText = '') {
   if (!contextPack) {
     return ''
   }
 
   const pieces = ['full note']
+  const selectedWordCount = countWordsFromText(selectedText)
+
+  if (selectedWordCount > 0) {
+    pieces.push(`${selectedWordCount} selected words`)
+  }
 
   if (contextPack.neighboringBlocks.some((block) => block.role === 'selected')) {
     pieces.push('nearby block')
@@ -11669,7 +11757,11 @@ function normalizePreviewText(value: string) {
 }
 
 function countWordsFromBlocks(blocks: NoteBlock[]) {
-  const text = getPlainTextFromBlocks(blocks)
+  return countWordsFromText(getPlainTextFromBlocks(blocks))
+}
+
+function countWordsFromText(value: string) {
+  const text = value.replace(/\s+/g, ' ').trim()
 
   if (!text) {
     return 0

@@ -1969,6 +1969,21 @@
   white-space: nowrap;
 }
 
+.composer-dock__selectionPreview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-subtle);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-dock__selectionPreview::before,
+.composer-dock__selectionPreview::after {
+  content: '"';
+}
+
 .composer-dock__headerActions {
   display: flex;
   gap: 4px;
@@ -7795,6 +7810,13 @@
   animation: rise-in 140ms ease both;
 }
 
+.modern-editor__bubbleDivider {
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .modern-editor__button {
   min-width: 30px;
   height: 30px;
@@ -10246,6 +10268,10 @@ textarea:focus-visible {
 
 :root[data-essence-theme='daylight'] .modern-editor__button {
   color: rgba(37, 42, 48, 0.62);
+}
+
+:root[data-essence-theme='daylight'] .modern-editor__bubbleDivider {
+  background: rgba(31, 39, 50, 0.14);
 }
 
 :root[data-essence-theme='daylight'] .modern-editor__button:hover,

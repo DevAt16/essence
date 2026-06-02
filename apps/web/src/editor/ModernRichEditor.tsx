@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
-import type { JSONContent } from '@tiptap/core'
+import type { Editor, JSONContent } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import LinkExtension from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -26,8 +26,10 @@ import {
   List,
   ListOrdered,
   Minus,
+  MessageCircleQuestionMark,
   Quote as QuoteIcon,
   Redo2,
+  Sparkles,
   Strikethrough,
   Subscript as SubscriptIcon,
   Superscript as SuperscriptIcon,
@@ -36,6 +38,7 @@ import {
 } from 'lucide-react'
 
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
+type ComposerAction = 'improve-clarity' | 'study-questions'
 
 interface NoteBlock {
   id: string
@@ -45,11 +48,19 @@ interface NoteBlock {
   citation?: string
 }
 
+interface EditorSelectionContext {
+  blockId: string | null
+  text: string
+}
+
 type ModernRichEditorProps = {
   blocks: NoteBlock[]
+  composerAvailable: boolean
   editorDoc?: JSONContent | null
   onChange: (blocks: NoteBlock[], editorDoc: JSONContent) => void
+  onComposerAction: (action: ComposerAction) => void
   onFocus: () => void
+  onSelectionChange: (selection: EditorSelectionContext) => void
   onTitleChange: (title: string) => void
   title: string
 }
@@ -92,9 +103,12 @@ const richEditorExtensions = [
 
 export default function ModernRichEditor({
   blocks,
+  composerAvailable,
   editorDoc,
   onChange,
+  onComposerAction,
   onFocus,
+  onSelectionChange,
   onTitleChange,
   title,
 }: ModernRichEditorProps) {
@@ -103,7 +117,9 @@ export default function ModernRichEditor({
   const latestEditorDocRef = useRef(safeEditorDoc)
   const latestSignatureRef = useRef(getEditorStateSignature(blocks, safeEditorDoc))
   const onChangeRef = useRef(onChange)
+  const onComposerActionRef = useRef(onComposerAction)
   const onFocusRef = useRef(onFocus)
+  const onSelectionChangeRef = useRef(onSelectionChange)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const editor = useEditor({
@@ -116,8 +132,12 @@ export default function ModernRichEditor({
         'aria-label': 'Note body',
       },
     },
-    onFocus: () => {
+    onFocus: ({ editor: currentEditor }) => {
       onFocusRef.current()
+      onSelectionChangeRef.current(getEditorSelectionContext(currentEditor, latestBlocksRef.current))
+    },
+    onSelectionUpdate: ({ editor: currentEditor }) => {
+      onSelectionChangeRef.current(getEditorSelectionContext(currentEditor, latestBlocksRef.current))
     },
     onUpdate: ({ editor: currentEditor }) => {
       const nextEditorDoc = normalizeEditorDocument(currentEditor.getJSON(), latestBlocksRef.current)
@@ -142,8 +162,16 @@ export default function ModernRichEditor({
   }, [onChange])
 
   useEffect(() => {
+    onComposerActionRef.current = onComposerAction
+  }, [onComposerAction])
+
+  useEffect(() => {
     onFocusRef.current = onFocus
   }, [onFocus])
+
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange
+  }, [onSelectionChange])
 
   useEffect(() => {
     const titleInput = titleInputRef.current
@@ -244,6 +272,17 @@ export default function ModernRichEditor({
           <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
             <Link2 />
           </RichEditorButton>
+          {composerAvailable && (
+            <>
+              <span className="modern-editor__bubbleDivider" aria-hidden="true" />
+              <RichEditorButton label="Clarify selection with Composer" onClick={() => onComposerActionRef.current('improve-clarity')}>
+                <Sparkles />
+              </RichEditorButton>
+              <RichEditorButton label="Questions from selection" onClick={() => onComposerActionRef.current('study-questions')}>
+                <MessageCircleQuestionMark />
+              </RichEditorButton>
+            </>
+          )}
         </BubbleMenu>
       )}
 
@@ -652,6 +691,36 @@ function serializeTiptapTextNode(node: JSONContent) {
   }
 
   return text
+}
+
+function getEditorSelectionContext(editor: Editor, blocks: NoteBlock[]): EditorSelectionContext {
+  const { empty, from, to } = editor.state.selection
+  const selectedText = empty ? '' : editor.state.doc.textBetween(from, to, '\n', '\n').replace(/\s+/g, ' ').trim()
+  const blockIndex = getTopLevelBlockIndex(editor, from)
+
+  return {
+    blockId: blockIndex >= 0 ? blocks[blockIndex]?.id ?? null : null,
+    text: selectedText,
+  }
+}
+
+function getTopLevelBlockIndex(editor: Editor, position: number) {
+  let selectedIndex = -1
+
+  editor.state.doc.forEach((node, offset, index) => {
+    if (selectedIndex !== -1) {
+      return
+    }
+
+    const start = offset
+    const end = offset + node.nodeSize
+
+    if (position >= start && position <= end) {
+      selectedIndex = index
+    }
+  })
+
+  return selectedIndex
 }
 
 function getEditorStateSignature(blocks: NoteBlock[], editorDoc: JSONContent) {

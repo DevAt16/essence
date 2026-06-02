@@ -1529,8 +1529,8 @@ function buildGeminiDraftPrompt(topic, meta, composerContext, composerPrompt = d
 
 function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystemPrompt) {
   const selectedSection = context.note.selectedText
-    ? [`Selected block to focus on:`, context.note.selectedText].join('\n')
-    : 'No selected block was provided. Work from the full note context.'
+    ? [`Selected text or block to focus on:`, context.note.selectedText].join('\n')
+    : 'No selected text or block was provided. Work from the full note context.'
 
   return [
     composerPrompt,
