@@ -4896,8 +4896,9 @@ function ComposerDock({
     { action: 'create-outline', label: 'Outline' },
     { action: 'study-questions', label: 'Questions' },
   ]
-  const assistPreview = assistResult ? summarizeInlineText(getPlainTextFromAiDraftBlocks(assistResult.blocks), 280) : ''
-  const draftPreview = draft ? summarizeInlineText(getPlainTextFromAiDraftBlocks(draft.blocks), 280) : ''
+  const hasResult = Boolean(assistResult || draft)
+  const assistText = assistResult ? getReadableTextFromAiDraftBlocks(assistResult.blocks) : ''
+  const draftText = draft ? getReadableTextFromAiDraftBlocks(draft.blocks) : ''
   const promptPlaceholder =
     draftMode === 'auto'
       ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
@@ -4943,7 +4944,10 @@ function ComposerDock({
   }
 
   return (
-    <section className="composer-dock composer-dock--open" aria-label="Composer dock">
+    <section
+      className={`composer-dock composer-dock--open ${hasResult ? 'composer-dock--has-result' : ''}`}
+      aria-label="Composer dock"
+    >
       <header className="composer-dock__header">
         <div>
           <span>{runtimeLabel}</span>
@@ -5014,8 +5018,10 @@ function ComposerDock({
               Clear
             </button>
           </div>
-          <p>{assistResult.summary || assistPreview || 'Composer prepared a response for this note.'}</p>
-          {assistPreview && <blockquote>{assistPreview}</blockquote>}
+          <div className="composer-dock__resultBody">
+            <p>{assistResult.summary || summarizeInlineText(assistText, 180) || 'Composer prepared a response for this note.'}</p>
+            {assistText && <blockquote>{assistText}</blockquote>}
+          </div>
           <div className="composer-dock__resultActions">
             <button type="button" className="primary-button" onClick={onAppendAssist}>
               <Icon name="plus" />
@@ -5042,15 +5048,17 @@ function ComposerDock({
               Clear
             </button>
           </div>
-          <p>{draft.summary || draftPreview || 'Composer prepared a note draft.'}</p>
-          {draftPreview && <blockquote>{draftPreview}</blockquote>}
-          {draft.tags.length > 0 && (
-            <div className="composer-dock__tags" aria-label="Draft tags">
-              {draft.tags.slice(0, 4).map((tag) => (
-                <span key={tag}>{tag}</span>
-              ))}
-            </div>
-          )}
+          <div className="composer-dock__resultBody">
+            <p>{draft.summary || summarizeInlineText(draftText, 180) || 'Composer prepared a note draft.'}</p>
+            {draftText && <blockquote>{draftText}</blockquote>}
+            {draft.tags.length > 0 && (
+              <div className="composer-dock__tags" aria-label="Draft tags">
+                {draft.tags.slice(0, 4).map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="composer-dock__resultActions">
             <button type="button" className="primary-button" onClick={onCreateNote}>
               <Icon name="plus" />
@@ -10285,6 +10293,23 @@ function getPlainTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function getReadableTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
+  return blocks
+    .map((block) => {
+      if (block.type === 'bullet-list') {
+        return (block.items ?? [])
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => `- ${item}`)
+          .join('\n')
+      }
+
+      return `${block.text ?? ''} ${block.citation ?? ''}`.trim()
+    })
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 function getComposerContextTerms(value: string) {

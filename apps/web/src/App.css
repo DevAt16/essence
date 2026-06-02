@@ -1929,6 +1929,13 @@
   animation: rise-in 160ms ease both;
 }
 
+.composer-dock--has-result {
+  display: flex;
+  flex-direction: column;
+  height: min(680px, calc(100dvh - 72px));
+  overflow: hidden;
+}
+
 .composer-dock__header {
   display: flex;
   align-items: flex-start;
@@ -2104,7 +2111,14 @@
 .composer-dock__result {
   display: grid;
   gap: 10px;
+  min-height: 0;
   padding: 12px;
+}
+
+.composer-dock--has-result .composer-dock__result {
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .composer-dock__resultHeader {
@@ -2142,6 +2156,29 @@
   font-size: 0.74rem;
 }
 
+.composer-dock__resultBody {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.composer-dock__resultBody::-webkit-scrollbar {
+  width: 7px;
+}
+
+.composer-dock__resultBody::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 248, 232, 0.18);
+}
+
+.composer-dock__resultBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .composer-dock__result p,
 .composer-dock__result blockquote {
   margin: 0;
@@ -2154,6 +2191,7 @@
   border-left: 2px solid var(--line-strong);
   color: var(--ink-muted);
   padding-left: 10px;
+  white-space: pre-wrap;
 }
 
 .composer-dock__tags,
@@ -2180,6 +2218,15 @@
 .composer-dock__form {
   display: grid;
   gap: 10px;
+  min-height: 0;
+}
+
+.composer-dock--has-result .composer-dock__form textarea {
+  resize: none;
+}
+
+.composer-dock--has-result .composer-dock__form {
+  flex: 0 0 auto;
 }
 
 .composer-dock__form textarea {
@@ -10892,6 +10939,10 @@ textarea:focus-visible {
     right: 14px;
     width: auto;
     max-height: calc(100dvh - 124px - env(safe-area-inset-bottom));
+  }
+
+  .composer-dock--has-result {
+    height: calc(100dvh - 124px - env(safe-area-inset-bottom));
   }
 
   .composer-dock__draftModes {
