@@ -414,6 +414,7 @@ const storageKey = 'lucid-notes-state'
 const accountStorageKeyPrefix = 'essence-account-state:'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
+const ambienceIntensityStorageKey = 'essence-ambience-intensity'
 const colorThemeStorageKey = 'essence-color-theme'
 const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
@@ -424,6 +425,9 @@ const historyLimit = 120
 const composerHistoryLimit = 18
 const composerRequestContextLimit = 3
 const composerRequestContextPreviewLength = 700
+const ambienceIntensityMinimum = 0
+const ambienceIntensityMaximum = 100
+const defaultAmbienceIntensity = 55
 const apiBaseUrl = normalizeApiBaseUrl(getViteEnvString('VITE_API_BASE_URL'))
 const apiFetchCredentials = getApiFetchCredentials()
 const supabaseClient = createSupabaseBrowserClient()
@@ -478,6 +482,116 @@ const colorThemeOptions: Array<{ description: string; label: string; value: Colo
   { description: 'Cooler night tones with silver-blue focus accents.', label: 'Moonlit', value: 'moonlit' },
   { description: 'A bright reading room for daytime writing.', label: 'Daylight', value: 'daylight' },
 ]
+
+interface AmbienceTokens {
+  breatheHigh: number
+  breatheLow: number
+  contentTwinkleHigh: number
+  contentTwinkleLow: number
+  opacity: number
+  pulseHigh: number
+  pulseLow: number
+  starOpacity: number
+  surfaceAlpha: number
+  twinkleOpacity: number
+}
+
+const stillAmbienceTokens: AmbienceTokens = {
+  breatheHigh: 0,
+  breatheLow: 0,
+  contentTwinkleHigh: 0,
+  contentTwinkleLow: 0,
+  opacity: 0,
+  pulseHigh: 0,
+  pulseLow: 0,
+  starOpacity: 0,
+  surfaceAlpha: 0.92,
+  twinkleOpacity: 0,
+}
+
+const ambienceTokensByTheme: Record<ColorTheme, Record<AmbienceMode, AmbienceTokens>> = {
+  daylight: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.96 },
+    subtle: {
+      breatheHigh: 0.1,
+      breatheLow: 0.05,
+      contentTwinkleHigh: 0.15,
+      contentTwinkleLow: 0.07,
+      opacity: 0.03,
+      pulseHigh: 0.16,
+      pulseLow: 0.08,
+      starOpacity: 0.024,
+      surfaceAlpha: 0.96,
+      twinkleOpacity: 0.016,
+    },
+    cosmic: {
+      breatheHigh: 0.25,
+      breatheLow: 0.13,
+      contentTwinkleHigh: 0.3,
+      contentTwinkleLow: 0.15,
+      opacity: 0.07,
+      pulseHigh: 0.34,
+      pulseLow: 0.17,
+      starOpacity: 0.048,
+      surfaceAlpha: 0.96,
+      twinkleOpacity: 0.03,
+    },
+  },
+  moonlit: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.92 },
+    subtle: {
+      breatheHigh: 0.08,
+      breatheLow: 0.04,
+      contentTwinkleHigh: 0.12,
+      contentTwinkleLow: 0.055,
+      opacity: 0.14,
+      pulseHigh: 0.13,
+      pulseLow: 0.065,
+      starOpacity: 0.11,
+      surfaceAlpha: 0.86,
+      twinkleOpacity: 0.055,
+    },
+    cosmic: {
+      breatheHigh: 0.15,
+      breatheLow: 0.075,
+      contentTwinkleHigh: 0.19,
+      contentTwinkleLow: 0.09,
+      opacity: 0.34,
+      pulseHigh: 0.21,
+      pulseLow: 0.1,
+      starOpacity: 0.23,
+      surfaceAlpha: 0.9,
+      twinkleOpacity: 0.12,
+    },
+  },
+  starlight: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.92 },
+    subtle: {
+      breatheHigh: 0.09,
+      breatheLow: 0.045,
+      contentTwinkleHigh: 0.13,
+      contentTwinkleLow: 0.06,
+      opacity: 0.16,
+      pulseHigh: 0.14,
+      pulseLow: 0.07,
+      starOpacity: 0.12,
+      surfaceAlpha: 0.84,
+      twinkleOpacity: 0.06,
+    },
+    cosmic: {
+      breatheHigh: 0.21,
+      breatheLow: 0.11,
+      contentTwinkleHigh: 0.24,
+      contentTwinkleLow: 0.12,
+      opacity: 0.48,
+      pulseHigh: 0.28,
+      pulseLow: 0.14,
+      starOpacity: 0.34,
+      surfaceAlpha: 0.88,
+      twinkleOpacity: 0.19,
+    },
+  },
+}
 
 const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
   { label: 'Book', value: 'book' },
@@ -1060,6 +1174,7 @@ function App() {
   const [aiDraftTopic, setAiDraftTopic] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
   const [ambienceMode, setAmbienceMode] = useState<AmbienceMode>(loadStoredAmbienceMode)
+  const [ambienceIntensity, setAmbienceIntensity] = useState(loadStoredAmbienceIntensity)
   const [colorTheme, setColorTheme] = useState<ColorTheme>(loadStoredColorTheme)
   const [zenMode, setZenMode] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>('edit')
@@ -1158,6 +1273,10 @@ function App() {
     'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
   const composerRuntimeLabel = getComposerRuntimeLabel(composerSettingsState.runtime?.provider ?? apiReadiness.aiProvider)
   const composerBusy = aiGenerating || aiAssisting
+  const ambienceStyle = useMemo(
+    () => getAmbienceStyle({ colorTheme, intensity: ambienceIntensity, mode: ambienceMode, zenMode }),
+    [ambienceIntensity, ambienceMode, colorTheme, zenMode],
+  )
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1510,6 +1629,14 @@ function App() {
     window.localStorage.setItem(ambienceStorageKey, ambienceMode)
     document.documentElement.dataset.essenceAmbience = ambienceMode
   }, [ambienceMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(ambienceIntensityStorageKey, String(ambienceIntensity))
+  }, [ambienceIntensity])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -4104,6 +4231,7 @@ function App() {
       className={`app-shell app-shell--theme-${colorTheme} app-shell--ambience-${ambienceMode} ${
         navigationSidebarVisible ? '' : 'app-shell--navigationHidden'
       } ${zenMode ? 'is-zen' : ''}`}
+      style={ambienceStyle}
     >
       <div className="cosmic-sky" aria-hidden="true">
         <span className="cosmic-sky__meteor" />
@@ -4123,6 +4251,7 @@ function App() {
 
       {!zenMode && settingsOpen && (
         <SettingsDialog
+          ambienceIntensity={ambienceIntensity}
           ambienceMode={ambienceMode}
           apiReadiness={apiReadiness}
           colorTheme={colorTheme}
@@ -4140,6 +4269,7 @@ function App() {
           composerHistoryCount={composerHistory.length}
           error={profileError}
           onAmbienceChange={setAmbienceMode}
+          onAmbienceIntensityChange={setAmbienceIntensity}
           onColorThemeChange={setColorTheme}
           onClose={closeSettings}
           onComposerRefresh={refreshComposerSettings}
@@ -7981,6 +8111,7 @@ function AccountControl({
 }
 
 function SettingsDialog({
+  ambienceIntensity,
   ambienceMode,
   apiReadiness,
   colorTheme,
@@ -7998,6 +8129,7 @@ function SettingsDialog({
   navigationSidebarVisible,
   noteCount,
   onAmbienceChange,
+  onAmbienceIntensityChange,
   onColorThemeChange,
   onClose,
   onComposerRefresh,
@@ -8008,6 +8140,7 @@ function SettingsDialog({
   onSaveProfile,
   onSignOut,
 }: {
+  ambienceIntensity: number
   ambienceMode: AmbienceMode
   apiReadiness: ApiReadinessState
   colorTheme: ColorTheme
@@ -8025,6 +8158,7 @@ function SettingsDialog({
   navigationSidebarVisible: boolean
   noteCount: number
   onAmbienceChange: (mode: AmbienceMode) => void
+  onAmbienceIntensityChange: (intensity: number) => void
   onColorThemeChange: (theme: ColorTheme) => void
   onClose: () => void
   onComposerRefresh: () => void
@@ -8210,6 +8344,25 @@ function SettingsDialog({
                 ))}
               </div>
             </div>
+
+            <label className="settings-rangeField">
+              <span className="settings-rangeField__header">
+                <span>Intensity</span>
+                <strong>{ambienceIntensity}%</strong>
+              </span>
+              <input
+                type="range"
+                min={ambienceIntensityMinimum}
+                max={ambienceIntensityMaximum}
+                step={5}
+                value={ambienceIntensity}
+                onChange={(event) => onAmbienceIntensityChange(normalizeAmbienceIntensity(event.target.value))}
+              />
+              <span className="settings-rangeField__scale">
+                <span>Quiet</span>
+                <span>Vivid</span>
+              </span>
+            </label>
 
             <label className="settings-toggle">
               <input
@@ -9293,6 +9446,14 @@ function loadStoredAmbienceMode(): AmbienceMode {
   return isAmbienceMode(raw) ? raw : 'subtle'
 }
 
+function loadStoredAmbienceIntensity() {
+  if (typeof window === 'undefined') {
+    return defaultAmbienceIntensity
+  }
+
+  return normalizeAmbienceIntensity(window.localStorage.getItem(ambienceIntensityStorageKey))
+}
+
 function loadStoredColorTheme(): ColorTheme {
   if (typeof window === 'undefined') {
     return 'starlight'
@@ -9365,6 +9526,74 @@ function isAmbienceMode(value: unknown): value is AmbienceMode {
 
 function isColorTheme(value: unknown): value is ColorTheme {
   return value === 'starlight' || value === 'moonlit' || value === 'daylight'
+}
+
+function normalizeAmbienceIntensity(value: unknown) {
+  const numberValue = typeof value === 'number' ? value : Number(value)
+
+  if (!Number.isFinite(numberValue)) {
+    return defaultAmbienceIntensity
+  }
+
+  return Math.min(ambienceIntensityMaximum, Math.max(ambienceIntensityMinimum, Math.round(numberValue)))
+}
+
+function getAmbienceStyle({
+  colorTheme,
+  intensity,
+  mode,
+  zenMode,
+}: {
+  colorTheme: ColorTheme
+  intensity: number
+  mode: AmbienceMode
+  zenMode: boolean
+}) {
+  const tokens = getZenAdjustedAmbienceTokens(ambienceTokensByTheme[colorTheme][mode], zenMode)
+  const normalizedIntensity = mode === 'still' ? 0 : normalizeAmbienceIntensity(intensity) / 100
+  const cappedIntensity = colorTheme === 'daylight' ? normalizedIntensity * 0.72 : normalizedIntensity
+  const quietSurfaceAlpha = colorTheme === 'daylight' ? 0.97 : 0.94
+  const surfaceAlpha =
+    mode === 'still'
+      ? tokens.surfaceAlpha
+      : quietSurfaceAlpha - (quietSurfaceAlpha - tokens.surfaceAlpha) * cappedIntensity
+
+  return {
+    '--ambience-intensity': formatCssNumber(cappedIntensity),
+    '--cosmic-breathe-high': formatCssNumber(tokens.breatheHigh * cappedIntensity),
+    '--cosmic-breathe-low': formatCssNumber(tokens.breatheLow * cappedIntensity),
+    '--cosmic-content-twinkle-high': formatCssNumber(tokens.contentTwinkleHigh * cappedIntensity),
+    '--cosmic-content-twinkle-low': formatCssNumber(tokens.contentTwinkleLow * cappedIntensity),
+    '--cosmic-opacity': formatCssNumber(tokens.opacity * cappedIntensity),
+    '--cosmic-pulse-high': formatCssNumber(tokens.pulseHigh * cappedIntensity),
+    '--cosmic-pulse-low': formatCssNumber(tokens.pulseLow * cappedIntensity),
+    '--cosmic-star-opacity': formatCssNumber(tokens.starOpacity * cappedIntensity),
+    '--cosmic-surface-alpha': formatCssNumber(surfaceAlpha),
+    '--cosmic-twinkle-opacity': formatCssNumber(tokens.twinkleOpacity * cappedIntensity),
+  } as CSSProperties
+}
+
+function getZenAdjustedAmbienceTokens(tokens: AmbienceTokens, zenMode: boolean): AmbienceTokens {
+  if (!zenMode) {
+    return tokens
+  }
+
+  return {
+    breatheHigh: Math.min(tokens.breatheHigh, 0.09),
+    breatheLow: Math.min(tokens.breatheLow, 0.04),
+    contentTwinkleHigh: Math.min(tokens.contentTwinkleHigh, 0.11),
+    contentTwinkleLow: Math.min(tokens.contentTwinkleLow, 0.05),
+    opacity: Math.min(tokens.opacity, 0.14),
+    pulseHigh: Math.min(tokens.pulseHigh, 0.12),
+    pulseLow: Math.min(tokens.pulseLow, 0.06),
+    starOpacity: Math.min(tokens.starOpacity, 0.12),
+    surfaceAlpha: Math.max(tokens.surfaceAlpha, 0.9),
+    twinkleOpacity: Math.min(tokens.twinkleOpacity, 0.06),
+  }
+}
+
+function formatCssNumber(value: number) {
+  return value.toFixed(3).replace(/\.?0+$/, '')
 }
 
 function loadAuthGateDismissed() {
