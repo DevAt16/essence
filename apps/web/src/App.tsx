@@ -31,7 +31,7 @@ type AiAssistAction =
 type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
 type AmbienceMode = 'still' | 'subtle' | 'cosmic'
-type ColorTheme = 'starlight' | 'moonlit' | 'daylight' | 'eclipse' | 'aurora' | 'solar-dawn'
+type ColorTheme = 'starlight' | 'moonlit' | 'daylight'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 type LibraryDisplayMode = 'cards' | 'list'
 type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
@@ -471,10 +471,7 @@ const ambienceOptions: Array<{ description: string; label: string; value: Ambien
 const colorThemeOptions: Array<{ description: string; label: string; value: ColorTheme }> = [
   { description: 'Warm night, cream ink, and soft starfield glow.', label: 'Starlight', value: 'starlight' },
   { description: 'Cooler night tones with silver-blue focus accents.', label: 'Moonlit', value: 'moonlit' },
-  { description: 'Graphite black with a restrained amber corona.', label: 'Eclipse', value: 'eclipse' },
-  { description: 'Green-black space with teal aurora light.', label: 'Aurora', value: 'aurora' },
   { description: 'A bright reading room for daytime writing.', label: 'Daylight', value: 'daylight' },
-  { description: 'Warm morning light with coral and blue focus.', label: 'Solar Dawn', value: 'solar-dawn' },
 ]
 
 const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
@@ -9276,14 +9273,7 @@ function isAmbienceMode(value: unknown): value is AmbienceMode {
 }
 
 function isColorTheme(value: unknown): value is ColorTheme {
-  return (
-    value === 'starlight' ||
-    value === 'moonlit' ||
-    value === 'daylight' ||
-    value === 'eclipse' ||
-    value === 'aurora' ||
-    value === 'solar-dawn'
-  )
+  return value === 'starlight' || value === 'moonlit' || value === 'daylight'
 }
 
 function loadAuthGateDismissed() {
