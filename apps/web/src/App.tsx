@@ -294,6 +294,10 @@ interface AiAssistResult {
   title: string
 }
 
+type ComposerDockRun =
+  | { action: AiAssistAction; instruction: string; kind: 'assist' }
+  | { category: AiDraftCategory; kind: 'draft'; topic: string }
+
 interface ComposerHistoryEntry {
   assist?: {
     action: AiAssistAction
@@ -1208,6 +1212,7 @@ function App() {
   const [composerDockPrompt, setComposerDockPrompt] = useState('')
   const [composerDockDraftMode, setComposerDockDraftMode] = useState<ComposerDockDraftMode>('auto')
   const [composerDockError, setComposerDockError] = useState<string | null>(null)
+  const [composerDockLastRun, setComposerDockLastRun] = useState<ComposerDockRun | null>(null)
   const [composerBusyMessage, setComposerBusyMessage] = useState('')
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
@@ -3335,6 +3340,32 @@ function App() {
     setAiDraft(null)
     setAiDraftError(null)
     setComposerDockError(null)
+    setComposerDockLastRun(null)
+  }
+
+  const regenerateComposerDockResult = async () => {
+    if (!composerDockLastRun) {
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockOpen(true)
+    setComposerDockError(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
+    setAiAssistResult(null)
+    setAiDraft(null)
+
+    if (composerDockLastRun.kind === 'assist') {
+      await generateAiAssist(composerDockLastRun.action, composerDockLastRun.instruction)
+      return
+    }
+
+    await generateAiDraft(composerDockLastRun.topic, composerDockLastRun.category)
   }
 
   const runComposerDockAction = async (action: AiAssistAction) => {
@@ -3354,7 +3385,11 @@ function App() {
     setAiDraft(null)
     setAiDraftError(null)
 
-    await generateAiAssist(action)
+    const ok = await generateAiAssist(action)
+
+    if (ok) {
+      setComposerDockLastRun({ action, instruction: '', kind: 'assist' })
+    }
   }
 
   const runEditorSelectionComposerAction = async (action: AiAssistAction) => {
@@ -3370,7 +3405,11 @@ function App() {
     setAiDraft(null)
     setAiDraftError(null)
 
-    await generateAiAssist(action)
+    const ok = await generateAiAssist(action)
+
+    if (ok) {
+      setComposerDockLastRun({ action, instruction: '', kind: 'assist' })
+    }
   }
 
   const submitComposerDockPrompt = async () => {
@@ -3399,6 +3438,7 @@ function App() {
       const ok = await generateAiAssist('custom', prompt)
 
       if (ok) {
+        setComposerDockLastRun({ action: 'custom', instruction: prompt, kind: 'assist' })
         setComposerDockPrompt('')
       }
 
@@ -3413,6 +3453,7 @@ function App() {
     const ok = await generateAiDraft(prompt, category)
 
     if (ok) {
+      setComposerDockLastRun({ category, kind: 'draft', topic: prompt })
       setComposerDockPrompt('')
       setComposerDockOpen(true)
     }
@@ -4345,6 +4386,7 @@ function App() {
           )}
           <ComposerDock
             assistResult={aiAssistResult}
+            canRegenerate={Boolean(composerDockLastRun)}
             canReplaceAssist={Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')}
             canUseComposer={composerAvailable}
             contextLabel={composerDockContext}
@@ -4366,6 +4408,7 @@ function App() {
               setAiAssistError(null)
               setAiDraftError(null)
             }}
+            onRegenerate={regenerateComposerDockResult}
             onReplaceAssist={replaceSelectedBlockWithAiAssist}
             onSubmit={submitComposerDockPrompt}
             onToggle={toggleComposerDock}
@@ -4971,6 +5014,7 @@ function ModernRichEditorFallback({ title }: { title: string }) {
 function ComposerDock({
   assistResult,
   busyMessage,
+  canRegenerate,
   canReplaceAssist,
   canUseComposer,
   contextLabel,
@@ -4986,6 +5030,7 @@ function ComposerDock({
   onCreateNote,
   onDraftModeChange,
   onPromptChange,
+  onRegenerate,
   onReplaceAssist,
   onSubmit,
   onToggle,
@@ -4997,6 +5042,7 @@ function ComposerDock({
 }: {
   assistResult: AiAssistResult | null
   busyMessage: string
+  canRegenerate: boolean
   canReplaceAssist: boolean
   canUseComposer: boolean
   contextLabel: string
@@ -5012,6 +5058,7 @@ function ComposerDock({
   onCreateNote: () => void
   onDraftModeChange: (mode: ComposerDockDraftMode) => void
   onPromptChange: (value: string) => void
+  onRegenerate: () => void
   onReplaceAssist: () => void
   onSubmit: () => void
   onToggle: () => void
@@ -5030,10 +5077,29 @@ function ComposerDock({
   const hasResult = Boolean(assistResult || draft)
   const assistText = assistResult ? getReadableTextFromAiDraftBlocks(assistResult.blocks) : ''
   const draftText = draft ? getReadableTextFromAiDraftBlocks(draft.blocks) : ''
+  const resultCopyText = assistResult
+    ? formatComposerAssistForClipboard(assistResult, assistText)
+    : draft ? formatComposerDraftForClipboard(draft, draftText) : ''
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | 'idle'>('idle')
   const promptPlaceholder =
     draftMode === 'auto'
       ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
       : `Draft ${getComposerDockDraftModeLabel(draftMode).toLowerCase()} about...`
+  const copyButtonLabel = copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'
+
+  useEffect(() => {
+    setCopyStatus('idle')
+  }, [resultCopyText])
+
+  useEffect(() => {
+    if (copyStatus === 'idle') {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => setCopyStatus('idle'), 1600)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [copyStatus])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -5057,6 +5123,43 @@ function ComposerDock({
       onToggle()
     }
   }
+
+  const handleCopyResult = async () => {
+    if (!resultCopyText) {
+      return
+    }
+
+    setCopyStatus((await copyTextToClipboard(resultCopyText)) ? 'copied' : 'failed')
+  }
+
+  const resultTools = hasResult ? (
+    <div className="composer-dock__resultTools">
+      <span className="composer-dock__readyBadge">
+        <Icon name="check" />
+        <span>Ready</span>
+      </span>
+      <button
+        type="button"
+        className="composer-dock__toolButton"
+        onClick={handleCopyResult}
+        disabled={!resultCopyText}
+        title="Copy Composer result"
+      >
+        <Icon name={copyStatus === 'copied' ? 'check' : 'copy'} />
+        <span>{copyButtonLabel}</span>
+      </button>
+      {canRegenerate && (
+        <button type="button" className="composer-dock__toolButton" onClick={onRegenerate} title="Regenerate Composer result">
+          <Icon name="redo" />
+          <span>Regenerate</span>
+        </button>
+      )}
+      <button type="button" className="composer-dock__toolButton" onClick={onClearResult} title="Clear Composer result">
+        <Icon name="close" />
+        <span>Clear</span>
+      </button>
+    </div>
+  ) : null
 
   if (!isOpen) {
     return (
@@ -5145,11 +5248,9 @@ function ComposerDock({
               <span>{assistResult.actionLabel}</span>
               <strong>{assistResult.title}</strong>
             </div>
-            <button type="button" className="text-action" onClick={onClearResult}>
-              Clear
-            </button>
+            {resultTools}
           </div>
-          <div className="composer-dock__resultBody">
+          <div className="composer-dock__resultBody" tabIndex={0}>
             <p>{assistResult.summary || summarizeInlineText(assistText, 180) || 'Composer prepared a response for this note.'}</p>
             {assistText && <blockquote>{assistText}</blockquote>}
           </div>
@@ -5175,11 +5276,9 @@ function ComposerDock({
               <span>{draft.status}</span>
               <strong>{draft.title}</strong>
             </div>
-            <button type="button" className="text-action" onClick={onClearResult}>
-              Clear
-            </button>
+            {resultTools}
           </div>
-          <div className="composer-dock__resultBody">
+          <div className="composer-dock__resultBody" tabIndex={0}>
             <p>{draft.summary || summarizeInlineText(draftText, 180) || 'Composer prepared a note draft.'}</p>
             {draftText && <blockquote>{draftText}</blockquote>}
             {draft.tags.length > 0 && (
@@ -9185,6 +9284,13 @@ function Icon({ name }: { name: string }) {
           <path d="M12 10v8" />
         </Glyph>
       )
+    case 'copy':
+      return (
+        <Glyph>
+          <rect x="8" y="8" width="11" height="11" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+        </Glyph>
+      )
     case 'edit':
       return (
         <Glyph>
@@ -10577,6 +10683,48 @@ function getReadableTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
     })
     .filter(Boolean)
     .join('\n\n')
+}
+
+function formatComposerAssistForClipboard(result: AiAssistResult, readableText: string) {
+  return [result.title, result.summary, readableText].map((part) => part.trim()).filter(Boolean).join('\n\n')
+}
+
+function formatComposerDraftForClipboard(draft: AiDraft, readableText: string) {
+  const tags = draft.tags.length > 0 ? `Tags: ${draft.tags.join(', ')}` : ''
+
+  return [draft.title, draft.summary, readableText, tags].map((part) => part.trim()).filter(Boolean).join('\n\n')
+}
+
+async function copyTextToClipboard(value: string) {
+  const text = value.trim()
+
+  if (!text) {
+    return false
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // Fall back to a temporary textarea for desktop shells or restricted browser contexts.
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
 }
 
 function getComposerContextTerms(value: string) {
