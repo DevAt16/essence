@@ -36,6 +36,7 @@ type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 're
 type LibraryDisplayMode = 'cards' | 'list'
 type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
 type LibrarySortMode = 'updated' | 'pinned' | 'title' | 'collection' | 'status'
+type SettingsSectionId = 'appearance' | 'account' | 'composer' | 'workspace' | 'about'
 
 interface NoteBlock {
   id: string
@@ -8173,6 +8174,7 @@ function SettingsDialog({
   const [composerDraft, setComposerDraft] = useState<ComposerSettingsDraft>(() =>
     getComposerSettingsDraft(composerSettingsState),
   )
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>('appearance')
   const isLocal = !currentUser || currentUser.isLocal
   const composerProviderLabel = getComposerProviderLabel(apiReadiness, composerSettingsState.runtime)
   const composerModelLabel = getComposerModelLabel(apiReadiness, composerSettingsState.runtime)
@@ -8220,6 +8222,15 @@ function SettingsDialog({
   }
 
   const accountStatus = currentUser && !currentUser.isLocal ? currentUser.email : 'Local-only workspace'
+  const settingsSections: Array<{ id: SettingsSectionId; label: string; meta: string }> = [
+    { id: 'appearance', label: 'Appearance', meta: colorThemeOptions.find((option) => option.value === colorTheme)?.label ?? 'Theme' },
+    { id: 'account', label: 'Account', meta: isLocal ? 'Local' : 'Signed in' },
+    { id: 'composer', label: 'Composer', meta: composerStatusLabel },
+    { id: 'workspace', label: 'Workspace', meta: `${noteCount} notes` },
+    { id: 'about', label: 'About', meta: appVersion },
+  ]
+  const activeSettingsLabel =
+    settingsSections.find((section) => section.id === activeSettingsSection)?.label ?? 'Appearance'
 
   return (
     <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -8227,8 +8238,8 @@ function SettingsDialog({
         <header className="settings-dialog__header">
           <div className="settings-dialog__titleGroup">
             <span className="settings-dialog__eyebrow">Settings</span>
-            <h2 id="settings-title">Essence preferences</h2>
-            <p>{accountStatus}</p>
+            <h2 id="settings-title">Preferences</h2>
+            <p>{`${activeSettingsLabel} - ${accountStatus}`}</p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close settings" title="Close settings">
             <Icon name="close" />
@@ -8236,6 +8247,23 @@ function SettingsDialog({
         </header>
 
         <div className="settings-dialog__body">
+          <nav className="settings-dialog__nav" aria-label="Settings sections">
+            {settingsSections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={activeSettingsSection === section.id ? 'settings-dialog__navItem--active' : ''}
+                onClick={() => setActiveSettingsSection(section.id)}
+                aria-current={activeSettingsSection === section.id ? 'page' : undefined}
+              >
+                <span>{section.label}</span>
+                <small>{section.meta}</small>
+              </button>
+            ))}
+          </nav>
+
+          <div className="settings-dialog__content">
+          {activeSettingsSection === 'account' && (
           <form className="settings-section settings-section--profile" onSubmit={handleSubmit}>
             <div className="settings-section__header">
               <div>
@@ -8292,7 +8320,9 @@ function SettingsDialog({
               </button>
             </div>
           </form>
+          )}
 
+          {activeSettingsSection === 'appearance' && (
           <section className="settings-section" aria-label="Appearance settings">
             <div className="settings-section__header">
               <div>
@@ -8376,7 +8406,9 @@ function SettingsDialog({
               </span>
             </label>
           </section>
+          )}
 
+          {activeSettingsSection === 'composer' && (
           <form className="settings-section" aria-label="Composer settings" onSubmit={handleComposerSubmit}>
             <div className="settings-section__header">
               <div>
@@ -8550,7 +8582,9 @@ function SettingsDialog({
               </button>
             </div>
           </form>
+          )}
 
+          {activeSettingsSection === 'workspace' && (
           <section className="settings-section" aria-label="Data and account settings">
             <div className="settings-section__header">
               <div>
@@ -8594,7 +8628,9 @@ function SettingsDialog({
               )}
             </div>
           </section>
+          )}
 
+          {activeSettingsSection === 'about' && (
           <section className="settings-section settings-section--about" aria-label="About Essence">
             <div className="settings-section__header">
               <div>
@@ -8610,6 +8646,8 @@ function SettingsDialog({
               </div>
             </dl>
           </section>
+          )}
+          </div>
         </div>
       </section>
     </div>
