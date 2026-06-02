@@ -1528,6 +1528,27 @@
   display: inline-flex;
 }
 
+.topbar--editor .editor-more {
+  margin-left: 2px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.topbar--editor .editor-more .icon-button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border-radius: 999px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.topbar--editor .editor-more .icon-button:hover,
+.topbar--editor .editor-more .icon-button--active {
+  border-color: var(--line);
+  background: var(--paper-soft);
+}
+
 .editor-more__menu {
   position: absolute;
   top: calc(100% + 10px);
