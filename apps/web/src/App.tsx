@@ -5133,7 +5133,7 @@ function ComposerDock({
   }
 
   const resultTools = hasResult ? (
-    <div className="composer-dock__resultTools">
+    <div className={`composer-dock__resultTools ${canRegenerate ? '' : 'composer-dock__resultTools--compact'}`}>
       <span className="composer-dock__readyBadge">
         <Icon name="check" />
         <span>Ready</span>
@@ -5248,8 +5248,8 @@ function ComposerDock({
               <span>{assistResult.actionLabel}</span>
               <strong>{assistResult.title}</strong>
             </div>
-            {resultTools}
           </div>
+          {resultTools}
           <div className="composer-dock__resultBody" tabIndex={0}>
             <p>{assistResult.summary || summarizeInlineText(assistText, 180) || 'Composer prepared a response for this note.'}</p>
             {assistText && <blockquote>{assistText}</blockquote>}
@@ -5276,8 +5276,8 @@ function ComposerDock({
               <span>{draft.status}</span>
               <strong>{draft.title}</strong>
             </div>
-            {resultTools}
           </div>
+          {resultTools}
           <div className="composer-dock__resultBody" tabIndex={0}>
             <p>{draft.summary || summarizeInlineText(draftText, 180) || 'Composer prepared a note draft.'}</p>
             {draftText && <blockquote>{draftText}</blockquote>}

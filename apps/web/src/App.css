@@ -2141,15 +2141,13 @@
 
 .composer-dock--has-result .composer-dock__result {
   flex: 1 1 auto;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
 .composer-dock__resultHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  gap: 3px;
 }
 
 .composer-dock__resultHeader div {
@@ -2181,11 +2179,13 @@
 }
 
 .composer-dock__resultTools {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: auto minmax(0, 0.9fr) minmax(0, 1.35fr) minmax(0, 0.9fr);
   gap: 6px;
+}
+
+.composer-dock__resultTools--compact {
+  grid-template-columns: auto repeat(2, minmax(0, 1fr));
 }
 
 .composer-dock__readyBadge,
@@ -2195,9 +2195,20 @@
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-width: 0;
   padding: 0 8px;
   font-size: 0.72rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.composer-dock__readyBadge span,
+.composer-dock__toolButton span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .composer-dock__readyBadge {
@@ -11162,12 +11173,12 @@ textarea:focus-visible {
     height: calc(100dvh - 124px - env(safe-area-inset-bottom));
   }
 
-  .composer-dock__resultHeader {
-    flex-direction: column;
+  .composer-dock__resultTools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .composer-dock__resultTools {
-    justify-content: flex-start;
+  .composer-dock__readyBadge {
+    grid-column: 1 / -1;
   }
 
   .composer-dock__draftModes {
