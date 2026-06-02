@@ -917,7 +917,11 @@
 .topbar--editor {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) auto;
+  gap: 16px;
+  height: 60px;
   overflow: visible;
+  padding-right: 24px;
+  padding-left: 24px;
 }
 
 .topbar__readingProgress {
@@ -977,6 +981,21 @@
 .topbar__backButton {
   max-width: min(24vw, 18rem);
   min-width: 0;
+}
+
+.topbar--editor .topbar__backButton {
+  min-height: 34px;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-subtle);
+  padding: 0 10px;
+}
+
+.topbar--editor .topbar__backButton:hover {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ink);
 }
 
 .topbar__backButton span {
@@ -1201,12 +1220,10 @@
 .topbar__context--editorMode {
   min-width: 0;
   max-width: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
   color: var(--ink-subtle);
-  font-size: 0;
   text-align: center;
 }
 
@@ -1220,10 +1237,10 @@
 
 .topbar__context--editorMode strong {
   min-width: 0;
-  max-width: min(32vw, 34rem);
+  max-width: min(34vw, 36rem);
   overflow: hidden;
   color: var(--ink);
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1239,12 +1256,20 @@
 .topbar__actions--editor .topbar__actionGroup {
   flex-wrap: nowrap;
   min-width: 0;
-  padding-left: 14px;
-  border-left: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.032);
+  gap: 4px;
+  padding: 3px;
 }
 
 .topbar--editor .save-state {
   flex: none;
+  max-width: 10rem;
+  min-height: 32px;
+  overflow: hidden;
+  padding: 0 9px;
+  text-overflow: ellipsis;
 }
 
 .topbar__actionGroup--browser {
@@ -1336,6 +1361,41 @@
 .utility-button svg {
   width: 16px;
   height: 16px;
+}
+
+.topbar--editor .topbar__actionGroup > .icon-button,
+.topbar--editor .topbar__actionGroup > .utility-button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  justify-content: center;
+  padding: 0;
+}
+
+.topbar--editor .topbar__actionGroup > .icon-button:hover,
+.topbar--editor .topbar__actionGroup > .utility-button:hover,
+.topbar--editor .topbar__actionGroup > .icon-button--active,
+.topbar--editor .topbar__actionGroup > .utility-button--active {
+  border-color: var(--line);
+  background: var(--paper-soft);
+}
+
+.topbar--editor .topbar__actionGroup > .utility-button--accent {
+  color: var(--ink);
+  background: rgba(255, 242, 200, 0.08);
+}
+
+.topbar--editor .topbar__actionGroup > .utility-button span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .focus-mode-bar {
