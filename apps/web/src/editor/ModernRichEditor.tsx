@@ -289,7 +289,7 @@ export default function ModernRichEditor({
       {editor && (
         <div className="modern-editor__toolbarFrame">
           <header className="modern-editor__toolbar" role="toolbar" aria-label="Editor formatting" onWheel={handleToolbarWheel}>
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="History">
               <RichEditorButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
                 <Undo2 />
               </RichEditorButton>
@@ -298,7 +298,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Structure">
               <RichEditorButton
                 active={editor.isActive('heading', { level: 2 })}
                 label="Heading"
@@ -324,7 +324,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Formatting">
               <RichEditorButton active={editor.isActive('bold')} label="Bold" onClick={() => editor.chain().focus().toggleBold().run()}>
                 <Bold />
               </RichEditorButton>
@@ -362,7 +362,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Alignment">
               <RichEditorButton
                 active={editor.isActive({ textAlign: 'left' })}
                 label="Align left"
@@ -393,7 +393,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end">
+            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end" role="group" aria-label="Cleanup and inserts">
               <RichEditorButton label="Clear formatting" onClick={clearFormatting}>
                 <Eraser />
               </RichEditorButton>
@@ -423,7 +423,7 @@ export default function ModernRichEditor({
 }
 
 function RichEditorButton({
-  active = false,
+  active,
   children,
   disabled = false,
   label,
@@ -440,6 +440,7 @@ function RichEditorButton({
       type="button"
       className={`modern-editor__button ${active ? 'modern-editor__button--active' : ''}`}
       disabled={disabled}
+      aria-pressed={active === undefined ? undefined : active}
       onMouseDown={preventButtonFocus}
       onClick={onClick}
       aria-label={label}
