@@ -2034,7 +2034,7 @@ async function runCliVersionCheck(command, cwd, timeoutMs, label) {
     const child = spawn(command, ['--version'], {
       cwd,
       env: process.env,
-      shell: false,
+      shell: shouldSpawnThroughShell(command),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const timeout = setTimeout(() => {
@@ -2293,7 +2293,7 @@ async function runGeminiCli(args, input, options = {}) {
     const child = spawn(command, args, {
       cwd,
       env: process.env,
-      shell: false,
+      shell: shouldSpawnThroughShell(command),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     const timeout = setTimeout(() => {
@@ -2529,7 +2529,7 @@ async function runCodexCli(args, input, options = {}) {
     const child = spawn(command, args, {
       cwd,
       env: process.env,
-      shell: false,
+      shell: shouldSpawnThroughShell(command),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     const timeout = setTimeout(() => {
@@ -2599,6 +2599,10 @@ function appendLimitedProcessOutput(currentValue, chunk) {
   }
 
   return nextValue.slice(nextValue.length - maxLength)
+}
+
+function shouldSpawnThroughShell(command) {
+  return process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)
 }
 
 function truncateErrorDetail(value) {
