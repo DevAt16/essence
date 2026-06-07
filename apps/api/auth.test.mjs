@@ -6,7 +6,9 @@ import { after, before, beforeEach, test } from 'node:test'
 import {
   app,
   clearRateLimitBucketsForTests,
+  createCodexCliExecArgsForTests,
   createCodexCliOutputSchema,
+  formatGeminiCliErrorDetailForTests,
   setSupabaseOtpClientForTests,
 } from './index.mjs'
 import {
@@ -115,10 +117,12 @@ test('ready endpoint reports Codex CLI Composer provider', async () => {
   const previousAiEnabled = process.env.AI_ENABLED
   const previousAiProvider = process.env.AI_PROVIDER
   const previousCodexCliModel = process.env.CODEX_CLI_MODEL
+  const previousCodexCliReasoningEffort = process.env.CODEX_CLI_REASONING_EFFORT
 
   process.env.AI_ENABLED = 'true'
   process.env.AI_PROVIDER = 'codex-cli'
   process.env.CODEX_CLI_MODEL = 'codex-cli-test-model'
+  process.env.CODEX_CLI_REASONING_EFFORT = 'high'
 
   try {
     const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
@@ -127,11 +131,29 @@ test('ready endpoint reports Codex CLI Composer provider', async () => {
     assert.equal(response.body.checks.aiComposer, 'ok')
     assert.equal(response.body.checks.aiModel, 'codex-cli-test-model')
     assert.equal(response.body.checks.aiProvider, 'codex-cli')
+    assert.equal(response.body.checks.aiReasoningEffort, 'high')
   } finally {
     restoreEnvValue('AI_ENABLED', previousAiEnabled)
     restoreEnvValue('AI_PROVIDER', previousAiProvider)
     restoreEnvValue('CODEX_CLI_MODEL', previousCodexCliModel)
+    restoreEnvValue('CODEX_CLI_REASONING_EFFORT', previousCodexCliReasoningEffort)
   }
+})
+
+test('Codex CLI args include model and reasoning effort config overrides', () => {
+  const args = createCodexCliExecArgsForTests({
+    model: 'gpt-5.5',
+    outputPath: 'response.json',
+    reasoningEffort: 'medium',
+    schemaPath: 'schema.json',
+  })
+
+  assert.deepEqual(args.slice(0, 2), ['exec', '--sandbox'])
+  assert.equal(args.at(-1), '-')
+  assert.ok(args.includes('--model'))
+  assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.5')
+  assert.ok(args.includes('--config'))
+  assert.equal(args[args.indexOf('--config') + 1], 'model_reasoning_effort="medium"')
 })
 
 test('Codex CLI output schema makes optional object fields nullable and required', () => {
@@ -176,6 +198,15 @@ test('Codex CLI output schema makes optional object fields nullable and required
   assert.deepEqual(blockSchema.properties.text.type, ['string', 'null'])
   assert.deepEqual(blockSchema.properties.items.type, ['array', 'null'])
   assert.deepEqual(blockSchema.properties.citation.type, ['string', 'null'])
+})
+
+test('Gemini CLI expired API key errors are summarized for the UI', () => {
+  const detail = '\u001b[31m{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"API key expired. Please renew the API key."}],"code":400,"status":"Bad Request"}}\u001b[0m'
+
+  assert.equal(
+    formatGeminiCliErrorDetailForTests(detail),
+    'API key expired. Renew the Gemini API key used by Gemini CLI, then restart the Essence API.',
+  )
 })
 
 test('local Composer settings can override the environment provider', async () => {

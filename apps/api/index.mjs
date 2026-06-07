@@ -558,6 +558,37 @@ app.post('/api/ai/assist', async (request, response, next) => {
   }
 })
 
+app.post('/api/ai/chat', async (request, response, next) => {
+  try {
+    const user = await requireComposerUser(request)
+    enforceAiEnabled()
+    enforceRateLimit(request, 'ai-chat-ip', getAiRateLimitOptions())
+    enforceRateLimit(request, 'ai-chat-user', getAiRateLimitOptions(), user.id)
+
+    const requestContext = normalizeAiChatRequest(request.body)
+
+    if (!requestContext.ok) {
+      response.status(400).json({ error: requestContext.error })
+      return
+    }
+
+    const runtime = await getEffectiveComposerConfig(user.id)
+    const text = await generateAiText(
+      buildComposerChatPrompt(requestContext),
+      { runtime, temperature: 0.58, userId: user.id },
+    )
+
+    response.json({
+      result: {
+        text,
+        title: 'Chat response',
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.put('/api/state', async (request, response, next) => {
   try {
     const { expectedWorkspaceVersion, revisionEvents, state } = request.body ?? {}
@@ -658,7 +689,7 @@ if (isMainModule()) {
   })
 }
 
-export { app, createCodexCliOutputSchema }
+export { app, createCodexCliExecArgsForTests, createCodexCliOutputSchema, formatGeminiCliErrorDetailForTests }
 
 function configureStaticWeb(expressApp) {
   if (!shouldServeWeb()) {
@@ -795,6 +826,7 @@ function getReadinessChecks(databaseStatus) {
     aiComposer: getAiReadinessStatus(),
     aiModel: isAiEnabled() ? getAiModelLabel() : 'disabled',
     aiProvider: isAiEnabled() ? readAiProvider() : 'disabled',
+    aiReasoningEffort: isAiEnabled() && readAiProvider() === 'codex-cli' ? getCodexCliReasoningEffortLabel() : '',
     database: databaseStatus,
     staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
     supabaseJwt: supabaseAuthConfig ? 'ok' : 'missing',
@@ -1367,6 +1399,41 @@ function normalizeAiAssistRequest(body) {
   }
 }
 
+function normalizeAiChatRequest(body) {
+  const message = normalizeDraftString(body?.message, '', 4000)
+  const note = body?.note && typeof body.note === 'object' ? body.note : null
+  const includeNoteContext = Boolean(body?.includeNoteContext)
+  const contextPack = includeNoteContext && note ? normalizeComposerNoteContextPack(note.contextPack) : null
+  const title = note ? normalizeDraftString(note.title, 'Untitled Note', 180) : ''
+  const status = note ? normalizeDraftString(note.status, '', 60) : ''
+  const text = includeNoteContext && note ? normalizeDraftString(note.text, '', 12000) : ''
+  const selectedText = includeNoteContext && note ? normalizeDraftString(note.selectedText, '', 2600) : ''
+  const tags =
+    includeNoteContext && note && Array.isArray(note.tags)
+      ? note.tags.map((tag) => normalizeDraftString(tag, '', 40)).filter(Boolean).slice(0, 10)
+      : []
+
+  if (message.length < 3) {
+    return { ok: false, error: 'Enter a chat message with at least 3 characters.' }
+  }
+
+  return {
+    ok: true,
+    includeNoteContext,
+    message,
+    note: includeNoteContext
+      ? {
+          contextPack,
+          selectedText,
+          status,
+          tags,
+          text,
+          title,
+        }
+      : null,
+  }
+}
+
 function normalizeComposerRequestContext(value) {
   const recent = Array.isArray(value?.recent)
     ? value.recent.map(normalizeComposerContextItem).filter((entry) => entry !== null).slice(0, 3)
@@ -1548,6 +1615,31 @@ function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystem
     'Full note context:',
     context.note.text,
     'Return only JSON matching the schema.',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function buildComposerChatPrompt(context) {
+  const noteSections = context.includeNoteContext && context.note
+    ? [
+        'Current note context:',
+        `Title: ${context.note.title}`,
+        context.note.status ? `Status: ${context.note.status}` : '',
+        context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
+        formatComposerNoteContextPack(context.note.contextPack),
+        context.note.selectedText ? `Selected text:\n${context.note.selectedText}` : '',
+        context.note.text ? `Full note text:\n${context.note.text}` : '',
+      ].filter(Boolean)
+    : []
+
+  return [
+    'You are a plain chat interface inside Essence.',
+    'Answer the user directly in concise, useful plain text.',
+    'Do not create files, modify the workspace, run commands, or claim to have checked external sources.',
+    'If facts, citations, URLs, or current information need verification, say what should be verified.',
+    ...noteSections,
+    `User message:\n${context.message}`,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -1749,6 +1841,7 @@ function serializeComposerRuntime(runtime) {
     model: runtime.model,
     promptMode: runtime.promptMode,
     provider: runtime.provider,
+    reasoningEffort: runtime.provider === 'codex-cli' ? getCodexCliReasoningEffortLabel() : '',
     source: runtime.source,
     status: getComposerRuntimeStatus(runtime),
   }
@@ -1854,6 +1947,7 @@ function getComposerRuntimeStatus(runtime) {
   if (runtime.provider === 'codex-cli') {
     try {
       getCodexCliCwd()
+      getCodexCliReasoningEffort()
       return getCodexCliCommand() ? 'ok' : 'missing'
     } catch {
       return 'invalid'
@@ -2110,6 +2204,25 @@ async function generateAiJson(prompt, schema, options = {}) {
   return generateGeminiJson(prompt, schema, options, runtime)
 }
 
+async function generateAiText(prompt, options = {}) {
+  const runtime = options.runtime ?? await getEffectiveComposerConfig(options.userId)
+  const provider = runtime.provider
+
+  if (provider === 'ollama') {
+    return generateOllamaText(prompt, options, runtime)
+  }
+
+  if (provider === 'gemini-cli') {
+    return generateGeminiCliText(prompt, options, runtime)
+  }
+
+  if (provider === 'codex-cli') {
+    return generateCodexCliText(prompt, options, runtime)
+  }
+
+  return generateGeminiText(prompt, options, runtime)
+}
+
 async function generateGeminiJson(prompt, schema, options = {}, runtime = {}) {
   const apiKey = runtime.apiKey || process.env.GEMINI_API_KEY?.trim()
 
@@ -2187,6 +2300,71 @@ async function generateGeminiJson(prompt, schema, options = {}, runtime = {}) {
   }
 }
 
+async function generateGeminiText(prompt, options = {}, runtime = {}) {
+  const apiKey = runtime.apiKey || process.env.GEMINI_API_KEY?.trim()
+
+  if (!apiKey) {
+    const error = new Error('Gemini is not configured yet. Add a Gemini API key in Settings or set GEMINI_API_KEY.')
+    error.status = 503
+    throw error
+  }
+
+  const model = runtime.model || process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  let geminiResponse
+
+  try {
+    geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: options.temperature ?? 0.58,
+            topP: options.topP ?? 0.9,
+          },
+        }),
+      },
+    )
+  } catch (cause) {
+    const error = new Error('Gemini could not be reached. Check the server network and Gemini configuration.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const geminiPayload = await geminiResponse.json().catch(() => null)
+
+  if (!geminiResponse.ok) {
+    const upstreamMessage =
+      typeof geminiPayload?.error?.message === 'string'
+        ? geminiPayload.error.message
+        : `Gemini request failed with status ${geminiResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = geminiResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = extractGeminiText(geminiPayload)
+
+  if (!responseText) {
+    const error = new Error('Gemini returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
 async function generateOllamaJson(prompt, schema, options = {}, runtime = {}) {
   const model = runtime.model || getOllamaModel()
   const baseUrl = runtime.ollamaBaseUrl || getOllamaBaseUrl()
@@ -2249,6 +2427,57 @@ async function generateOllamaJson(prompt, schema, options = {}, runtime = {}) {
   }
 }
 
+async function generateOllamaText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model || getOllamaModel()
+  const baseUrl = runtime.ollamaBaseUrl || getOllamaBaseUrl()
+  let ollamaResponse
+
+  try {
+    ollamaResponse = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        options: {
+          temperature: options.temperature ?? 0.58,
+          top_p: options.topP ?? 0.9,
+        },
+        prompt,
+        stream: false,
+      }),
+    })
+  } catch (cause) {
+    const error = new Error('Ollama could not be reached. Start Ollama and check OLLAMA_BASE_URL.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const ollamaPayload = await ollamaResponse.json().catch(() => null)
+
+  if (!ollamaResponse.ok) {
+    const upstreamMessage =
+      typeof ollamaPayload?.error === 'string'
+        ? ollamaPayload.error
+        : `Ollama request failed with status ${ollamaResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = ollamaResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = typeof ollamaPayload?.response === 'string' ? ollamaPayload.response.trim() : ''
+
+  if (!responseText) {
+    const error = new Error('Ollama returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
 async function generateGeminiCliJson(prompt, schema, options = {}, runtime = {}) {
   const model = runtime.model && runtime.model !== 'Gemini CLI default' ? runtime.model : getGeminiCliModel()
   const cliPrompt = [
@@ -2280,6 +2509,26 @@ async function generateGeminiCliJson(prompt, schema, options = {}, runtime = {})
   }
 }
 
+async function generateGeminiCliText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Gemini CLI default' ? runtime.model : getGeminiCliModel()
+  const args = ['--output-format', 'json']
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  const result = await runGeminiCli(args, prompt, options)
+  const responseText = extractGeminiCliResponseText(result.stdout)
+
+  if (!responseText) {
+    const error = new Error('Gemini CLI returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
 async function runGeminiCli(args, input, options = {}) {
   const command = getGeminiCliCommand()
   const cwd = getGeminiCliCwd()
@@ -2292,7 +2541,10 @@ async function runGeminiCli(args, input, options = {}) {
     let settled = false
     const child = spawn(command, args, {
       cwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        GEMINI_CLI_TRUST_WORKSPACE: process.env.GEMINI_CLI_TRUST_WORKSPACE?.trim() || 'true',
+      },
       shell: shouldSpawnThroughShell(command),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -2342,7 +2594,7 @@ async function runGeminiCli(args, input, options = {}) {
 
         if (code !== 0) {
           const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
-          const error = new Error(`Gemini CLI request failed. ${truncateErrorDetail(detail)}`)
+          const error = new Error(`Gemini CLI request failed. ${formatGeminiCliErrorDetail(detail)}`)
           error.status = code === 429 ? 429 : 502
           reject(error)
           return
@@ -2388,6 +2640,7 @@ function extractGeminiCliResponseText(stdout) {
 
 async function generateCodexCliJson(prompt, schema, options = {}, runtime = {}) {
   const model = runtime.model && runtime.model !== 'Codex CLI default' ? runtime.model : getCodexCliModel()
+  const reasoningEffort = getCodexCliReasoningEffort()
   const timeoutMs = getCodexCliTimeoutMs()
   const tempDirectory = await mkdtemp(path.join(tmpdir(), 'essence-codex-'))
   const schemaPath = path.join(tempDirectory, 'schema.json')
@@ -2397,25 +2650,7 @@ async function generateCodexCliJson(prompt, schema, options = {}, runtime = {}) 
     'Return valid JSON only. Do not wrap the response in Markdown fences.',
     'Your final response must match the provided output schema.',
   ].join('\n\n')
-  const args = [
-    'exec',
-    '--sandbox',
-    'read-only',
-    '--ephemeral',
-    '--skip-git-repo-check',
-    '--output-schema',
-    schemaPath,
-    '--output-last-message',
-    outputPath,
-    '--color',
-    'never',
-  ]
-
-  if (model) {
-    args.push('--model', model)
-  }
-
-  args.push('-')
+  const args = createCodexCliExecArgs({ model, outputPath, reasoningEffort, schemaPath })
 
   try {
     await writeFile(schemaPath, JSON.stringify(createCodexCliOutputSchema(schema)), 'utf8')
@@ -2439,6 +2674,69 @@ async function generateCodexCliJson(prompt, schema, options = {}, runtime = {}) 
   } finally {
     await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
   }
+}
+
+async function generateCodexCliText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Codex CLI default' ? runtime.model : getCodexCliModel()
+  const reasoningEffort = getCodexCliReasoningEffort()
+  const timeoutMs = getCodexCliTimeoutMs()
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'essence-codex-'))
+  const outputPath = path.join(tempDirectory, 'response.txt')
+  const args = createCodexCliExecArgs({ model, outputPath, reasoningEffort })
+
+  try {
+    await runCodexCli(args, prompt, { ...options, timeoutMs })
+
+    const responseText = (await readFile(outputPath, 'utf8').catch(() => '')).trim()
+
+    if (!responseText) {
+      const error = new Error('Codex CLI returned an empty chat response.')
+      error.status = 502
+      throw error
+    }
+
+    return responseText
+  } finally {
+    await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
+  }
+}
+
+function createCodexCliExecArgsForTests(options) {
+  return createCodexCliExecArgs(options)
+}
+
+function formatGeminiCliErrorDetailForTests(detail) {
+  return formatGeminiCliErrorDetail(detail)
+}
+
+function createCodexCliExecArgs({ model = '', outputPath, reasoningEffort = '', schemaPath }) {
+  const args = [
+    'exec',
+    '--sandbox',
+    'read-only',
+    '--ephemeral',
+    '--skip-git-repo-check',
+    '--output-last-message',
+    outputPath,
+    '--color',
+    'never',
+  ]
+
+  if (schemaPath) {
+    args.splice(5, 0, '--output-schema', schemaPath)
+  }
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  if (reasoningEffort) {
+    args.push('--config', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`)
+  }
+
+  args.push('-')
+
+  return args
 }
 
 function createCodexCliOutputSchema(schema) {
@@ -3213,6 +3511,81 @@ function getCodexCliModel() {
   return process.env.CODEX_CLI_MODEL?.trim() || ''
 }
 
+function formatGeminiCliErrorDetail(value) {
+  const detail = stripAnsi(String(value ?? '')).trim()
+  const localizedMessage = extractJsonStringField(detail, 'message')
+  const status = extractJsonStringField(detail, 'status')
+
+  if (/api key expired/i.test(detail)) {
+    return 'API key expired. Renew the Gemini API key used by Gemini CLI, then restart the Essence API.'
+  }
+
+  if (/not running in a trusted directory|skip-trust|trusted folders?/i.test(detail)) {
+    return 'Gemini CLI does not trust this workspace. Set GEMINI_CLI_TRUST_WORKSPACE=true or trust the directory interactively.'
+  }
+
+  if (/api key/i.test(detail) && /invalid|expired|not valid|bad request/i.test(detail)) {
+    return localizedMessage || 'Gemini API key is invalid or expired. Renew the key used by Gemini CLI.'
+  }
+
+  return truncateErrorDetail(localizedMessage || status || detail)
+}
+
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function extractJsonStringField(value, fieldName) {
+  const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i')
+  const match = value.match(pattern)
+
+  if (!match) {
+    return ''
+  }
+
+  try {
+    return JSON.parse(`"${match[1]}"`).trim()
+  } catch {
+    return match[1].trim()
+  }
+}
+
+function getCodexCliReasoningEffort() {
+  return normalizeCodexCliReasoningEffort(process.env.CODEX_CLI_REASONING_EFFORT)
+}
+
+function getCodexCliReasoningEffortLabel() {
+  return getCodexCliReasoningEffort() || 'Codex CLI default'
+}
+
+function normalizeCodexCliReasoningEffort(value) {
+  const normalizedValue = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+
+  if (!normalizedValue) {
+    return ''
+  }
+
+  const aliases = new Map([
+    ['x-high', 'high'],
+    ['xhigh', 'high'],
+    ['extra-high', 'high'],
+    ['extra-highest', 'high'],
+    ['extra', 'high'],
+  ])
+  const effort = aliases.get(normalizedValue) ?? normalizedValue
+
+  if (['minimal', 'low', 'medium', 'high'].includes(effort)) {
+    return effort
+  }
+
+  const error = new Error('Invalid CODEX_CLI_REASONING_EFFORT. Use minimal, low, medium, or high.')
+  error.status = 503
+  throw error
+}
+
 function getCodexCliTimeoutMs() {
   const rawValue = process.env.CODEX_CLI_TIMEOUT_MS?.trim()
   const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 120_000
@@ -3321,6 +3694,7 @@ function getAiReadinessStatus() {
   if (provider === 'codex-cli') {
     try {
       getCodexCliCwd()
+      getCodexCliReasoningEffort()
       return getCodexCliCommand() ? 'ok' : 'missing'
     } catch {
       return 'invalid'

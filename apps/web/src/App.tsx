@@ -19,7 +19,7 @@ type NoteViewMode = 'read' | 'edit'
 type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
 type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
 type ComposerDockDraftMode = 'auto' | AiDraftCategory
-type AiComposerMode = 'draft' | 'assist'
+type AiComposerMode = 'draft' | 'assist' | 'chat'
 type AiAssistAction =
   | 'continue-writing'
   | 'improve-clarity'
@@ -30,7 +30,7 @@ type AiAssistAction =
   | 'custom'
 type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
-type AmbienceMode = 'still' | 'subtle' | 'cosmic'
+type AmbienceMode = 'still' | 'subtle' | 'cosmic' | 'observatory'
 type ColorTheme = 'starlight' | 'moonlit' | 'daylight'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 type LibraryDisplayMode = 'cards' | 'list'
@@ -294,8 +294,14 @@ interface AiAssistResult {
   title: string
 }
 
+interface AiChatResult {
+  text: string
+  title: string
+}
+
 type ComposerDockRun =
   | { action: AiAssistAction; instruction: string; kind: 'assist' }
+  | { includeNoteContext: boolean; kind: 'chat'; message: string }
   | { category: AiDraftCategory; kind: 'draft'; topic: string }
 
 interface ComposerHistoryEntry {
@@ -335,6 +341,8 @@ interface ComposerContextItem {
 interface ComposerRequestContext {
   recent: ComposerContextItem[]
 }
+
+type ComposerRequestContextScope = 'active-note' | 'none' | 'relevant'
 
 interface ComposerNoteContextBlock {
   role: 'before' | 'selected' | 'after'
@@ -480,6 +488,7 @@ const ambienceOptions: Array<{ description: string; label: string; value: Ambien
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
   { description: 'Quiet stars with rare motion.', label: 'Subtle', value: 'subtle' },
   { description: 'Full cosmic field with shooting stars.', label: 'Cosmic', value: 'cosmic' },
+  { description: 'A quiet starship observatory with glass viewports.', label: 'Observatory', value: 'observatory' },
 ]
 
 const colorThemeOptions: Array<{ description: string; label: string; value: ColorTheme }> = [
@@ -530,16 +539,28 @@ const ambienceTokensByTheme: Record<ColorTheme, Record<AmbienceMode, AmbienceTok
       twinkleOpacity: 0.016,
     },
     cosmic: {
-      breatheHigh: 0.25,
-      breatheLow: 0.13,
-      contentTwinkleHigh: 0.3,
-      contentTwinkleLow: 0.15,
-      opacity: 0.07,
-      pulseHigh: 0.34,
-      pulseLow: 0.17,
-      starOpacity: 0.048,
+      breatheHigh: 0.32,
+      breatheLow: 0.16,
+      contentTwinkleHigh: 0.36,
+      contentTwinkleLow: 0.18,
+      opacity: 0.1,
+      pulseHigh: 0.42,
+      pulseLow: 0.22,
+      starOpacity: 0.07,
       surfaceAlpha: 0.96,
-      twinkleOpacity: 0.03,
+      twinkleOpacity: 0.045,
+    },
+    observatory: {
+      breatheHigh: 0.36,
+      breatheLow: 0.18,
+      contentTwinkleHigh: 0.38,
+      contentTwinkleLow: 0.19,
+      opacity: 0.12,
+      pulseHigh: 0.44,
+      pulseLow: 0.23,
+      starOpacity: 0.08,
+      surfaceAlpha: 0.95,
+      twinkleOpacity: 0.055,
     },
   },
   moonlit: {
@@ -557,16 +578,28 @@ const ambienceTokensByTheme: Record<ColorTheme, Record<AmbienceMode, AmbienceTok
       twinkleOpacity: 0.055,
     },
     cosmic: {
-      breatheHigh: 0.15,
-      breatheLow: 0.075,
-      contentTwinkleHigh: 0.19,
-      contentTwinkleLow: 0.09,
-      opacity: 0.34,
-      pulseHigh: 0.21,
-      pulseLow: 0.1,
-      starOpacity: 0.23,
-      surfaceAlpha: 0.9,
-      twinkleOpacity: 0.12,
+      breatheHigh: 0.24,
+      breatheLow: 0.12,
+      contentTwinkleHigh: 0.28,
+      contentTwinkleLow: 0.14,
+      opacity: 0.52,
+      pulseHigh: 0.34,
+      pulseLow: 0.17,
+      starOpacity: 0.36,
+      surfaceAlpha: 0.88,
+      twinkleOpacity: 0.2,
+    },
+    observatory: {
+      breatheHigh: 0.28,
+      breatheLow: 0.14,
+      contentTwinkleHigh: 0.31,
+      contentTwinkleLow: 0.16,
+      opacity: 0.62,
+      pulseHigh: 0.38,
+      pulseLow: 0.2,
+      starOpacity: 0.42,
+      surfaceAlpha: 0.84,
+      twinkleOpacity: 0.24,
     },
   },
   starlight: {
@@ -584,16 +617,28 @@ const ambienceTokensByTheme: Record<ColorTheme, Record<AmbienceMode, AmbienceTok
       twinkleOpacity: 0.06,
     },
     cosmic: {
-      breatheHigh: 0.21,
-      breatheLow: 0.11,
-      contentTwinkleHigh: 0.24,
-      contentTwinkleLow: 0.12,
-      opacity: 0.48,
-      pulseHigh: 0.28,
-      pulseLow: 0.14,
-      starOpacity: 0.34,
-      surfaceAlpha: 0.88,
-      twinkleOpacity: 0.19,
+      breatheHigh: 0.32,
+      breatheLow: 0.16,
+      contentTwinkleHigh: 0.36,
+      contentTwinkleLow: 0.18,
+      opacity: 0.68,
+      pulseHigh: 0.44,
+      pulseLow: 0.22,
+      starOpacity: 0.52,
+      surfaceAlpha: 0.86,
+      twinkleOpacity: 0.3,
+    },
+    observatory: {
+      breatheHigh: 0.36,
+      breatheLow: 0.18,
+      contentTwinkleHigh: 0.4,
+      contentTwinkleLow: 0.2,
+      opacity: 0.76,
+      pulseHigh: 0.5,
+      pulseLow: 0.26,
+      starOpacity: 0.58,
+      surfaceAlpha: 0.82,
+      twinkleOpacity: 0.36,
     },
   },
 }
@@ -1173,6 +1218,8 @@ function App() {
   const [aiAssistError, setAiAssistError] = useState<string | null>(null)
   const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
   const [aiAssisting, setAiAssisting] = useState(false)
+  const [aiChatResult, setAiChatResult] = useState<AiChatResult | null>(null)
+  const [aiChatting, setAiChatting] = useState(false)
   const [aiDraft, setAiDraft] = useState<AiDraft | null>(null)
   const [aiDraftCategory, setAiDraftCategory] = useState<AiDraftCategory>('essay')
   const [aiDraftError, setAiDraftError] = useState<string | null>(null)
@@ -1209,6 +1256,7 @@ function App() {
   const [readerExplorationAwake, setReaderExplorationAwake] = useState(false)
   const [readerExplorationPendingAction, setReaderExplorationPendingAction] = useState<ReaderExplorationAction | null>(null)
   const [composerDockOpen, setComposerDockOpen] = useState(false)
+  const [composerDockMode, setComposerDockMode] = useState<AiComposerMode>('draft')
   const [composerDockPrompt, setComposerDockPrompt] = useState('')
   const [composerDockDraftMode, setComposerDockDraftMode] = useState<ComposerDockDraftMode>('auto')
   const [composerDockError, setComposerDockError] = useState<string | null>(null)
@@ -1278,7 +1326,7 @@ function App() {
   const composerLockedMessage =
     'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
   const composerRuntimeLabel = getComposerRuntimeLabel(composerSettingsState.runtime?.provider ?? apiReadiness.aiProvider)
-  const composerBusy = aiGenerating || aiAssisting
+  const composerBusy = aiGenerating || aiAssisting || aiChatting
   const ambienceStyle = useMemo(
     () => getAmbienceStyle({ colorTheme, intensity: ambienceIntensity, mode: ambienceMode, zenMode }),
     [ambienceIntensity, ambienceMode, colorTheme, zenMode],
@@ -3103,7 +3151,10 @@ function App() {
     try {
       const draft = await generateRemoteAiDraft({
         category: categoryOverride,
-        context: buildComposerRequestContext(composerHistory, { targetText: topic }),
+        context: buildComposerRequestContext(composerHistory, {
+          scope: 'none',
+          targetText: topic,
+        }),
         topic,
       })
 
@@ -3220,6 +3271,7 @@ function App() {
         action: effectiveAction,
         context: buildComposerRequestContext(composerHistory, {
           activeNoteTitle: activeNote.title,
+          scope: 'active-note',
           targetText: `${instruction} ${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
         }),
         instruction,
@@ -3257,6 +3309,60 @@ function App() {
       return false
     } finally {
       setAiAssisting(false)
+      setComposerBusyMessage('')
+    }
+  }
+
+  const generateAiChat = async (messageOverride: string, includeNoteContextOverride = Boolean(activeNote && view === 'editor')) => {
+    const message = messageOverride.trim()
+
+    if (message.length < 3) {
+      setComposerDockError('Give Chat at least 3 characters.')
+      return false
+    }
+
+    if (!composerAvailable) {
+      setComposerDockError(composerLockedMessage)
+      return false
+    }
+
+    const includeNoteContext = Boolean(includeNoteContextOverride && activeNote && view === 'editor')
+    const selectedText = includeNoteContext && noteViewMode === 'edit' ? activeComposerSelectionText : ''
+    const noteText = includeNoteContext && activeNote ? getPlainTextFromBlocks(activeNote.blocks) : ''
+
+    setAiChatting(true)
+    setComposerBusyMessage(includeNoteContext ? 'Chat is reading the current note...' : 'Chat is thinking...')
+    setComposerDockError(null)
+
+    try {
+      const result = await generateRemoteAiChat({
+        includeNoteContext,
+        message,
+        note: includeNoteContext && activeNote
+          ? {
+              contextPack: activeComposerContextPack,
+              selectedText,
+              status: activeNote.status,
+              tags: activeNote.tags,
+              text: noteText,
+              title: activeNote.title,
+            }
+          : undefined,
+      })
+
+      setAiChatResult(result)
+      flashSaveFeedback('Chat response ready')
+      return true
+    } catch (error) {
+      console.warn('Unable to generate chat response.', error)
+      setComposerDockError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Chat could not respond. Check the server and AI provider configuration.',
+      )
+      return false
+    } finally {
+      setAiChatting(false)
       setComposerBusyMessage('')
     }
   }
@@ -3337,6 +3443,7 @@ function App() {
   const clearComposerDockResult = () => {
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiChatResult(null)
     setAiDraft(null)
     setAiDraftError(null)
     setComposerDockError(null)
@@ -3358,10 +3465,16 @@ function App() {
     setAiAssistError(null)
     setAiDraftError(null)
     setAiAssistResult(null)
+    setAiChatResult(null)
     setAiDraft(null)
 
     if (composerDockLastRun.kind === 'assist') {
       await generateAiAssist(composerDockLastRun.action, composerDockLastRun.instruction)
+      return
+    }
+
+    if (composerDockLastRun.kind === 'chat') {
+      await generateAiChat(composerDockLastRun.message, composerDockLastRun.includeNoteContext)
       return
     }
 
@@ -3382,8 +3495,10 @@ function App() {
     setComposerDockError(null)
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiChatResult(null)
     setAiDraft(null)
     setAiDraftError(null)
+    setComposerDockMode('assist')
 
     const ok = await generateAiAssist(action)
 
@@ -3402,8 +3517,10 @@ function App() {
     setComposerDockError(null)
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiChatResult(null)
     setAiDraft(null)
     setAiDraftError(null)
+    setComposerDockMode('assist')
 
     const ok = await generateAiAssist(action)
 
@@ -3426,13 +3543,36 @@ function App() {
     }
 
     const forcedDraftCategory = composerDockDraftMode === 'auto' ? null : composerDockDraftMode
-    const shouldAssistActiveNote = activeNote && view === 'editor' && !forcedDraftCategory && !looksLikeNewDraftPrompt(prompt)
+    const shouldAssistActiveNote = composerDockMode === 'assist' && activeNote && view === 'editor'
     setComposerDockError(null)
     setAiAssistError(null)
     setAiDraftError(null)
 
+    if (composerDockMode === 'chat') {
+      setAiAssistResult(null)
+      setAiChatResult(null)
+      setAiDraft(null)
+
+      const includeNoteContext = Boolean(activeNote && view === 'editor')
+      const ok = await generateAiChat(prompt, includeNoteContext)
+
+      if (ok) {
+        setComposerDockLastRun({ includeNoteContext, kind: 'chat', message: prompt })
+        setComposerDockPrompt('')
+        setComposerDockOpen(true)
+      }
+
+      return
+    }
+
+    if (composerDockMode === 'assist' && !shouldAssistActiveNote) {
+      setComposerDockError('Open a note before using Assist mode.')
+      return
+    }
+
     if (shouldAssistActiveNote) {
       setAiAssistResult(null)
+      setAiChatResult(null)
       setAiDraft(null)
 
       const ok = await generateAiAssist('custom', prompt)
@@ -3448,6 +3588,7 @@ function App() {
     const category = forcedDraftCategory ?? inferDraftCategoryFromPrompt(prompt)
 
     setAiAssistResult(null)
+    setAiChatResult(null)
     setAiDraft(null)
 
     const ok = await generateAiDraft(prompt, category)
@@ -4276,6 +4417,17 @@ function App() {
       style={ambienceStyle}
     >
       <div className="cosmic-sky" aria-hidden="true">
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--top" />
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--left" />
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--right" />
+        <span className="cosmic-sky__glassGlint cosmic-sky__glassGlint--left" />
+        <span className="cosmic-sky__glassGlint cosmic-sky__glassGlint--right" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--top" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--left" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--right" />
+        <span className="cosmic-sky__cabinGlow" />
+        <span className="cosmic-sky__galaxy cosmic-sky__galaxy--primary" />
+        <span className="cosmic-sky__galaxy cosmic-sky__galaxy--secondary" />
         <span className="cosmic-sky__meteor" />
         <span className="cosmic-sky__meteor" />
         <span className="cosmic-sky__meteor" />
@@ -4389,6 +4541,7 @@ function App() {
             canRegenerate={Boolean(composerDockLastRun)}
             canReplaceAssist={Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')}
             canUseComposer={composerAvailable}
+            chatResult={aiChatResult}
             contextLabel={composerDockContext}
             contextSummary={composerDockContextSummary}
             draft={aiDraft}
@@ -4397,11 +4550,16 @@ function App() {
             busyMessage={composerBusyMessage}
             isBusy={composerBusy}
             isOpen={composerDockOpen}
+            mode={composerDockMode}
             onAction={runComposerDockAction}
             onAppendAssist={appendAiAssistToActiveNote}
             onClearResult={clearComposerDockResult}
             onCreateNote={createNoteFromAiDraft}
             onDraftModeChange={setComposerDockDraftMode}
+            onModeChange={(mode) => {
+              setComposerDockMode(mode)
+              setComposerDockError(null)
+            }}
             onPromptChange={(value) => {
               setComposerDockPrompt(value)
               setComposerDockError(null)
@@ -5017,6 +5175,7 @@ function ComposerDock({
   canRegenerate,
   canReplaceAssist,
   canUseComposer,
+  chatResult,
   contextLabel,
   contextSummary,
   draft,
@@ -5024,11 +5183,13 @@ function ComposerDock({
   error,
   isBusy,
   isOpen,
+  mode,
   onAction,
   onAppendAssist,
   onClearResult,
   onCreateNote,
   onDraftModeChange,
+  onModeChange,
   onPromptChange,
   onRegenerate,
   onReplaceAssist,
@@ -5045,6 +5206,7 @@ function ComposerDock({
   canRegenerate: boolean
   canReplaceAssist: boolean
   canUseComposer: boolean
+  chatResult: AiChatResult | null
   contextLabel: string
   contextSummary: string
   draft: AiDraft | null
@@ -5052,11 +5214,13 @@ function ComposerDock({
   error: string | null
   isBusy: boolean
   isOpen: boolean
+  mode: AiComposerMode
   onAction: (action: AiAssistAction) => void
   onAppendAssist: () => void
   onClearResult: () => void
   onCreateNote: () => void
   onDraftModeChange: (mode: ComposerDockDraftMode) => void
+  onModeChange: (mode: AiComposerMode) => void
   onPromptChange: (value: string) => void
   onRegenerate: () => void
   onReplaceAssist: () => void
@@ -5074,17 +5238,20 @@ function ComposerDock({
     { action: 'create-outline', label: 'Outline' },
     { action: 'study-questions', label: 'Questions' },
   ]
-  const hasResult = Boolean(assistResult || draft)
+  const hasResult = Boolean(assistResult || chatResult || draft)
   const assistText = assistResult ? getReadableTextFromAiDraftBlocks(assistResult.blocks) : ''
+  const chatText = chatResult?.text ?? ''
   const draftText = draft ? getReadableTextFromAiDraftBlocks(draft.blocks) : ''
   const resultCopyText = assistResult
     ? formatComposerAssistForClipboard(assistResult, assistText)
-    : draft ? formatComposerDraftForClipboard(draft, draftText) : ''
+    : chatResult ? chatText : draft ? formatComposerDraftForClipboard(draft, draftText) : ''
   const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | 'idle'>('idle')
   const promptPlaceholder =
-    draftMode === 'auto'
-      ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
-      : `Draft ${getComposerDockDraftModeLabel(draftMode).toLowerCase()} about...`
+    mode === 'chat'
+      ? showNoteActions ? 'Ask Codex about this note...' : 'Chat with Codex...'
+      : draftMode === 'auto'
+        ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
+        : `Draft ${getComposerDockDraftModeLabel(draftMode).toLowerCase()} about...`
   const copyButtonLabel = copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'
 
   useEffect(() => {
@@ -5196,7 +5363,23 @@ function ComposerDock({
         </div>
       </header>
 
-      {showNoteActions && (
+      <div className="composer-dock__modeTabs" role="tablist" aria-label="Composer mode">
+        {(['draft', 'assist', 'chat'] as const).map((nextMode) => (
+          <button
+            key={nextMode}
+            type="button"
+            className={mode === nextMode ? 'composer-dock__modeTab--active' : ''}
+            disabled={isBusy}
+            onClick={() => onModeChange(nextMode)}
+            role="tab"
+            aria-selected={mode === nextMode}
+          >
+            {nextMode === 'draft' ? 'Draft' : nextMode === 'assist' ? 'Assist' : 'Chat'}
+          </button>
+        ))}
+      </div>
+
+      {showNoteActions && mode === 'assist' && (
         <div className="composer-dock__chips" aria-label="Quick Composer actions">
           {quickActions.map((action) => (
             <button
@@ -5211,22 +5394,24 @@ function ComposerDock({
         </div>
       )}
 
-      <div className="composer-dock__draftModes" role="radiogroup" aria-label="Draft type">
-        <span>Draft</span>
-        {composerDockDraftModes.map((mode) => (
-          <button
-            key={mode.value}
-            type="button"
-            className={draftMode === mode.value ? 'composer-dock__draftMode--active' : ''}
-            disabled={isBusy}
-            onClick={() => onDraftModeChange(mode.value)}
-            role="radio"
-            aria-checked={draftMode === mode.value}
-          >
-            {mode.label}
-          </button>
-        ))}
-      </div>
+      {mode === 'draft' && (
+        <div className="composer-dock__draftModes" role="radiogroup" aria-label="Draft type">
+          <span>Draft</span>
+          {composerDockDraftModes.map((draftModeOption) => (
+            <button
+              key={draftModeOption.value}
+              type="button"
+              className={draftMode === draftModeOption.value ? 'composer-dock__draftMode--active' : ''}
+              disabled={isBusy}
+              onClick={() => onDraftModeChange(draftModeOption.value)}
+              role="radio"
+              aria-checked={draftMode === draftModeOption.value}
+            >
+              {draftModeOption.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {isBusy && (
         <div className="composer-dock__thinking" aria-live="polite">
@@ -5239,6 +5424,23 @@ function ComposerDock({
             </p>
           </div>
         </div>
+      )}
+
+      {!isBusy && chatResult && (
+        <section className="composer-dock__result composer-dock__result--chat" aria-label="Composer chat response">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>Codex chat</span>
+              <strong>{chatResult.title}</strong>
+            </div>
+          </div>
+          {resultTools}
+          <div className="composer-dock__resultBody" tabIndex={0}>
+            {chatText.split(/\n{2,}/).map((paragraph, index) => (
+              <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
+            ))}
+          </div>
+        </section>
       )}
 
       {!isBusy && assistResult && (
@@ -8070,6 +8272,18 @@ function AuthScreen({
 
   return (
     <main className="auth-screen">
+      <div className="auth-sky" aria-hidden="true">
+        <span className="auth-sky__stars auth-sky__stars--near" />
+        <span className="auth-sky__stars auth-sky__stars--far" />
+        <span className="auth-sky__nebula auth-sky__nebula--left" />
+        <span className="auth-sky__nebula auth-sky__nebula--right" />
+        <span className="auth-sky__galaxy auth-sky__galaxy--primary" />
+        <span className="auth-sky__galaxy auth-sky__galaxy--secondary" />
+        <span className="auth-sky__meteor" />
+        <span className="auth-sky__meteor" />
+        <span className="auth-sky__meteor" />
+      </div>
+
       <section className="auth-main" aria-label="Essence account access">
         <header className="auth-brandbar">
           <EssenceMark compact />
@@ -8080,7 +8294,9 @@ function AuthScreen({
 
         <div className="auth-main__content">
           <div className="auth-hero">
+            <span className="auth-hero__kicker">Personal observatory</span>
             <h1>Return to your thinking space.</h1>
+            <p>Notes, drafts, and research paths held in a quiet field of attention.</p>
           </div>
 
           <section className="auth-panel">
@@ -8164,6 +8380,11 @@ function AuthScreen({
       </section>
 
       <aside className="auth-poem" aria-label="Product promise">
+        <div className="auth-window" aria-hidden="true">
+          <span className="auth-window__rim" />
+          <span className="auth-window__glow" />
+          <span className="auth-window__scanline" />
+        </div>
         <p>
           <strong>Capture</strong> the thought.
           <br />
@@ -9004,12 +9225,6 @@ function getComposerDockContextLabel({
   return 'New draft'
 }
 
-function looksLikeNewDraftPrompt(prompt: string) {
-  return /\b(new note|draft|write (an?|the)?\s*(essay|article|note|quote)|create (an?|the)?\s*(essay|article|note|brief)|research brief|quote about)\b/i.test(
-    prompt,
-  )
-}
-
 function inferDraftCategoryFromPrompt(prompt: string): AiDraftCategory {
   const normalizedPrompt = prompt.toLowerCase()
 
@@ -9670,7 +9885,7 @@ function isLibrarySortMode(value: unknown): value is LibrarySortMode {
 }
 
 function isAmbienceMode(value: unknown): value is AmbienceMode {
-  return value === 'still' || value === 'subtle' || value === 'cosmic'
+  return value === 'still' || value === 'subtle' || value === 'cosmic' || value === 'observatory'
 }
 
 function isColorTheme(value: unknown): value is ColorTheme {
@@ -10211,6 +10426,38 @@ async function generateRemoteAiAssist(request: {
   return normalizeRemoteAiAssistResult(payload.result, request.action)
 }
 
+async function generateRemoteAiChat(request: {
+  includeNoteContext: boolean
+  message: string
+  note?: {
+    contextPack?: ComposerNoteContextPack | null
+    selectedText: string
+    status: string
+    tags: string[]
+    text: string
+    title: string
+  }
+}): Promise<AiChatResult> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/ai/chat'), {
+    method: 'POST',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Chat failed with status ${response.status}.`)
+  }
+
+  const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
+
+  return normalizeRemoteAiChatResult(payload.result)
+}
+
 async function persistRemoteAppState(
   state: PersistedAppState,
   revisionEvents: PendingRevisionEvent[] = [],
@@ -10256,6 +10503,16 @@ function normalizeRemoteAiAssistResult(rawResult: unknown, fallbackAction: AiAss
     canReplaceSelection: Boolean(candidate.canReplaceSelection),
     summary: typeof candidate.summary === 'string' ? candidate.summary.trim() : '',
     title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : actionLabel,
+  }
+}
+
+function normalizeRemoteAiChatResult(rawResult: unknown): AiChatResult {
+  const candidate = (rawResult ?? {}) as Partial<AiChatResult>
+  const text = typeof candidate.text === 'string' ? candidate.text.trim() : ''
+
+  return {
+    text: text || 'Chat returned an empty response.',
+    title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Chat response',
   }
 }
 
@@ -10439,13 +10696,23 @@ function cloneAiDraftBlocks(blocks: AiDraftBlock[]) {
 
 function buildComposerRequestContext(
   history: ComposerHistoryEntry[],
-  options: { activeNoteTitle?: string | null; targetText: string },
+  options: { activeNoteTitle?: string | null; scope?: ComposerRequestContextScope; targetText: string },
 ): ComposerRequestContext {
+  const scope = options.scope ?? 'relevant'
+
+  if (scope === 'none') {
+    return { recent: [] }
+  }
+
   const targetTerms = getComposerContextTerms(options.targetText)
   const normalizedActiveTitle = normalizeComposerContextText(options.activeNoteTitle ?? '')
   const byId = new Map<string, ComposerHistoryEntry>()
+  const eligibleHistory =
+    scope === 'active-note' && normalizedActiveTitle
+      ? history.filter((entry) => normalizeComposerContextText(entry.sourceTitle) === normalizedActiveTitle)
+      : history
 
-  history
+  eligibleHistory
     .map((entry, index) => ({
       entry,
       index,
@@ -10458,7 +10725,13 @@ function buildComposerRequestContext(
       byId.set(entry.id, entry)
     })
 
-  for (const entry of history) {
+  if (scope === 'active-note') {
+    return {
+      recent: [...byId.values()].slice(0, composerRequestContextLimit).map(createComposerContextItem),
+    }
+  }
+
+  for (const entry of eligibleHistory) {
     if (byId.size >= composerRequestContextLimit) {
       break
     }

@@ -104,12 +104,22 @@ The internal desktop app is a Tauri shell around the same Vite/React UI.
 | Field | Scope | Secret | Role |
 | --- | --- | --- | --- |
 | `AI_ENABLED` | API | No | Set `false` to disable Composer API calls without disabling manual notes or account login. Useful as a cost-control kill switch. |
-| `AI_PROVIDER` | API | No | Composer provider. Use `gemini` for Google Gemini or `ollama` for a local Ollama server. Defaults to `gemini`. |
+| `AI_PROVIDER` | API | No | Composer provider. Use `gemini`, `ollama`, `gemini-cli`, or `codex-cli`. Defaults to `gemini`. |
 | `AI_ALLOW_LOCAL_USER` | API | No | Allows the local fallback user to call Composer without account sign-in. Use only for private local deployments. |
 | `AI_RATE_LIMIT_MAX` | API | No | Maximum AI requests per IP/user per rate-limit window. |
 | `AI_RATE_LIMIT_WINDOW_MS` | API | No | AI rate-limit window in milliseconds. |
 | `GEMINI_API_KEY` | API | Yes | Gemini API key used by server-side Composer requests. Never expose to the browser. Required in production when `AI_PROVIDER=gemini` and `AI_ENABLED` is not `false`. |
 | `GEMINI_MODEL` | API | No | Gemini model name used by Composer. |
+| `GEMINI_CLI_COMMAND` | API | No | Gemini CLI executable used when `AI_PROVIDER=gemini-cli`. Defaults to `gemini`. |
+| `GEMINI_CLI_MODEL` | API | No | Optional Gemini CLI model override. Empty uses the CLI default. |
+| `GEMINI_CLI_CWD` | API | No | Optional working directory for Gemini CLI calls. Empty uses the API directory. |
+| `GEMINI_CLI_TRUST_WORKSPACE` | API | No | Trust the Gemini CLI working directory for headless API calls. Defaults to `true` when Essence launches Gemini CLI. |
+| `GEMINI_CLI_TIMEOUT_MS` | API | No | Gemini CLI timeout in milliseconds. |
+| `CODEX_CLI_COMMAND` | API | No | Codex CLI executable used when `AI_PROVIDER=codex-cli`. Defaults to `codex`. |
+| `CODEX_CLI_MODEL` | API | No | Optional Codex CLI model override, such as `gpt-5.5`. Empty uses the CLI default. |
+| `CODEX_CLI_REASONING_EFFORT` | API | No | Optional Codex CLI reasoning effort override. Use `minimal`, `low`, `medium`, or `high`; empty uses the CLI default. |
+| `CODEX_CLI_CWD` | API | No | Optional working directory for Codex CLI calls. Empty uses the API directory. |
+| `CODEX_CLI_TIMEOUT_MS` | API | No | Codex CLI timeout in milliseconds. |
 | `OLLAMA_BASE_URL` | API | No | Local Ollama server URL used when `AI_PROVIDER=ollama`. Defaults to `http://127.0.0.1:11434`. |
 | `OLLAMA_MODEL` | API | No | Ollama model name used by Composer, such as `llama3.1`. |
 

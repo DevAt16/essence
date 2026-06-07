@@ -86,11 +86,12 @@ AI_ALLOW_LOCAL_USER=true
 GEMINI_CLI_COMMAND=gemini
 GEMINI_CLI_MODEL=
 GEMINI_CLI_CWD=
+GEMINI_CLI_TRUST_WORKSPACE=true
 GEMINI_CLI_TIMEOUT_MS=90000
 VITE_AI_ALLOW_LOCAL_USER=true
 ```
 
-Leave `GEMINI_CLI_MODEL` empty to use the CLI default, or set a model supported by your Gemini CLI setup. `GEMINI_CLI_CWD` is optional; when empty, Essence runs the CLI from the API directory.
+Leave `GEMINI_CLI_MODEL` empty to use the CLI default, or set a model supported by your Gemini CLI setup. `GEMINI_CLI_CWD` is optional; when empty, Essence runs the CLI from the API directory. `GEMINI_CLI_TRUST_WORKSPACE=true` lets headless API calls run without Gemini CLI's interactive trusted-folder prompt.
 
 ### Codex CLI
 
@@ -102,12 +103,13 @@ AI_PROVIDER=codex-cli
 AI_ALLOW_LOCAL_USER=true
 CODEX_CLI_COMMAND=codex
 CODEX_CLI_MODEL=
+CODEX_CLI_REASONING_EFFORT=
 CODEX_CLI_CWD=
 CODEX_CLI_TIMEOUT_MS=120000
 VITE_AI_ALLOW_LOCAL_USER=true
 ```
 
-Leave `CODEX_CLI_MODEL` empty to use the CLI default. Composer runs `codex exec` with read-only sandboxing, an output schema, and an ephemeral session.
+Leave `CODEX_CLI_MODEL` empty to use the CLI default, or set a model such as `gpt-5.5`. Set `CODEX_CLI_REASONING_EFFORT` to `minimal`, `low`, `medium`, or `high` when you want Essence to override the Codex CLI default reasoning effort. Composer runs `codex exec` with read-only sandboxing, an output schema, and an ephemeral session.
 
 Then run:
 

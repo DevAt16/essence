@@ -10,6 +10,7 @@ import TextAlign from '@tiptap/extension-text-align'
 import Underline from '@tiptap/extension-underline'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import {
   AlignCenter,
@@ -130,6 +131,30 @@ export default function ModernRichEditor({
       attributes: {
         class: 'modern-editor__surface',
         'aria-label': 'Note body',
+      },
+      handlePaste: (view, event) => {
+        const pastedText = event.clipboardData?.getData('text/plain') ?? ''
+
+        if (!shouldPasteAsMarkdown(pastedText)) {
+          return false
+        }
+
+        const pastedContent = parseMarkdownLikeTextToTiptapContent(pastedText)
+
+        if (pastedContent.length === 0) {
+          return false
+        }
+
+        event.preventDefault()
+
+        try {
+          const nodes = pastedContent.map((node) => view.state.schema.nodeFromJSON(node))
+          const slice = new Slice(Fragment.fromArray(nodes), 0, 0)
+          view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
+          return true
+        } catch {
+          return false
+        }
       },
     },
     onFocus: ({ editor: currentEditor }) => {
@@ -547,6 +572,165 @@ function createTiptapInlineContentFromText(value: string): JSONContent[] | undef
   })
 
   return content.length > 0 ? content : undefined
+}
+
+function shouldPasteAsMarkdown(value: string): boolean {
+  const text = value.trim()
+
+  if (!text) {
+    return false
+  }
+
+  return (
+    /(^|\n)\s*(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+|```|~~~|-{3,}\s*$|\*{3,}\s*$)/m.test(text) ||
+    /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^)]+\)|<u>[\s\S]+?<\/u>)/.test(text)
+  )
+}
+
+function parseMarkdownLikeTextToTiptapContent(value: string): JSONContent[] {
+  const lines = value.replace(/\r\n?/g, '\n').split('\n')
+  const content: JSONContent[] = []
+  const paragraphLines: string[] = []
+  let index = 0
+
+  const flushParagraph = () => {
+    const paragraphText = paragraphLines.join('\n').trimEnd()
+    paragraphLines.length = 0
+
+    if (!paragraphText.trim()) {
+      return
+    }
+
+    content.push({
+      type: 'paragraph',
+      content: createTiptapInlineContentFromText(paragraphText),
+    })
+  }
+
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+    const trimmedLine = line.trim()
+
+    if (!trimmedLine) {
+      flushParagraph()
+      index += 1
+      continue
+    }
+
+    const fenceMatch = trimmedLine.match(/^(```|~~~)\s*/)
+
+    if (fenceMatch) {
+      flushParagraph()
+
+      const fence = fenceMatch[1]
+      const codeLines: string[] = []
+      index += 1
+
+      while (index < lines.length && !lines[index].trim().startsWith(fence)) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+
+      if (index < lines.length) {
+        index += 1
+      }
+
+      const codeText = codeLines.join('\n')
+      content.push({
+        type: 'codeBlock',
+        content: codeText ? [{ type: 'text', text: codeText }] : undefined,
+      })
+      continue
+    }
+
+    if (/^(-{3,}|\*{3,})$/.test(trimmedLine)) {
+      flushParagraph()
+      content.push({ type: 'horizontalRule' })
+      index += 1
+      continue
+    }
+
+    const headingMatch = trimmedLine.match(/^(#{1,6})\s+(.+)$/)
+
+    if (headingMatch) {
+      flushParagraph()
+      content.push({
+        type: 'heading',
+        attrs: { level: headingMatch[1].length >= 3 ? 3 : 2 },
+        content: createTiptapInlineContentFromText(headingMatch[2].trim()),
+      })
+      index += 1
+      continue
+    }
+
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/)
+
+    if (quoteMatch) {
+      flushParagraph()
+
+      const quoteLines: string[] = []
+
+      while (index < lines.length) {
+        const currentQuoteMatch = lines[index].match(/^\s*>\s?(.*)$/)
+
+        if (!currentQuoteMatch) {
+          break
+        }
+
+        quoteLines.push(currentQuoteMatch[1])
+        index += 1
+      }
+
+      content.push({
+        type: 'blockquote',
+        content: [
+          {
+            type: 'paragraph',
+            content: createTiptapInlineContentFromText(quoteLines.join('\n').trim()),
+          },
+        ],
+      })
+      continue
+    }
+
+    const listMatch = line.match(/^\s*(([-*+])|(\d+)[.)])\s+(.+)$/)
+
+    if (listMatch) {
+      flushParagraph()
+
+      const ordered = Boolean(listMatch[3])
+      const start = ordered ? Number(listMatch[3]) : undefined
+      const items: string[] = []
+
+      while (index < lines.length) {
+        const currentListMatch = lines[index].match(/^\s*(([-*+])|(\d+)[.)])\s+(.+)$/)
+
+        if (!currentListMatch || Boolean(currentListMatch[3]) !== ordered) {
+          break
+        }
+
+        items.push(currentListMatch[4].trim())
+        index += 1
+      }
+
+      content.push({
+        type: ordered ? 'orderedList' : 'bulletList',
+        attrs: ordered ? { start: Number.isFinite(start) ? start : 1 } : undefined,
+        content: items.map((item) => ({
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: createTiptapInlineContentFromText(item) }],
+        })),
+      })
+      continue
+    }
+
+    paragraphLines.push(line)
+    index += 1
+  }
+
+  flushParagraph()
+
+  return content
 }
 
 function normalizeEditorDocument(value: unknown, fallbackBlocks: NoteBlock[]): JSONContent {
