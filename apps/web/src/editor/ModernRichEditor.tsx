@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
-import type { JSONContent } from '@tiptap/core'
+import type { Editor, JSONContent } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import LinkExtension from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -10,6 +10,7 @@ import TextAlign from '@tiptap/extension-text-align'
 import Underline from '@tiptap/extension-underline'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import {
   AlignCenter,
@@ -26,8 +27,10 @@ import {
   List,
   ListOrdered,
   Minus,
+  MessageCircleQuestionMark,
   Quote as QuoteIcon,
   Redo2,
+  Sparkles,
   Strikethrough,
   Subscript as SubscriptIcon,
   Superscript as SuperscriptIcon,
@@ -36,6 +39,7 @@ import {
 } from 'lucide-react'
 
 type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
+type ComposerAction = 'improve-clarity' | 'study-questions'
 
 interface NoteBlock {
   id: string
@@ -45,11 +49,19 @@ interface NoteBlock {
   citation?: string
 }
 
+interface EditorSelectionContext {
+  blockId: string | null
+  text: string
+}
+
 type ModernRichEditorProps = {
   blocks: NoteBlock[]
+  composerAvailable: boolean
   editorDoc?: JSONContent | null
   onChange: (blocks: NoteBlock[], editorDoc: JSONContent) => void
+  onComposerAction: (action: ComposerAction) => void
   onFocus: () => void
+  onSelectionChange: (selection: EditorSelectionContext) => void
   onTitleChange: (title: string) => void
   title: string
 }
@@ -92,9 +104,12 @@ const richEditorExtensions = [
 
 export default function ModernRichEditor({
   blocks,
+  composerAvailable,
   editorDoc,
   onChange,
+  onComposerAction,
   onFocus,
+  onSelectionChange,
   onTitleChange,
   title,
 }: ModernRichEditorProps) {
@@ -103,7 +118,9 @@ export default function ModernRichEditor({
   const latestEditorDocRef = useRef(safeEditorDoc)
   const latestSignatureRef = useRef(getEditorStateSignature(blocks, safeEditorDoc))
   const onChangeRef = useRef(onChange)
+  const onComposerActionRef = useRef(onComposerAction)
   const onFocusRef = useRef(onFocus)
+  const onSelectionChangeRef = useRef(onSelectionChange)
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const editor = useEditor({
@@ -115,9 +132,37 @@ export default function ModernRichEditor({
         class: 'modern-editor__surface',
         'aria-label': 'Note body',
       },
+      handlePaste: (view, event) => {
+        const pastedText = event.clipboardData?.getData('text/plain') ?? ''
+
+        if (!shouldPasteAsMarkdown(pastedText)) {
+          return false
+        }
+
+        const pastedContent = parseMarkdownLikeTextToTiptapContent(pastedText)
+
+        if (pastedContent.length === 0) {
+          return false
+        }
+
+        event.preventDefault()
+
+        try {
+          const nodes = pastedContent.map((node) => view.state.schema.nodeFromJSON(node))
+          const slice = new Slice(Fragment.fromArray(nodes), 0, 0)
+          view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
+          return true
+        } catch {
+          return false
+        }
+      },
     },
-    onFocus: () => {
+    onFocus: ({ editor: currentEditor }) => {
       onFocusRef.current()
+      onSelectionChangeRef.current(getEditorSelectionContext(currentEditor, latestBlocksRef.current))
+    },
+    onSelectionUpdate: ({ editor: currentEditor }) => {
+      onSelectionChangeRef.current(getEditorSelectionContext(currentEditor, latestBlocksRef.current))
     },
     onUpdate: ({ editor: currentEditor }) => {
       const nextEditorDoc = normalizeEditorDocument(currentEditor.getJSON(), latestBlocksRef.current)
@@ -142,8 +187,16 @@ export default function ModernRichEditor({
   }, [onChange])
 
   useEffect(() => {
+    onComposerActionRef.current = onComposerAction
+  }, [onComposerAction])
+
+  useEffect(() => {
     onFocusRef.current = onFocus
   }, [onFocus])
+
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange
+  }, [onSelectionChange])
 
   useEffect(() => {
     const titleInput = titleInputRef.current
@@ -244,13 +297,24 @@ export default function ModernRichEditor({
           <RichEditorButton active={editor.isActive('link')} label="Link" onClick={applyExternalLink}>
             <Link2 />
           </RichEditorButton>
+          {composerAvailable && (
+            <>
+              <span className="modern-editor__bubbleDivider" aria-hidden="true" />
+              <RichEditorButton label="Clarify selection with Composer" onClick={() => onComposerActionRef.current('improve-clarity')}>
+                <Sparkles />
+              </RichEditorButton>
+              <RichEditorButton label="Questions from selection" onClick={() => onComposerActionRef.current('study-questions')}>
+                <MessageCircleQuestionMark />
+              </RichEditorButton>
+            </>
+          )}
         </BubbleMenu>
       )}
 
       {editor && (
         <div className="modern-editor__toolbarFrame">
           <header className="modern-editor__toolbar" role="toolbar" aria-label="Editor formatting" onWheel={handleToolbarWheel}>
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="History">
               <RichEditorButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
                 <Undo2 />
               </RichEditorButton>
@@ -259,7 +323,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Structure">
               <RichEditorButton
                 active={editor.isActive('heading', { level: 2 })}
                 label="Heading"
@@ -285,7 +349,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Formatting">
               <RichEditorButton active={editor.isActive('bold')} label="Bold" onClick={() => editor.chain().focus().toggleBold().run()}>
                 <Bold />
               </RichEditorButton>
@@ -323,7 +387,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup">
+            <div className="modern-editor__toolbarGroup" role="group" aria-label="Alignment">
               <RichEditorButton
                 active={editor.isActive({ textAlign: 'left' })}
                 label="Align left"
@@ -354,7 +418,7 @@ export default function ModernRichEditor({
               </RichEditorButton>
             </div>
 
-            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end">
+            <div className="modern-editor__toolbarGroup modern-editor__toolbarGroup--end" role="group" aria-label="Cleanup and inserts">
               <RichEditorButton label="Clear formatting" onClick={clearFormatting}>
                 <Eraser />
               </RichEditorButton>
@@ -384,7 +448,7 @@ export default function ModernRichEditor({
 }
 
 function RichEditorButton({
-  active = false,
+  active,
   children,
   disabled = false,
   label,
@@ -401,6 +465,7 @@ function RichEditorButton({
       type="button"
       className={`modern-editor__button ${active ? 'modern-editor__button--active' : ''}`}
       disabled={disabled}
+      aria-pressed={active === undefined ? undefined : active}
       onMouseDown={preventButtonFocus}
       onClick={onClick}
       aria-label={label}
@@ -507,6 +572,165 @@ function createTiptapInlineContentFromText(value: string): JSONContent[] | undef
   })
 
   return content.length > 0 ? content : undefined
+}
+
+function shouldPasteAsMarkdown(value: string): boolean {
+  const text = value.trim()
+
+  if (!text) {
+    return false
+  }
+
+  return (
+    /(^|\n)\s*(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+|```|~~~|-{3,}\s*$|\*{3,}\s*$)/m.test(text) ||
+    /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^)]+\)|<u>[\s\S]+?<\/u>)/.test(text)
+  )
+}
+
+function parseMarkdownLikeTextToTiptapContent(value: string): JSONContent[] {
+  const lines = value.replace(/\r\n?/g, '\n').split('\n')
+  const content: JSONContent[] = []
+  const paragraphLines: string[] = []
+  let index = 0
+
+  const flushParagraph = () => {
+    const paragraphText = paragraphLines.join('\n').trimEnd()
+    paragraphLines.length = 0
+
+    if (!paragraphText.trim()) {
+      return
+    }
+
+    content.push({
+      type: 'paragraph',
+      content: createTiptapInlineContentFromText(paragraphText),
+    })
+  }
+
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+    const trimmedLine = line.trim()
+
+    if (!trimmedLine) {
+      flushParagraph()
+      index += 1
+      continue
+    }
+
+    const fenceMatch = trimmedLine.match(/^(```|~~~)\s*/)
+
+    if (fenceMatch) {
+      flushParagraph()
+
+      const fence = fenceMatch[1]
+      const codeLines: string[] = []
+      index += 1
+
+      while (index < lines.length && !lines[index].trim().startsWith(fence)) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+
+      if (index < lines.length) {
+        index += 1
+      }
+
+      const codeText = codeLines.join('\n')
+      content.push({
+        type: 'codeBlock',
+        content: codeText ? [{ type: 'text', text: codeText }] : undefined,
+      })
+      continue
+    }
+
+    if (/^(-{3,}|\*{3,})$/.test(trimmedLine)) {
+      flushParagraph()
+      content.push({ type: 'horizontalRule' })
+      index += 1
+      continue
+    }
+
+    const headingMatch = trimmedLine.match(/^(#{1,6})\s+(.+)$/)
+
+    if (headingMatch) {
+      flushParagraph()
+      content.push({
+        type: 'heading',
+        attrs: { level: headingMatch[1].length >= 3 ? 3 : 2 },
+        content: createTiptapInlineContentFromText(headingMatch[2].trim()),
+      })
+      index += 1
+      continue
+    }
+
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/)
+
+    if (quoteMatch) {
+      flushParagraph()
+
+      const quoteLines: string[] = []
+
+      while (index < lines.length) {
+        const currentQuoteMatch = lines[index].match(/^\s*>\s?(.*)$/)
+
+        if (!currentQuoteMatch) {
+          break
+        }
+
+        quoteLines.push(currentQuoteMatch[1])
+        index += 1
+      }
+
+      content.push({
+        type: 'blockquote',
+        content: [
+          {
+            type: 'paragraph',
+            content: createTiptapInlineContentFromText(quoteLines.join('\n').trim()),
+          },
+        ],
+      })
+      continue
+    }
+
+    const listMatch = line.match(/^\s*(([-*+])|(\d+)[.)])\s+(.+)$/)
+
+    if (listMatch) {
+      flushParagraph()
+
+      const ordered = Boolean(listMatch[3])
+      const start = ordered ? Number(listMatch[3]) : undefined
+      const items: string[] = []
+
+      while (index < lines.length) {
+        const currentListMatch = lines[index].match(/^\s*(([-*+])|(\d+)[.)])\s+(.+)$/)
+
+        if (!currentListMatch || Boolean(currentListMatch[3]) !== ordered) {
+          break
+        }
+
+        items.push(currentListMatch[4].trim())
+        index += 1
+      }
+
+      content.push({
+        type: ordered ? 'orderedList' : 'bulletList',
+        attrs: ordered ? { start: Number.isFinite(start) ? start : 1 } : undefined,
+        content: items.map((item) => ({
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: createTiptapInlineContentFromText(item) }],
+        })),
+      })
+      continue
+    }
+
+    paragraphLines.push(line)
+    index += 1
+  }
+
+  flushParagraph()
+
+  return content
 }
 
 function normalizeEditorDocument(value: unknown, fallbackBlocks: NoteBlock[]): JSONContent {
@@ -652,6 +876,36 @@ function serializeTiptapTextNode(node: JSONContent) {
   }
 
   return text
+}
+
+function getEditorSelectionContext(editor: Editor, blocks: NoteBlock[]): EditorSelectionContext {
+  const { empty, from, to } = editor.state.selection
+  const selectedText = empty ? '' : editor.state.doc.textBetween(from, to, '\n', '\n').replace(/\s+/g, ' ').trim()
+  const blockIndex = getTopLevelBlockIndex(editor, from)
+
+  return {
+    blockId: blockIndex >= 0 ? blocks[blockIndex]?.id ?? null : null,
+    text: selectedText,
+  }
+}
+
+function getTopLevelBlockIndex(editor: Editor, position: number) {
+  let selectedIndex = -1
+
+  editor.state.doc.forEach((node, offset, index) => {
+    if (selectedIndex !== -1) {
+      return
+    }
+
+    const start = offset
+    const end = offset + node.nodeSize
+
+    if (position >= start && position <= end) {
+      selectedIndex = index
+    }
+  })
+
+  return selectedIndex
 }
 
 function getEditorStateSignature(blocks: NoteBlock[], editorDoc: JSONContent) {

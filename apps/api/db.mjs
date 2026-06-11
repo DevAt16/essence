@@ -176,6 +176,111 @@ export async function getUserById(userId) {
   return result.rows[0] ?? null
 }
 
+export async function getComposerSettings(userId = localUserId) {
+  const result = await pool.query(
+    `
+      select
+        user_id as "userId",
+        provider,
+        model,
+        ollama_base_url as "ollamaBaseUrl",
+        prompt_mode as "promptMode",
+        custom_prompt as "customPrompt",
+        api_key_ciphertext as "apiKeyCiphertext",
+        api_key_provider as "apiKeyProvider",
+        api_key_updated_at as "apiKeyUpdatedAt",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      from composer_settings
+      where user_id = $1
+      limit 1
+    `,
+    [userId || localUserId],
+  )
+
+  return result.rows[0] ?? null
+}
+
+export async function saveComposerSettings(userId = localUserId, settings = {}) {
+  const hasApiKey = Object.hasOwn(settings, 'apiKeyCiphertext')
+  const provider = normalizeOptionalString(settings.provider, 32)
+  const model = normalizeOptionalString(settings.model, 120) ?? ''
+  const ollamaBaseUrl = normalizeOptionalString(settings.ollamaBaseUrl, 300) ?? ''
+  const promptMode = settings.promptMode === 'custom' ? 'custom' : 'system'
+  const customPrompt = normalizeLongText(settings.customPrompt, 4000)
+  const apiKeyCiphertext = hasApiKey ? normalizeOptionalString(settings.apiKeyCiphertext, 4000) : null
+  const apiKeyProvider = hasApiKey ? normalizeOptionalString(settings.apiKeyProvider, 32) : null
+
+  const result = await pool.query(
+    `
+      insert into composer_settings (
+        user_id,
+        provider,
+        model,
+        ollama_base_url,
+        prompt_mode,
+        custom_prompt,
+        api_key_ciphertext,
+        api_key_provider,
+        api_key_updated_at,
+        updated_at
+      )
+      values (
+        $1,
+        $2,
+        $3,
+        $4,
+        $8,
+        $9,
+        case when $5 then $6 else null end,
+        case when $5 then $7 else null end,
+        case when $5 and $6 is not null then now() else null end,
+        now()
+      )
+      on conflict (user_id)
+      do update set
+        provider = excluded.provider,
+        model = excluded.model,
+        ollama_base_url = excluded.ollama_base_url,
+        prompt_mode = excluded.prompt_mode,
+        custom_prompt = excluded.custom_prompt,
+        api_key_ciphertext = case when $5 then excluded.api_key_ciphertext else composer_settings.api_key_ciphertext end,
+        api_key_provider = case when $5 then excluded.api_key_provider else composer_settings.api_key_provider end,
+        api_key_updated_at = case
+          when $5 and excluded.api_key_ciphertext is not null then now()
+          when $5 then null
+          else composer_settings.api_key_updated_at
+        end,
+        updated_at = now()
+      returning
+        user_id as "userId",
+        provider,
+        model,
+        ollama_base_url as "ollamaBaseUrl",
+        prompt_mode as "promptMode",
+        custom_prompt as "customPrompt",
+        api_key_ciphertext as "apiKeyCiphertext",
+        api_key_provider as "apiKeyProvider",
+        api_key_updated_at as "apiKeyUpdatedAt",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+    `,
+    [
+      userId || localUserId,
+      provider,
+      model,
+      ollamaBaseUrl,
+      hasApiKey,
+      apiKeyCiphertext,
+      apiKeyProvider,
+      promptMode,
+      customPrompt,
+    ],
+  )
+
+  return result.rows[0] ?? null
+}
+
 export async function approveUserEmail(email, options = {}) {
   const normalizedEmail = normalizeEmail(email)
 
@@ -1422,6 +1527,15 @@ function normalizeOptionalString(value, maxLength) {
   const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
 
   return normalized ? normalized.slice(0, maxLength) : null
+}
+
+function normalizeLongText(value, maxLength) {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+
+  return normalized ? normalized.slice(0, maxLength) : ''
 }
 
 function normalizeUsername(value) {

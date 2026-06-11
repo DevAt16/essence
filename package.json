@@ -29,7 +29,8 @@
     "auth:approve": "node apps/api/approved-users.mjs approve",
     "auth:list": "node apps/api/approved-users.mjs list",
     "auth:revoke": "node apps/api/approved-users.mjs revoke",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:lan": "concurrently \"npm:dev:server\" \"npm run dev:web -- --host 0.0.0.0\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",

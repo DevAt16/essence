@@ -68,6 +68,28 @@ create table if not exists workspace_state (
 
 alter table workspace_state add column if not exists composer_history jsonb not null default '[]'::jsonb;
 
+create table if not exists composer_settings (
+  user_id text primary key references users(id) on delete cascade,
+  provider text null,
+  model text not null default '',
+  ollama_base_url text not null default '',
+  prompt_mode text not null default 'system',
+  custom_prompt text not null default '',
+  api_key_ciphertext text null,
+  api_key_provider text null,
+  api_key_updated_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table composer_settings add column if not exists model text not null default '';
+alter table composer_settings add column if not exists ollama_base_url text not null default '';
+alter table composer_settings add column if not exists prompt_mode text not null default 'system';
+alter table composer_settings add column if not exists custom_prompt text not null default '';
+alter table composer_settings add column if not exists api_key_ciphertext text null;
+alter table composer_settings add column if not exists api_key_provider text null;
+alter table composer_settings add column if not exists api_key_updated_at timestamptz null;
+
 create table if not exists collections (
   id text not null,
   user_id text not null default 'local' references users(id) on delete cascade,

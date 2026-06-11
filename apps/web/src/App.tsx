@@ -7,7 +7,6 @@ import './App.css'
 declare const __ESSENCE_APP_VERSION__: string
 
 const ModernRichEditor = lazy(() => import('./editor/ModernRichEditor'))
-const AiComposerPanel = lazy(() => import('./composer/AiComposerPanel'))
 
 type ViewMode = 'library' | 'collections' | 'favorites' | 'archive' | 'editor'
 type NavMode = Exclude<ViewMode, 'editor'>
@@ -19,7 +18,8 @@ type BlockType = 'paragraph' | 'heading' | 'quote' | 'bullet-list' | 'code'
 type NoteViewMode = 'read' | 'edit'
 type NoteSourceKind = 'book' | 'paper' | 'article' | 'web' | 'dataset' | 'other'
 type AiDraftCategory = 'essay' | 'article' | 'research-topic' | 'quote'
-type AiComposerMode = 'draft' | 'assist'
+type ComposerDockDraftMode = 'auto' | AiDraftCategory
+type AiComposerMode = 'draft' | 'assist' | 'chat'
 type AiAssistAction =
   | 'continue-writing'
   | 'improve-clarity'
@@ -27,14 +27,16 @@ type AiAssistAction =
   | 'study-questions'
   | 'counterarguments'
   | 'reading-list'
+  | 'custom'
 type AiAssistActionGroup = 'Write' | 'Review'
 type EditorContextSectionId = 'details' | 'topics' | 'sources'
-type AmbienceMode = 'still' | 'subtle' | 'cosmic'
+type AmbienceMode = 'still' | 'subtle' | 'cosmic' | 'observatory'
 type ColorTheme = 'starlight' | 'moonlit' | 'daylight'
 type ReaderExplorationAction = 'expand' | 'questions' | 'counterarguments' | 'reading-list'
 type LibraryDisplayMode = 'cards' | 'list'
 type LibraryQuickFilter = 'all' | 'drafts' | 'pinned' | 'favorites' | 'essays' | 'topics'
 type LibrarySortMode = 'updated' | 'pinned' | 'title' | 'collection' | 'status'
+type SettingsSectionId = 'appearance' | 'account' | 'composer' | 'workspace' | 'about'
 
 interface NoteBlock {
   id: string
@@ -86,6 +88,11 @@ type InlineFormat = 'bold' | 'italic' | 'underline' | 'code' | 'link'
 interface TextSelectionRange {
   start: number
   end: number
+}
+
+interface EditorSelectionContext {
+  blockId: string | null
+  text: string
 }
 
 interface Note {
@@ -209,6 +216,57 @@ interface SearchResult {
   score: number
 }
 
+interface ApiReadinessState {
+  aiAccess: string
+  aiComposer: string
+  aiModel: string
+  aiProvider: string
+  loadState: 'loading' | 'ready' | 'unavailable'
+  ok: boolean
+}
+
+type ComposerProviderValue = 'server' | 'gemini' | 'ollama' | 'gemini-cli' | 'codex-cli'
+type ComposerPromptMode = 'system' | 'custom'
+
+interface ComposerSettingsDraft {
+  apiKey: string
+  clearApiKey: boolean
+  customPrompt: string
+  model: string
+  ollamaBaseUrl: string
+  promptMode: ComposerPromptMode
+  provider: ComposerProviderValue
+}
+
+interface ComposerRuntimeState {
+  access: string
+  apiKeyConfigured: boolean
+  localOnly: boolean
+  model: string
+  promptMode: ComposerPromptMode
+  provider: Exclude<ComposerProviderValue, 'server'> | 'disabled' | 'unknown'
+  source: 'environment' | 'settings' | string
+  status: string
+}
+
+interface ComposerSettingsState {
+  error: string | null
+  loadState: 'idle' | 'loading' | 'ready' | 'unavailable'
+  runtime: ComposerRuntimeState | null
+  settings: {
+    apiKeyConfigured: boolean
+    apiKeyProvider: string
+    apiKeyUpdatedAt: string | null
+    customPrompt: string
+    model: string
+    ollamaBaseUrl: string
+    promptMode: ComposerPromptMode
+    provider: ComposerProviderValue
+    systemPrompt: string
+    updatedAt: string | null
+  }
+}
+
 interface AiDraftBlock {
   citation?: string
   items?: string[]
@@ -235,6 +293,16 @@ interface AiAssistResult {
   summary: string
   title: string
 }
+
+interface AiChatResult {
+  text: string
+  title: string
+}
+
+type ComposerDockRun =
+  | { action: AiAssistAction; instruction: string; kind: 'assist' }
+  | { includeNoteContext: boolean; kind: 'chat'; message: string }
+  | { category: AiDraftCategory; kind: 'draft'; topic: string }
 
 interface ComposerHistoryEntry {
   assist?: {
@@ -272,6 +340,41 @@ interface ComposerContextItem {
 
 interface ComposerRequestContext {
   recent: ComposerContextItem[]
+}
+
+type ComposerRequestContextScope = 'active-note' | 'none' | 'relevant'
+
+interface ComposerNoteContextBlock {
+  role: 'before' | 'selected' | 'after'
+  type: BlockType
+  text: string
+}
+
+interface ComposerNoteContextReference {
+  status?: string
+  summary?: string
+  title: string
+}
+
+interface ComposerNoteContextSource {
+  author: string
+  sourceType: NoteSourceKind
+  title: string
+  url: string
+  year: string
+}
+
+interface ComposerNoteContextPack {
+  backlinks: ComposerNoteContextReference[]
+  blockCount: number
+  collection: string
+  currentHeading: string
+  folderPath: string
+  linkedNotes: ComposerNoteContextReference[]
+  neighboringBlocks: ComposerNoteContextBlock[]
+  outline: string[]
+  sources: ComposerNoteContextSource[]
+  wordCount: number
 }
 
 type AppDialogState =
@@ -324,6 +427,7 @@ const storageKey = 'lucid-notes-state'
 const accountStorageKeyPrefix = 'essence-account-state:'
 const authGateStorageKey = 'essence-auth-gate-dismissed'
 const ambienceStorageKey = 'essence-ambience-mode'
+const ambienceIntensityStorageKey = 'essence-ambience-intensity'
 const colorThemeStorageKey = 'essence-color-theme'
 const localProfileStorageKey = 'essence-local-profile'
 const navigationSidebarStorageKey = 'essence-navigation-sidebar-visible'
@@ -334,16 +438,57 @@ const historyLimit = 120
 const composerHistoryLimit = 18
 const composerRequestContextLimit = 3
 const composerRequestContextPreviewLength = 700
+const ambienceIntensityMinimum = 0
+const ambienceIntensityMaximum = 100
+const defaultAmbienceIntensity = 55
 const apiBaseUrl = normalizeApiBaseUrl(getViteEnvString('VITE_API_BASE_URL'))
 const apiFetchCredentials = getApiFetchCredentials()
 const supabaseClient = createSupabaseBrowserClient()
 const devEmailLoginEnabled = getViteEnvString('VITE_AUTH_DEV_EMAIL_LOGIN') === 'true'
+const localComposerAvailable = getViteEnvString('VITE_AI_ALLOW_LOCAL_USER') === 'true'
 const waitlistUrl = getViteEnvString('VITE_WAITLIST_URL')
+const initialApiReadinessState: ApiReadinessState = {
+  aiAccess: 'unknown',
+  aiComposer: 'unknown',
+  aiModel: '',
+  aiProvider: 'unknown',
+  loadState: 'loading',
+  ok: false,
+}
+const initialComposerSettingsState: ComposerSettingsState = {
+  error: null,
+  loadState: 'idle',
+  runtime: null,
+  settings: {
+    apiKeyConfigured: false,
+    apiKeyProvider: '',
+    apiKeyUpdatedAt: null,
+    customPrompt: '',
+    model: '',
+    ollamaBaseUrl: '',
+    promptMode: 'system',
+    provider: 'server',
+    systemPrompt: '',
+    updatedAt: null,
+  },
+}
+const composerProviderOptions: Array<{
+  description: string
+  label: string
+  value: ComposerProviderValue
+}> = [
+  { description: 'Use the API server fallback.', label: 'Server default', value: 'server' },
+  { description: 'Use a Gemini API key.', label: 'Gemini API', value: 'gemini' },
+  { description: 'Use a local Ollama model.', label: 'Ollama', value: 'ollama' },
+  { description: 'Use the local Gemini CLI.', label: 'Gemini CLI', value: 'gemini-cli' },
+  { description: 'Use the local Codex CLI.', label: 'Codex CLI', value: 'codex-cli' },
+]
 
 const ambienceOptions: Array<{ description: string; label: string; value: AmbienceMode }> = [
   { description: 'No moving stars for deep reading.', label: 'Still', value: 'still' },
   { description: 'Quiet stars with rare motion.', label: 'Subtle', value: 'subtle' },
   { description: 'Full cosmic field with shooting stars.', label: 'Cosmic', value: 'cosmic' },
+  { description: 'A quiet starship observatory with glass viewports.', label: 'Observatory', value: 'observatory' },
 ]
 
 const colorThemeOptions: Array<{ description: string; label: string; value: ColorTheme }> = [
@@ -351,6 +496,152 @@ const colorThemeOptions: Array<{ description: string; label: string; value: Colo
   { description: 'Cooler night tones with silver-blue focus accents.', label: 'Moonlit', value: 'moonlit' },
   { description: 'A bright reading room for daytime writing.', label: 'Daylight', value: 'daylight' },
 ]
+
+interface AmbienceTokens {
+  breatheHigh: number
+  breatheLow: number
+  contentTwinkleHigh: number
+  contentTwinkleLow: number
+  opacity: number
+  pulseHigh: number
+  pulseLow: number
+  starOpacity: number
+  surfaceAlpha: number
+  twinkleOpacity: number
+}
+
+const stillAmbienceTokens: AmbienceTokens = {
+  breatheHigh: 0,
+  breatheLow: 0,
+  contentTwinkleHigh: 0,
+  contentTwinkleLow: 0,
+  opacity: 0,
+  pulseHigh: 0,
+  pulseLow: 0,
+  starOpacity: 0,
+  surfaceAlpha: 0.92,
+  twinkleOpacity: 0,
+}
+
+const ambienceTokensByTheme: Record<ColorTheme, Record<AmbienceMode, AmbienceTokens>> = {
+  daylight: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.96 },
+    subtle: {
+      breatheHigh: 0.1,
+      breatheLow: 0.05,
+      contentTwinkleHigh: 0.15,
+      contentTwinkleLow: 0.07,
+      opacity: 0.03,
+      pulseHigh: 0.16,
+      pulseLow: 0.08,
+      starOpacity: 0.024,
+      surfaceAlpha: 0.96,
+      twinkleOpacity: 0.016,
+    },
+    cosmic: {
+      breatheHigh: 0.32,
+      breatheLow: 0.16,
+      contentTwinkleHigh: 0.36,
+      contentTwinkleLow: 0.18,
+      opacity: 0.1,
+      pulseHigh: 0.42,
+      pulseLow: 0.22,
+      starOpacity: 0.07,
+      surfaceAlpha: 0.96,
+      twinkleOpacity: 0.045,
+    },
+    observatory: {
+      breatheHigh: 0.36,
+      breatheLow: 0.18,
+      contentTwinkleHigh: 0.38,
+      contentTwinkleLow: 0.19,
+      opacity: 0.12,
+      pulseHigh: 0.44,
+      pulseLow: 0.23,
+      starOpacity: 0.08,
+      surfaceAlpha: 0.95,
+      twinkleOpacity: 0.055,
+    },
+  },
+  moonlit: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.92 },
+    subtle: {
+      breatheHigh: 0.08,
+      breatheLow: 0.04,
+      contentTwinkleHigh: 0.12,
+      contentTwinkleLow: 0.055,
+      opacity: 0.14,
+      pulseHigh: 0.13,
+      pulseLow: 0.065,
+      starOpacity: 0.11,
+      surfaceAlpha: 0.86,
+      twinkleOpacity: 0.055,
+    },
+    cosmic: {
+      breatheHigh: 0.24,
+      breatheLow: 0.12,
+      contentTwinkleHigh: 0.28,
+      contentTwinkleLow: 0.14,
+      opacity: 0.52,
+      pulseHigh: 0.34,
+      pulseLow: 0.17,
+      starOpacity: 0.36,
+      surfaceAlpha: 0.88,
+      twinkleOpacity: 0.2,
+    },
+    observatory: {
+      breatheHigh: 0.28,
+      breatheLow: 0.14,
+      contentTwinkleHigh: 0.31,
+      contentTwinkleLow: 0.16,
+      opacity: 0.62,
+      pulseHigh: 0.38,
+      pulseLow: 0.2,
+      starOpacity: 0.42,
+      surfaceAlpha: 0.84,
+      twinkleOpacity: 0.24,
+    },
+  },
+  starlight: {
+    still: { ...stillAmbienceTokens, surfaceAlpha: 0.92 },
+    subtle: {
+      breatheHigh: 0.09,
+      breatheLow: 0.045,
+      contentTwinkleHigh: 0.13,
+      contentTwinkleLow: 0.06,
+      opacity: 0.16,
+      pulseHigh: 0.14,
+      pulseLow: 0.07,
+      starOpacity: 0.12,
+      surfaceAlpha: 0.84,
+      twinkleOpacity: 0.06,
+    },
+    cosmic: {
+      breatheHigh: 0.32,
+      breatheLow: 0.16,
+      contentTwinkleHigh: 0.36,
+      contentTwinkleLow: 0.18,
+      opacity: 0.68,
+      pulseHigh: 0.44,
+      pulseLow: 0.22,
+      starOpacity: 0.52,
+      surfaceAlpha: 0.86,
+      twinkleOpacity: 0.3,
+    },
+    observatory: {
+      breatheHigh: 0.36,
+      breatheLow: 0.18,
+      contentTwinkleHigh: 0.4,
+      contentTwinkleLow: 0.2,
+      opacity: 0.76,
+      pulseHigh: 0.5,
+      pulseLow: 0.26,
+      starOpacity: 0.58,
+      surfaceAlpha: 0.82,
+      twinkleOpacity: 0.36,
+    },
+  },
+}
 
 const sourceTypeOptions: Array<{ label: string; value: NoteSourceKind }> = [
   { label: 'Book', value: 'book' },
@@ -455,6 +746,13 @@ const aiDraftCategories: Array<{ description: string; label: string; value: AiDr
     label: 'Quote',
     description: 'A concise line with a short reflection.',
   },
+]
+const composerDockDraftModes: Array<{ label: string; value: ComposerDockDraftMode }> = [
+  { label: 'Auto', value: 'auto' },
+  { label: 'Essay', value: 'essay' },
+  { label: 'Article', value: 'article' },
+  { label: 'Research', value: 'research-topic' },
+  { label: 'Quote', value: 'quote' },
 ]
 
 const aiAssistActions: Array<{
@@ -898,6 +1196,12 @@ function App() {
   const [editorSidebarOpen, setEditorSidebarOpen] = useState(loadStoredEditorSidebarOpen)
   const [navigationSidebarVisible, setNavigationSidebarVisible] = useState(loadStoredNavigationSidebarVisible)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [apiReadiness, setApiReadiness] = useState<ApiReadinessState>(initialApiReadinessState)
+  const [composerSettingsState, setComposerSettingsState] = useState<ComposerSettingsState>(initialComposerSettingsState)
+  const [composerSettingsSaving, setComposerSettingsSaving] = useState(false)
+  const [composerSettingsTesting, setComposerSettingsTesting] = useState(false)
+  const [composerSettingsMessage, setComposerSettingsMessage] = useState<string | null>(null)
+  const [composerSettingsError, setComposerSettingsError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [saveMessage, setSaveMessage] = useState('Saved just now')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -914,18 +1218,20 @@ function App() {
   const [aiAssistError, setAiAssistError] = useState<string | null>(null)
   const [aiAssistResult, setAiAssistResult] = useState<AiAssistResult | null>(null)
   const [aiAssisting, setAiAssisting] = useState(false)
-  const [aiComposerOpen, setAiComposerOpen] = useState(false)
-  const [aiComposerMode, setAiComposerMode] = useState<AiComposerMode>('draft')
+  const [aiChatResult, setAiChatResult] = useState<AiChatResult | null>(null)
+  const [aiChatting, setAiChatting] = useState(false)
   const [aiDraft, setAiDraft] = useState<AiDraft | null>(null)
   const [aiDraftCategory, setAiDraftCategory] = useState<AiDraftCategory>('essay')
   const [aiDraftError, setAiDraftError] = useState<string | null>(null)
   const [aiDraftTopic, setAiDraftTopic] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
   const [ambienceMode, setAmbienceMode] = useState<AmbienceMode>(loadStoredAmbienceMode)
+  const [ambienceIntensity, setAmbienceIntensity] = useState(loadStoredAmbienceIntensity)
   const [colorTheme, setColorTheme] = useState<ColorTheme>(loadStoredColorTheme)
   const [zenMode, setZenMode] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>('edit')
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
+  const [selectedEditorText, setSelectedEditorText] = useState('')
   const [, setBlockFocusRequest] = useState<BlockFocusRequest | null>(null)
   const [slashMenuState, setSlashMenuState] = useState<SlashMenuState | null>(null)
   const [linkMenuState, setLinkMenuState] = useState<LinkMenuState | null>(null)
@@ -949,6 +1255,13 @@ function App() {
   const [readingProgress, setReadingProgress] = useState(0)
   const [readerExplorationAwake, setReaderExplorationAwake] = useState(false)
   const [readerExplorationPendingAction, setReaderExplorationPendingAction] = useState<ReaderExplorationAction | null>(null)
+  const [composerDockOpen, setComposerDockOpen] = useState(false)
+  const [composerDockMode, setComposerDockMode] = useState<AiComposerMode>('draft')
+  const [composerDockPrompt, setComposerDockPrompt] = useState('')
+  const [composerDockDraftMode, setComposerDockDraftMode] = useState<ComposerDockDraftMode>('auto')
+  const [composerDockError, setComposerDockError] = useState<string | null>(null)
+  const [composerDockLastRun, setComposerDockLastRun] = useState<ComposerDockRun | null>(null)
+  const [composerBusyMessage, setComposerBusyMessage] = useState('')
   const saveTimerRef = useRef<number | null>(null)
   const remoteSyncTimerRef = useRef<number | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -968,7 +1281,7 @@ function App() {
   const initialLocalStateRef = useRef<PersistedAppState | null>(null)
   const keyboardShortcutStateRef = useRef<{
     activeNote: Note | null
-    aiComposerOpen: boolean
+    composerDockOpen: boolean
     dialogState: AppDialogState | null
     editorActionsOpen: boolean
     noteHistoryOpen: boolean
@@ -977,7 +1290,7 @@ function App() {
     view: ViewMode
   }>({
     activeNote: null as Note | null,
-    aiComposerOpen: false,
+    composerDockOpen: false,
     dialogState: null as AppDialogState | null,
     editorActionsOpen: false,
     noteHistoryOpen: false,
@@ -1009,8 +1322,15 @@ function App() {
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
   const deferredQuickSwitcherQuery = useDeferredValue(quickSwitcherQuery.trim().toLowerCase())
   const remoteAccountActive = Boolean(currentUser && !currentUser.isLocal)
+  const composerAvailable = remoteAccountActive || localComposerAvailable
   const composerLockedMessage =
-    'Composer is available after invite sign-in. Local mode keeps manual notes on this device and does not run AI.'
+    'Composer unlocks after approved sign-in. For private local use, enable local Composer in your environment and run the API with Ollama.'
+  const composerRuntimeLabel = getComposerRuntimeLabel(composerSettingsState.runtime?.provider ?? apiReadiness.aiProvider)
+  const composerBusy = aiGenerating || aiAssisting || aiChatting
+  const ambienceStyle = useMemo(
+    () => getAmbienceStyle({ colorTheme, intensity: ambienceIntensity, mode: ambienceMode, zenMode }),
+    [ambienceIntensity, ambienceMode, colorTheme, zenMode],
+  )
 
   if (initialLocalStateRef.current == null) {
     initialLocalStateRef.current = {
@@ -1043,6 +1363,45 @@ function App() {
     setSaveMessage('Sign in required')
   }, [])
 
+  const refreshApiReadiness = useCallback(async () => {
+    setApiReadiness((currentReadiness) => ({
+      ...currentReadiness,
+      loadState: 'loading',
+    }))
+
+    try {
+      const readiness = await fetchApiReadiness()
+      setApiReadiness(readiness)
+    } catch (error) {
+      console.warn('Unable to load API readiness.', error)
+      setApiReadiness({
+        ...initialApiReadinessState,
+        loadState: 'unavailable',
+      })
+    }
+  }, [])
+
+  const refreshComposerSettings = useCallback(async () => {
+    setComposerSettingsState((currentSettings) => ({
+      ...currentSettings,
+      error: null,
+      loadState: 'loading',
+    }))
+
+    try {
+      const settings = await fetchRemoteComposerSettings()
+      setComposerSettingsState(settings)
+      setComposerSettingsError(null)
+    } catch (error) {
+      console.warn('Unable to load Composer settings.', error)
+      setComposerSettingsState({
+        ...initialComposerSettingsState,
+        error: error instanceof Error && error.message ? error.message : 'Composer settings could not be loaded.',
+        loadState: 'unavailable',
+      })
+    }
+  }, [])
+
   const foldersById = useMemo(() => buildFolderLookup(folders), [folders])
   const collectionNameById = useMemo(() => buildCollectionNameLookup(collections), [collections])
 
@@ -1055,12 +1414,52 @@ function App() {
     setEditorActionsOpen(false)
   }, [activeNoteId, view])
 
+  useEffect(() => {
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setComposerDockError(null)
+  }, [activeNoteId])
+
+  useEffect(() => {
+    if (view !== 'editor') {
+      setAiAssistResult(null)
+      setAiAssistError(null)
+      setComposerDockError(null)
+    }
+  }, [view])
+
+  useEffect(() => {
+    void refreshApiReadiness()
+  }, [refreshApiReadiness])
+
+  useEffect(() => {
+    if (settingsOpen) {
+      void refreshApiReadiness()
+      void refreshComposerSettings()
+    }
+  }, [refreshApiReadiness, refreshComposerSettings, settingsOpen])
+
+  useEffect(() => {
+    if (composerAvailable) {
+      void refreshComposerSettings()
+    }
+  }, [composerAvailable, refreshComposerSettings])
+
   const activeFolder = activeFolderId ? foldersById[activeFolderId] ?? null : null
   const selectedBlock = useMemo(
     () => activeNote?.blocks.find((block) => block.id === selectedBlockId) ?? null,
     [activeNote, selectedBlockId],
   )
   const selectedBlockText = selectedBlock ? getBlockTextValue(selectedBlock) : ''
+  const selectedEditorTextTrimmed = selectedEditorText.trim()
+  const activeComposerSelectionText = selectedEditorTextTrimmed || selectedBlockText
+  const composerSelectionPreview = selectedEditorTextTrimmed ? summarizeInlineText(selectedEditorTextTrimmed, 180) : ''
+  const composerDockContext = getComposerDockContextLabel({
+    activeNote,
+    hasTextSelection: selectedEditorTextTrimmed.length > 0,
+    selectedBlockText: activeComposerSelectionText,
+    view,
+  })
 
   const createHistorySnapshot = useCallback(
     (): HistorySnapshot => ({
@@ -1099,10 +1498,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    setSelectedBlockId(activeNote?.blocks[0]?.id ?? null)
+    setSelectedBlockId((currentBlockId) => {
+      if (currentBlockId && activeNote?.blocks.some((block) => block.id === currentBlockId)) {
+        return currentBlockId
+      }
+
+      return activeNote?.blocks[0]?.id ?? null
+    })
     setSlashMenuState(null)
     setLinkMenuState(null)
-  }, [activeNoteId, activeNote])
+  }, [activeNote])
+
+  useEffect(() => {
+    setSelectedEditorText('')
+  }, [activeNoteId, noteViewMode, view])
 
   useEffect(() => {
     setAiAssistResult(null)
@@ -1135,16 +1544,16 @@ function App() {
 
   useEffect(() => {
     if (zenMode) {
-      setAiComposerOpen(false)
+      setComposerDockOpen(false)
     }
   }, [zenMode])
 
   useEffect(() => {
-    if (!remoteAccountActive) {
-      setAiComposerOpen(false)
+    if (!composerAvailable) {
+      setComposerDockOpen(false)
       setReaderExplorationPendingAction(null)
     }
-  }, [remoteAccountActive])
+  }, [composerAvailable])
 
   useEffect(() => {
     setReadingProgress(0)
@@ -1274,6 +1683,14 @@ function App() {
     window.localStorage.setItem(ambienceStorageKey, ambienceMode)
     document.documentElement.dataset.essenceAmbience = ambienceMode
   }, [ambienceMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(ambienceIntensityStorageKey, String(ambienceIntensity))
+  }, [ambienceIntensity])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1631,6 +2048,21 @@ function App() {
         : [],
     [activeNote, notes, notesByNormalizedTitle],
   )
+  const activeComposerContextPack = useMemo(
+    () =>
+      view === 'editor' && activeNote
+        ? buildComposerNoteContextPack({
+            backlinks: activeBacklinks,
+            collectionNameById,
+            foldersById,
+            linkedNotes: activeLinkedNotes,
+            note: activeNote,
+            selectedBlockId: noteViewMode === 'edit' ? selectedBlockId : null,
+          })
+        : null,
+    [activeBacklinks, activeLinkedNotes, activeNote, collectionNameById, foldersById, noteViewMode, selectedBlockId, view],
+  )
+  const composerDockContextSummary = getComposerContextSummary(activeComposerContextPack, selectedEditorTextTrimmed)
   const selectedNoteRevision = useMemo(
     () => noteHistoryEntries.find((entry) => entry.id === selectedNoteRevisionId) ?? noteHistoryEntries[0] ?? null,
     [noteHistoryEntries, selectedNoteRevisionId],
@@ -1828,19 +2260,20 @@ function App() {
   const showComposerLockedDialog = () => {
     setDialogState({
       type: 'alert',
-      title: 'Composer needs invite access',
+      title: 'Composer needs access',
       message: composerLockedMessage,
       confirmLabel: 'Got it',
     })
   }
 
-  const toggleComposerPanel = () => {
-    if (!remoteAccountActive) {
+  const openComposerDock = () => {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
 
-    setAiComposerOpen((isOpen) => !isOpen)
+    setComposerDockOpen(true)
+    setComposerDockError(null)
     setQuickSwitcherOpen(false)
   }
 
@@ -1860,7 +2293,7 @@ function App() {
   ) => {
     const normalizedState = normalizePersistedAppState(nextState)
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
 
     startTransition(() => {
       if (options.storageKey) {
@@ -2064,25 +2497,29 @@ function App() {
     setAuthNotice(null)
     setAuthCode('')
     setAuthCodeEmail(null)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setSettingsOpen(false)
     setAuthGateDismissed(false)
     clearAuthGateDismissed()
   }
 
   const openSettings = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setEditorActionsOpen(false)
     setQuickSwitcherOpen(false)
     setNoteHistoryOpen(false)
     setProfileError(null)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
     setSettingsOpen(true)
   }
 
   const closeSettings = () => {
-    if (!profileSaving) {
+    if (!profileSaving && !composerSettingsSaving && !composerSettingsTesting) {
       setSettingsOpen(false)
       setProfileError(null)
+      setComposerSettingsError(null)
+      setComposerSettingsMessage(null)
     }
   }
 
@@ -2122,12 +2559,66 @@ function App() {
     }
   }
 
+  const saveComposerSettings = async (draft: ComposerSettingsDraft) => {
+    setComposerSettingsSaving(true)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
+
+    try {
+      const settings = await updateRemoteComposerSettings(draft)
+      setComposerSettingsState(settings)
+      setComposerSettingsMessage('Composer settings saved')
+      await refreshApiReadiness()
+      flashSaveFeedback('Composer updated')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to update Composer settings.', error)
+      setComposerSettingsError(
+        error instanceof Error && error.message ? error.message : 'Composer settings could not be saved.',
+      )
+      flashSaveFeedback('Composer update failed')
+    } finally {
+      setComposerSettingsSaving(false)
+    }
+  }
+
+  const testComposerSettings = async () => {
+    setComposerSettingsTesting(true)
+    setComposerSettingsError(null)
+    setComposerSettingsMessage(null)
+
+    try {
+      const result = await testRemoteComposerSettings()
+      setComposerSettingsState((currentSettings) => ({
+        ...currentSettings,
+        runtime: result.runtime,
+      }))
+      setComposerSettingsMessage(result.message)
+      flashSaveFeedback('Composer checked')
+    } catch (error) {
+      if (isRemoteAccessError(error)) {
+        handleRemoteAccessEnded(error)
+      }
+
+      console.warn('Unable to test Composer settings.', error)
+      setComposerSettingsError(
+        error instanceof Error && error.message ? error.message : 'Composer could not verify this runtime.',
+      )
+      flashSaveFeedback('Composer check failed')
+    } finally {
+      setComposerSettingsTesting(false)
+    }
+  }
+
   const closeQuickSwitcher = () => {
     setQuickSwitcherOpen(false)
   }
 
   const openQuickSwitcher = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setEditorActionsOpen(false)
     setQuickSwitcherOpen(true)
     setQuickSwitcherQuery('')
@@ -2157,7 +2648,7 @@ function App() {
       return
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setSlashMenuState(null)
@@ -2167,7 +2658,7 @@ function App() {
 
   const openSearchView = () => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     moveToLibrarySearchSurface()
@@ -2586,7 +3077,7 @@ function App() {
       return
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
 
     if (view !== 'editor') {
@@ -2622,7 +3113,7 @@ function App() {
       layout: 'standard',
     }
 
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorContext(view === 'editor' ? editorContext : view === 'collections' ? 'library' : view)
     setNotes((currentNotes) => [newNote, ...currentNotes])
@@ -2635,26 +3126,35 @@ function App() {
     startTransition(() => setView('editor'))
   }
 
-  const generateAiDraft = async () => {
-    const topic = aiDraftTopic.trim()
+  const generateAiDraft = async (
+    topicOverride = aiDraftTopic,
+    categoryOverride: AiDraftCategory = aiDraftCategory,
+  ) => {
+    const topic = topicOverride.trim()
 
     if (topic.length < 3) {
       setAiDraftError('Give Composer a topic with at least 3 characters.')
-      return
+      return false
     }
 
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       setAiDraftError(composerLockedMessage)
-      return
+      return false
     }
 
     setAiGenerating(true)
+    setComposerBusyMessage('Drafting a new note...')
     setAiDraftError(null)
+    setAiDraftTopic(topic)
+    setAiDraftCategory(categoryOverride)
 
     try {
       const draft = await generateRemoteAiDraft({
-        category: aiDraftCategory,
-        context: buildComposerRequestContext(composerHistory, { targetText: topic }),
+        category: categoryOverride,
+        context: buildComposerRequestContext(composerHistory, {
+          scope: 'none',
+          targetText: topic,
+        }),
         topic,
       })
 
@@ -2662,22 +3162,25 @@ function App() {
       setComposerHistory((currentHistory) =>
         addComposerHistoryEntry(
           createDraftComposerHistoryEntry(draft, {
-            category: aiDraftCategory,
+            category: categoryOverride,
             topic,
           }),
           currentHistory,
         ),
       )
       flashSaveFeedback('Draft generated')
+      return true
     } catch (error) {
       console.warn('Unable to generate AI draft.', error)
       setAiDraftError(
         error instanceof Error && error.message
           ? error.message
-          : 'Composer could not create a draft. Check the server and Gemini key.',
+          : 'Composer could not create a draft. Check the server and AI provider configuration.',
       )
+      return false
     } finally {
       setAiGenerating(false)
+      setComposerBusyMessage('')
     }
   }
 
@@ -2717,7 +3220,7 @@ function App() {
     setNoteHistoryEntries([])
     setSelectedNoteRevisionId(null)
     setNoteViewMode('edit')
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setAiDraft(null)
     setAiDraftTopic('')
     setEditorContext('library')
@@ -2726,37 +3229,54 @@ function App() {
     startTransition(() => setView('editor'))
   }
 
-  const generateAiAssist = async (actionOverride: AiAssistAction = aiAssistAction) => {
+  const generateAiAssist = async (actionOverride: AiAssistAction = aiAssistAction, instructionOverride = '') => {
     if (!activeNote) {
       setAiAssistError('Open a note before using active-note Composer.')
-      return
+      return false
     }
 
     const effectiveAction = actionOverride
-    const selectedText = noteViewMode === 'edit' ? selectedBlockText : ''
+    const instruction = instructionOverride.trim()
+    const selectedText = noteViewMode === 'edit' ? activeComposerSelectionText : ''
     const noteText = getPlainTextFromBlocks(activeNote.blocks)
 
     if (noteText.length < 3 && selectedText.length < 3) {
       setAiAssistError('Write a little in this note first, then Composer can help.')
-      return
+      return false
     }
 
-    if (!remoteAccountActive) {
+    if (effectiveAction === 'custom' && instruction.length < 3) {
+      setAiAssistError('Enter a Composer instruction with at least 3 characters.')
+      return false
+    }
+
+    if (!composerAvailable) {
       setAiAssistError(composerLockedMessage)
-      return
+      return false
     }
 
     setAiAssisting(true)
+    setComposerBusyMessage(
+      selectedEditorTextTrimmed.length > 0
+        ? 'Reading the highlighted text with the note context...'
+        : selectedText.trim()
+          ? 'Working from the selected block and surrounding note...'
+          : 'Working from the full note context...',
+    )
     setAiAssistError(null)
+    setAiAssistAction(effectiveAction)
 
     try {
       const result = await generateRemoteAiAssist({
         action: effectiveAction,
         context: buildComposerRequestContext(composerHistory, {
           activeNoteTitle: activeNote.title,
-          targetText: `${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
+          scope: 'active-note',
+          targetText: `${instruction} ${activeNote.title} ${activeNote.status} ${activeNote.tags.join(' ')} ${selectedText} ${noteText}`,
         }),
+        instruction,
         note: {
+          contextPack: activeComposerContextPack,
           selectedText,
           status: activeNote.status,
           tags: activeNote.tags,
@@ -2771,21 +3291,79 @@ function App() {
           createAssistComposerHistoryEntry(result, {
             action: effectiveAction,
             noteTitle: activeNote.title,
+            prompt: instruction,
             selectedText,
           }),
           currentHistory,
         ),
       )
       flashSaveFeedback('Composer response ready')
+      return true
     } catch (error) {
       console.warn('Unable to generate active-note assistance.', error)
       setAiAssistError(
         error instanceof Error && error.message
           ? error.message
-          : 'Composer could not assist this note. Check the server and Gemini key.',
+          : 'Composer could not assist this note. Check the server and AI provider configuration.',
       )
+      return false
     } finally {
       setAiAssisting(false)
+      setComposerBusyMessage('')
+    }
+  }
+
+  const generateAiChat = async (messageOverride: string, includeNoteContextOverride = Boolean(activeNote && view === 'editor')) => {
+    const message = messageOverride.trim()
+
+    if (message.length < 3) {
+      setComposerDockError('Give Chat at least 3 characters.')
+      return false
+    }
+
+    if (!composerAvailable) {
+      setComposerDockError(composerLockedMessage)
+      return false
+    }
+
+    const includeNoteContext = Boolean(includeNoteContextOverride && activeNote && view === 'editor')
+    const selectedText = includeNoteContext && noteViewMode === 'edit' ? activeComposerSelectionText : ''
+    const noteText = includeNoteContext && activeNote ? getPlainTextFromBlocks(activeNote.blocks) : ''
+
+    setAiChatting(true)
+    setComposerBusyMessage(includeNoteContext ? 'Chat is reading the current note...' : 'Chat is thinking...')
+    setComposerDockError(null)
+
+    try {
+      const result = await generateRemoteAiChat({
+        includeNoteContext,
+        message,
+        note: includeNoteContext && activeNote
+          ? {
+              contextPack: activeComposerContextPack,
+              selectedText,
+              status: activeNote.status,
+              tags: activeNote.tags,
+              text: noteText,
+              title: activeNote.title,
+            }
+          : undefined,
+      })
+
+      setAiChatResult(result)
+      flashSaveFeedback('Chat response ready')
+      return true
+    } catch (error) {
+      console.warn('Unable to generate chat response.', error)
+      setComposerDockError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Chat could not respond. Check the server and AI provider configuration.',
+      )
+      return false
+    } finally {
+      setAiChatting(false)
+      setComposerBusyMessage('')
     }
   }
 
@@ -2806,8 +3384,10 @@ function App() {
       editorDoc: appendBlocksToEditorDocument(note, nextBlocks),
     }))
     setSelectedBlockId(nextBlocks[0].id)
+    setSelectedEditorText('')
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
+    setComposerDockOpen(false)
     flashSaveFeedback('Inserted Composer blocks')
   }
 
@@ -2828,67 +3408,200 @@ function App() {
       editorDoc: replaceBlockInEditorDocument(note, selectedBlockId, nextBlocks),
     }))
     setSelectedBlockId(nextBlocks[0].id)
+    setSelectedEditorText('')
     setNoteViewMode('edit')
     queueBlockFocus(nextBlocks[0].id, 'start')
+    setComposerDockOpen(false)
     flashSaveFeedback('Replaced selected block')
   }
 
-  const restoreComposerHistoryEntry = (entry: ComposerHistoryEntry) => {
-    if (!remoteAccountActive) {
+  const toggleComposerDock = () => {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
 
-    setAiComposerOpen(true)
-    setAiComposerMode(entry.mode)
-    setAiDraftError(null)
-    setAiAssistError(null)
-
-    if (entry.mode === 'draft' && entry.draft) {
-      setAiDraftCategory(entry.draft.category)
-      setAiDraftTopic(entry.prompt)
-      setAiDraft({
-        blocks: entry.blocks,
-        collectionId: entry.draft.collectionId,
-        layout: entry.draft.layout,
-        noteType: entry.draft.noteType,
-        status: entry.draft.status,
-        summary: entry.summary,
-        tags: entry.draft.tags,
-        title: entry.title,
-      })
+    if (composerDockOpen) {
+      setComposerDockOpen(false)
+      setComposerDockError(null)
+      setAiAssistError(null)
+      setAiDraftError(null)
       return
     }
 
-    if (entry.mode === 'assist' && entry.assist) {
-      setAiAssistAction(entry.assist.action)
-      setAiAssistResult({
-        action: entry.assist.action,
-        actionLabel: entry.assist.actionLabel,
-        blocks: entry.blocks,
-        canReplaceSelection: false,
-        summary: entry.summary,
-        title: entry.title,
-      })
+    setComposerDockOpen(true)
+    setComposerDockError(null)
+  }
+
+  const closeComposerDock = () => {
+    setComposerDockOpen(false)
+    setComposerDockError(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
+  }
+
+  const clearComposerDockResult = () => {
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiChatResult(null)
+    setAiDraft(null)
+    setAiDraftError(null)
+    setComposerDockError(null)
+    setComposerDockLastRun(null)
+  }
+
+  const regenerateComposerDockResult = async () => {
+    if (!composerDockLastRun) {
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockOpen(true)
+    setComposerDockError(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
+    setAiAssistResult(null)
+    setAiChatResult(null)
+    setAiDraft(null)
+
+    if (composerDockLastRun.kind === 'assist') {
+      await generateAiAssist(composerDockLastRun.action, composerDockLastRun.instruction)
+      return
+    }
+
+    if (composerDockLastRun.kind === 'chat') {
+      await generateAiChat(composerDockLastRun.message, composerDockLastRun.includeNoteContext)
+      return
+    }
+
+    await generateAiDraft(composerDockLastRun.topic, composerDockLastRun.category)
+  }
+
+  const runComposerDockAction = async (action: AiAssistAction) => {
+    if (!activeNote) {
+      setComposerDockError('Open a note before using active-note Composer actions.')
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockError(null)
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiChatResult(null)
+    setAiDraft(null)
+    setAiDraftError(null)
+    setComposerDockMode('assist')
+
+    const ok = await generateAiAssist(action)
+
+    if (ok) {
+      setComposerDockLastRun({ action, instruction: '', kind: 'assist' })
     }
   }
 
-  const clearComposerHistory = () => {
-    setDialogState({
-      type: 'confirm',
-      tone: 'danger',
-      title: 'Clear Composer history?',
-      message: 'Recent generated drafts and assist results will be removed. Notes already created or edited will stay untouched.',
-      confirmLabel: 'Clear history',
-      onConfirm: () => {
-        setComposerHistory([])
-        flashSaveFeedback('Composer history cleared')
-      },
-    })
+  const runEditorSelectionComposerAction = async (action: AiAssistAction) => {
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    setComposerDockOpen(true)
+    setComposerDockError(null)
+    setAiAssistResult(null)
+    setAiAssistError(null)
+    setAiChatResult(null)
+    setAiDraft(null)
+    setAiDraftError(null)
+    setComposerDockMode('assist')
+
+    const ok = await generateAiAssist(action)
+
+    if (ok) {
+      setComposerDockLastRun({ action, instruction: '', kind: 'assist' })
+    }
+  }
+
+  const submitComposerDockPrompt = async () => {
+    const prompt = composerDockPrompt.trim()
+
+    if (prompt.length < 3) {
+      setComposerDockError('Give Composer at least 3 characters.')
+      return
+    }
+
+    if (!composerAvailable) {
+      showComposerLockedDialog()
+      return
+    }
+
+    const forcedDraftCategory = composerDockDraftMode === 'auto' ? null : composerDockDraftMode
+    const shouldAssistActiveNote = composerDockMode === 'assist' && activeNote && view === 'editor'
+    setComposerDockError(null)
+    setAiAssistError(null)
+    setAiDraftError(null)
+
+    if (composerDockMode === 'chat') {
+      setAiAssistResult(null)
+      setAiChatResult(null)
+      setAiDraft(null)
+
+      const includeNoteContext = Boolean(activeNote && view === 'editor')
+      const ok = await generateAiChat(prompt, includeNoteContext)
+
+      if (ok) {
+        setComposerDockLastRun({ includeNoteContext, kind: 'chat', message: prompt })
+        setComposerDockPrompt('')
+        setComposerDockOpen(true)
+      }
+
+      return
+    }
+
+    if (composerDockMode === 'assist' && !shouldAssistActiveNote) {
+      setComposerDockError('Open a note before using Assist mode.')
+      return
+    }
+
+    if (shouldAssistActiveNote) {
+      setAiAssistResult(null)
+      setAiChatResult(null)
+      setAiDraft(null)
+
+      const ok = await generateAiAssist('custom', prompt)
+
+      if (ok) {
+        setComposerDockLastRun({ action: 'custom', instruction: prompt, kind: 'assist' })
+        setComposerDockPrompt('')
+      }
+
+      return
+    }
+
+    const category = forcedDraftCategory ?? inferDraftCategoryFromPrompt(prompt)
+
+    setAiAssistResult(null)
+    setAiChatResult(null)
+    setAiDraft(null)
+
+    const ok = await generateAiDraft(prompt, category)
+
+    if (ok) {
+      setComposerDockLastRun({ category, kind: 'draft', topic: prompt })
+      setComposerDockPrompt('')
+      setComposerDockOpen(true)
+    }
   }
 
   const focusImportedNote = (note: Note, message: string) => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setActiveCollectionId(note.collectionId)
     setActiveFolderId(note.folderId)
     setActiveTag(null)
@@ -2903,13 +3616,13 @@ function App() {
   }
 
   const openImportDialog = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     importFileInputRef.current?.click()
   }
 
   const exportLibraryAsJson = () => {
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     downloadTextFile(
       `essence-export-${getExportDateStamp()}.json`,
       JSON.stringify(
@@ -3025,7 +3738,7 @@ function App() {
       const nextIsFocused = !isFocused
 
       if (nextIsFocused) {
-        setAiComposerOpen(false)
+        setComposerDockOpen(false)
         setEditorActionsOpen(false)
         setQuickSwitcherOpen(false)
         setNoteHistoryOpen(false)
@@ -3074,7 +3787,7 @@ function App() {
       return
     }
 
-    if (!remoteAccountActive) {
+    if (!composerAvailable) {
       showComposerLockedDialog()
       return
     }
@@ -3083,14 +3796,15 @@ function App() {
 
     setReaderExplorationAwake(true)
     setReaderExplorationPendingAction(action)
-    setAiComposerMode('assist')
     setAiAssistAction(assistAction)
     setAiAssistResult(null)
     setAiAssistError(null)
+    setAiDraft(null)
     setAiDraftError(null)
+    setComposerDockError(null)
     setSelectedBlockId(null)
     setZenMode(false)
-    setAiComposerOpen(true)
+    setComposerDockOpen(true)
 
     try {
       await generateAiAssist(assistAction)
@@ -3101,7 +3815,7 @@ function App() {
 
   const navigate = (nextView: NavMode) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
 
@@ -3118,7 +3832,7 @@ function App() {
 
   const openCollection = (collectionId: CollectionId) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusCollectionFilter(collectionId)
@@ -3126,7 +3840,7 @@ function App() {
 
   const openFolder = (folderId: string) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     focusFolderFilter(folderId)
@@ -3134,7 +3848,7 @@ function App() {
 
   const openCollectionInExplorer = (collectionId: CollectionId) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(collectionId)
@@ -3152,7 +3866,7 @@ function App() {
     }
 
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(folder.collectionId)
@@ -3164,7 +3878,7 @@ function App() {
 
   const openTag = (tagName: string) => {
     setZenMode(false)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     setQuickSwitcherOpen(false)
     setEditorActionsOpen(false)
     setActiveCollectionId(null)
@@ -3203,7 +3917,7 @@ function App() {
   useEffect(() => {
     keyboardShortcutStateRef.current = {
       activeNote,
-      aiComposerOpen,
+      composerDockOpen,
       dialogState,
       editorActionsOpen,
       noteHistoryOpen,
@@ -3252,9 +3966,9 @@ function App() {
           return
         }
 
-        if (state.aiComposerOpen) {
+        if (state.composerDockOpen) {
           event.preventDefault()
-          setAiComposerOpen(false)
+          setComposerDockOpen(false)
           return
         }
 
@@ -3391,6 +4105,14 @@ function App() {
   const queueBlockFocus = (blockId: string, placement: BlockFocusRequest['placement']) => {
     void placement
     setSelectedBlockId(blockId)
+  }
+
+  const handleEditorSelectionChange = ({ blockId, text }: EditorSelectionContext) => {
+    if (blockId) {
+      setSelectedBlockId(blockId)
+    }
+
+    setSelectedEditorText(text)
   }
 
   const handleCollectionChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -3575,7 +4297,7 @@ function App() {
     )
     setActiveCollectionId(collectionId)
     setActiveFolderId(newFolder.id)
-    setAiComposerOpen(false)
+    setComposerDockOpen(false)
     startTransition(() => setView('collections'))
     markSaving()
   }
@@ -3609,7 +4331,7 @@ function App() {
         setActiveFolderId(null)
         setActiveTag(null)
         setSearchQuery('')
-        setAiComposerOpen(false)
+        setComposerDockOpen(false)
         startTransition(() => setView('collections'))
         flashSaveFeedback('Collection created')
       },
@@ -3692,8 +4414,20 @@ function App() {
       className={`app-shell app-shell--theme-${colorTheme} app-shell--ambience-${ambienceMode} ${
         navigationSidebarVisible ? '' : 'app-shell--navigationHidden'
       } ${zenMode ? 'is-zen' : ''}`}
+      style={ambienceStyle}
     >
       <div className="cosmic-sky" aria-hidden="true">
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--top" />
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--left" />
+        <span className="cosmic-sky__viewport cosmic-sky__viewport--right" />
+        <span className="cosmic-sky__glassGlint cosmic-sky__glassGlint--left" />
+        <span className="cosmic-sky__glassGlint cosmic-sky__glassGlint--right" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--top" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--left" />
+        <span className="cosmic-sky__hull cosmic-sky__hull--right" />
+        <span className="cosmic-sky__cabinGlow" />
+        <span className="cosmic-sky__galaxy cosmic-sky__galaxy--primary" />
+        <span className="cosmic-sky__galaxy cosmic-sky__galaxy--secondary" />
         <span className="cosmic-sky__meteor" />
         <span className="cosmic-sky__meteor" />
         <span className="cosmic-sky__meteor" />
@@ -3710,19 +4444,31 @@ function App() {
       />
 
       {!zenMode && settingsOpen && (
-          <SettingsDialog
-            ambienceMode={ambienceMode}
-            colorTheme={colorTheme}
-            currentUser={currentUser}
+        <SettingsDialog
+          ambienceIntensity={ambienceIntensity}
+          ambienceMode={ambienceMode}
+          apiReadiness={apiReadiness}
+          colorTheme={colorTheme}
+          composerAvailable={composerAvailable}
+          currentUser={currentUser}
+          composerSettingsError={composerSettingsError ?? composerSettingsState.error}
+          composerSettingsMessage={composerSettingsMessage}
+          composerSettingsState={composerSettingsState}
+          isComposerSaving={composerSettingsSaving}
+          isComposerTesting={composerSettingsTesting}
           isSaving={profileSaving}
           navigationSidebarVisible={navigationSidebarVisible}
           noteCount={notes.length}
           folderCount={folders.length}
           composerHistoryCount={composerHistory.length}
           error={profileError}
-            onAmbienceChange={setAmbienceMode}
-            onColorThemeChange={setColorTheme}
-            onClose={closeSettings}
+          onAmbienceChange={setAmbienceMode}
+          onAmbienceIntensityChange={setAmbienceIntensity}
+          onColorThemeChange={setColorTheme}
+          onClose={closeSettings}
+          onComposerRefresh={refreshComposerSettings}
+          onComposerSave={saveComposerSettings}
+          onComposerTest={testComposerSettings}
           onNavigationSidebarChange={setNavigationSidebarVisible}
           onOpenAuth={openAuthScreen}
           onSaveProfile={saveProfileSettings}
@@ -3779,55 +4525,58 @@ function App() {
         </aside>
       )}
 
-      {!zenMode && aiComposerOpen && (
-        <Suspense fallback={<AiComposerPanelFallback />}>
-          <AiComposerPanel
-            activeNoteTitle={activeNote?.title ?? null}
-            assistAction={aiAssistAction}
-            assistError={aiAssistError}
+      {!zenMode && !settingsOpen && (
+        <>
+          {composerDockOpen && (
+            <button
+              type="button"
+              className="composer-dock-scrim"
+              onClick={closeComposerDock}
+              aria-label="Close Composer dock"
+              tabIndex={-1}
+            />
+          )}
+          <ComposerDock
             assistResult={aiAssistResult}
-            category={aiDraftCategory}
-            canReplaceSelection={
-              Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')
-            }
-            composerHistory={composerHistory}
+            canRegenerate={Boolean(composerDockLastRun)}
+            canReplaceAssist={Boolean(aiAssistResult?.canReplaceSelection && activeNote && selectedBlock && noteViewMode === 'edit')}
+            canUseComposer={composerAvailable}
+            chatResult={aiChatResult}
+            contextLabel={composerDockContext}
+            contextSummary={composerDockContextSummary}
             draft={aiDraft}
-            error={aiDraftError}
-            isAssisting={aiAssisting}
-            isGenerating={aiGenerating}
-            isOpen={aiComposerOpen}
-            mode={aiComposerMode}
+            draftMode={composerDockDraftMode}
+            error={composerDockError ?? aiAssistError ?? aiDraftError}
+            busyMessage={composerBusyMessage}
+            isBusy={composerBusy}
+            isOpen={composerDockOpen}
+            mode={composerDockMode}
+            onAction={runComposerDockAction}
             onAppendAssist={appendAiAssistToActiveNote}
-            onAssistActionChange={(action) => {
-              setAiAssistAction(action)
-              setAiAssistResult(null)
-              setAiAssistError(null)
-            }}
-            onCategoryChange={(category) => {
-              setAiDraftCategory(category)
-              setAiDraft(null)
-              setAiDraftError(null)
-            }}
-            onClearHistory={clearComposerHistory}
-            onClose={() => setAiComposerOpen(false)}
+            onClearResult={clearComposerDockResult}
             onCreateNote={createNoteFromAiDraft}
-            onGenerateAssist={generateAiAssist}
-            onGenerate={generateAiDraft}
+            onDraftModeChange={setComposerDockDraftMode}
             onModeChange={(mode) => {
-              setAiComposerMode(mode)
-              setAiDraftError(null)
+              setComposerDockMode(mode)
+              setComposerDockError(null)
+            }}
+            onPromptChange={(value) => {
+              setComposerDockPrompt(value)
+              setComposerDockError(null)
               setAiAssistError(null)
-            }}
-            onReplaceSelection={replaceSelectedBlockWithAiAssist}
-            onRestoreHistory={restoreComposerHistoryEntry}
-            onTopicChange={(value) => {
-              setAiDraftTopic(value)
               setAiDraftError(null)
             }}
-            selectedBlockPreview={noteViewMode === 'edit' ? summarizeInlineText(selectedBlockText, 120) : ''}
-            topic={aiDraftTopic}
+            onRegenerate={regenerateComposerDockResult}
+            onReplaceAssist={replaceSelectedBlockWithAiAssist}
+            onSubmit={submitComposerDockPrompt}
+            onToggle={toggleComposerDock}
+            prompt={composerDockPrompt}
+            replaceAssistLabel={selectedEditorTextTrimmed ? 'Replace block' : 'Replace'}
+            runtimeLabel={composerRuntimeLabel}
+            selectionPreview={composerSelectionPreview}
+            showNoteActions={Boolean(activeNote && view === 'editor')}
           />
-        </Suspense>
+        </>
       )}
 
       <div className="workspace">
@@ -4016,16 +4765,6 @@ function App() {
                         <Icon name="upload" />
                         <span>Import</span>
                       </button>
-                      <button
-                        type="button"
-                        className="topbar-toolButton topbar-toolButton--composer"
-                        onClick={toggleComposerPanel}
-                        aria-label="Open Composer"
-                        title={remoteAccountActive ? 'Open Composer' : 'Sign in with an approved invite to use Composer'}
-                      >
-                        <Icon name={remoteAccountActive ? 'spark' : 'lock'} />
-                        <span>Composer</span>
-                      </button>
                     </div>
                   </div>
                 )}
@@ -4086,10 +4825,11 @@ function App() {
               onClearFilters={clearFilters}
               onCreateNote={createNote}
               onOpenCollection={openCollection}
-              onOpenComposer={toggleComposerPanel}
+              onOpenComposer={openComposerDock}
               onOpenFolder={openFolder}
               onOpenImport={openImportDialog}
               onOpenNote={openNote}
+              onDeleteNote={deleteNote}
               onToggleArchived={toggleNoteArchived}
               onToggleFavorite={toggleNoteFavorite}
               onTogglePinned={toggleNotePinned}
@@ -4201,10 +4941,13 @@ function App() {
                           <Suspense fallback={<ModernRichEditorFallback title={activeNote.title} />}>
                             <ModernRichEditor
                               blocks={activeNote.blocks}
+                              composerAvailable={composerAvailable}
                               editorDoc={activeNote.editorDoc}
                               key={activeNote.id}
                               onChange={replaceActiveNoteBlocks}
-                              onFocus={() => setSelectedBlockId(activeNote.blocks[0]?.id ?? null)}
+                              onComposerAction={runEditorSelectionComposerAction}
+                              onFocus={() => setSelectedBlockId((currentBlockId) => currentBlockId ?? activeNote.blocks[0]?.id ?? null)}
+                              onSelectionChange={handleEditorSelectionChange}
                               onTitleChange={handleTitleChange}
                               title={activeNote.title}
                             />
@@ -4237,7 +4980,7 @@ function App() {
                           onOpenTag={openTag}
                           onOpenNote={openNote}
                           onExplore={exploreReaderDepth}
-                          composerAvailable={remoteAccountActive}
+                          composerAvailable={composerAvailable}
                           explorationAwake={readerExplorationAwake || readingProgress > 0.96}
                           pendingExplorationAction={readerExplorationPendingAction}
                           isFocusMode={zenMode}
@@ -4426,28 +5169,356 @@ function ModernRichEditorFallback({ title }: { title: string }) {
   )
 }
 
-function AiComposerPanelFallback() {
+function ComposerDock({
+  assistResult,
+  busyMessage,
+  canRegenerate,
+  canReplaceAssist,
+  canUseComposer,
+  chatResult,
+  contextLabel,
+  contextSummary,
+  draft,
+  draftMode,
+  error,
+  isBusy,
+  isOpen,
+  mode,
+  onAction,
+  onAppendAssist,
+  onClearResult,
+  onCreateNote,
+  onDraftModeChange,
+  onModeChange,
+  onPromptChange,
+  onRegenerate,
+  onReplaceAssist,
+  onSubmit,
+  onToggle,
+  prompt,
+  replaceAssistLabel,
+  runtimeLabel,
+  selectionPreview,
+  showNoteActions,
+}: {
+  assistResult: AiAssistResult | null
+  busyMessage: string
+  canRegenerate: boolean
+  canReplaceAssist: boolean
+  canUseComposer: boolean
+  chatResult: AiChatResult | null
+  contextLabel: string
+  contextSummary: string
+  draft: AiDraft | null
+  draftMode: ComposerDockDraftMode
+  error: string | null
+  isBusy: boolean
+  isOpen: boolean
+  mode: AiComposerMode
+  onAction: (action: AiAssistAction) => void
+  onAppendAssist: () => void
+  onClearResult: () => void
+  onCreateNote: () => void
+  onDraftModeChange: (mode: ComposerDockDraftMode) => void
+  onModeChange: (mode: AiComposerMode) => void
+  onPromptChange: (value: string) => void
+  onRegenerate: () => void
+  onReplaceAssist: () => void
+  onSubmit: () => void
+  onToggle: () => void
+  prompt: string
+  replaceAssistLabel: string
+  runtimeLabel: string
+  selectionPreview: string
+  showNoteActions: boolean
+}) {
+  const quickActions: Array<{ action: AiAssistAction; label: string }> = [
+    { action: 'continue-writing', label: 'Continue' },
+    { action: 'improve-clarity', label: 'Clarify' },
+    { action: 'create-outline', label: 'Outline' },
+    { action: 'study-questions', label: 'Questions' },
+  ]
+  const hasResult = Boolean(assistResult || chatResult || draft)
+  const assistText = assistResult ? getReadableTextFromAiDraftBlocks(assistResult.blocks) : ''
+  const chatText = chatResult?.text ?? ''
+  const draftText = draft ? getReadableTextFromAiDraftBlocks(draft.blocks) : ''
+  const resultCopyText = assistResult
+    ? formatComposerAssistForClipboard(assistResult, assistText)
+    : chatResult ? chatText : draft ? formatComposerDraftForClipboard(draft, draftText) : ''
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | 'idle'>('idle')
+  const promptPlaceholder =
+    mode === 'chat'
+      ? showNoteActions ? 'Ask Codex about this note...' : 'Chat with Codex...'
+      : draftMode === 'auto'
+        ? showNoteActions ? 'Ask about this note...' : 'Draft a note about...'
+        : `Draft ${getComposerDockDraftModeLabel(draftMode).toLowerCase()} about...`
+  const copyButtonLabel = copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'
+
+  useEffect(() => {
+    setCopyStatus('idle')
+  }, [resultCopyText])
+
+  useEffect(() => {
+    if (copyStatus === 'idle') {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => setCopyStatus('idle'), 1600)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [copyStatus])
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!isBusy) {
+      onSubmit()
+    }
+  }
+
+  const handlePromptKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+
+      if (!isBusy) {
+        onSubmit()
+      }
+    }
+
+    if (event.key === 'Escape' && isOpen) {
+      event.preventDefault()
+      onToggle()
+    }
+  }
+
+  const handleCopyResult = async () => {
+    if (!resultCopyText) {
+      return
+    }
+
+    setCopyStatus((await copyTextToClipboard(resultCopyText)) ? 'copied' : 'failed')
+  }
+
+  const resultTools = hasResult ? (
+    <div className={`composer-dock__resultTools ${canRegenerate ? '' : 'composer-dock__resultTools--compact'}`}>
+      <span className="composer-dock__readyBadge">
+        <Icon name="check" />
+        <span>Ready</span>
+      </span>
+      <button
+        type="button"
+        className="composer-dock__toolButton"
+        onClick={handleCopyResult}
+        disabled={!resultCopyText}
+        title="Copy Composer result"
+      >
+        <Icon name={copyStatus === 'copied' ? 'check' : 'copy'} />
+        <span>{copyButtonLabel}</span>
+      </button>
+      {canRegenerate && (
+        <button type="button" className="composer-dock__toolButton" onClick={onRegenerate} title="Regenerate Composer result">
+          <Icon name="redo" />
+          <span>Regenerate</span>
+        </button>
+      )}
+      <button type="button" className="composer-dock__toolButton" onClick={onClearResult} title="Clear Composer result">
+        <Icon name="close" />
+        <span>Clear</span>
+      </button>
+    </div>
+  ) : null
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        className={`composer-dock composer-dock--collapsed ${canUseComposer ? '' : 'composer-dock--locked'}`}
+        onClick={onToggle}
+        aria-label={canUseComposer ? 'Open Composer dock' : 'Composer needs access'}
+        title={canUseComposer ? 'Open Composer' : 'Sign in with an approved invite or enable local Composer'}
+      >
+        <span className="composer-dock__orb" aria-hidden="true">
+          <Icon name={canUseComposer ? 'spark' : 'lock'} />
+        </span>
+      </button>
+    )
+  }
+
   return (
-    <aside className="ai-composer ai-composer--open" aria-label="Loading Composer">
-      <div className="ai-composer__panel ai-composer__panel--loading">
-        <div className="ai-composer__header">
+    <section
+      className={`composer-dock composer-dock--open ${hasResult ? 'composer-dock--has-result' : ''}`}
+      aria-label="Composer dock"
+    >
+      <header className="composer-dock__header">
+        <div>
+          <span>{runtimeLabel}</span>
+          <strong>{contextLabel}</strong>
+          {selectionPreview ? <small className="composer-dock__selectionPreview">{selectionPreview}</small> : null}
+          {contextSummary ? <small className="composer-dock__contextSummary">{contextSummary}</small> : null}
+        </div>
+        <div className="composer-dock__headerActions">
+          <button type="button" className="icon-button" onClick={onToggle} aria-label="Close Composer dock" title="Close">
+            <Icon name="close" />
+          </button>
+        </div>
+      </header>
+
+      <div className="composer-dock__modeTabs" role="tablist" aria-label="Composer mode">
+        {(['draft', 'assist', 'chat'] as const).map((nextMode) => (
+          <button
+            key={nextMode}
+            type="button"
+            className={mode === nextMode ? 'composer-dock__modeTab--active' : ''}
+            disabled={isBusy}
+            onClick={() => onModeChange(nextMode)}
+            role="tab"
+            aria-selected={mode === nextMode}
+          >
+            {nextMode === 'draft' ? 'Draft' : nextMode === 'assist' ? 'Assist' : 'Chat'}
+          </button>
+        ))}
+      </div>
+
+      {showNoteActions && mode === 'assist' && (
+        <div className="composer-dock__chips" aria-label="Quick Composer actions">
+          {quickActions.map((action) => (
+            <button
+              key={action.action}
+              type="button"
+              onClick={() => onAction(action.action)}
+              disabled={isBusy}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === 'draft' && (
+        <div className="composer-dock__draftModes" role="radiogroup" aria-label="Draft type">
+          <span>Draft</span>
+          {composerDockDraftModes.map((draftModeOption) => (
+            <button
+              key={draftModeOption.value}
+              type="button"
+              className={draftMode === draftModeOption.value ? 'composer-dock__draftMode--active' : ''}
+              disabled={isBusy}
+              onClick={() => onDraftModeChange(draftModeOption.value)}
+              role="radio"
+              aria-checked={draftMode === draftModeOption.value}
+            >
+              {draftModeOption.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isBusy && (
+        <div className="composer-dock__thinking" aria-live="polite">
+          <span className="composer-dock__spinner" aria-hidden="true" />
           <div>
-            <span className="ai-composer__eyebrow">Essence Composer</span>
-            <h2>Opening Composer...</h2>
-            <p>Preparing the drafting side panel.</p>
+            <strong>{selectionPreview ? 'Reading selection' : 'Composer is thinking'}</strong>
+            <p>
+              {busyMessage ||
+                (runtimeLabel === 'Composer' ? 'Generating a response...' : `Generating with ${runtimeLabel}...`)}
+            </p>
           </div>
         </div>
-        <div className="ai-composer__modeToggle" aria-hidden="true">
-          <span className="ai-composer__loadingPill" />
-          <span className="ai-composer__loadingPill" />
+      )}
+
+      {!isBusy && chatResult && (
+        <section className="composer-dock__result composer-dock__result--chat" aria-label="Composer chat response">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>Codex chat</span>
+              <strong>{chatResult.title}</strong>
+            </div>
+          </div>
+          {resultTools}
+          <div className="composer-dock__resultBody" tabIndex={0}>
+            {chatText.split(/\n{2,}/).map((paragraph, index) => (
+              <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!isBusy && assistResult && (
+        <section className="composer-dock__result" aria-label="Composer response">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>{assistResult.actionLabel}</span>
+              <strong>{assistResult.title}</strong>
+            </div>
+          </div>
+          {resultTools}
+          <div className="composer-dock__resultBody" tabIndex={0}>
+            <p>{assistResult.summary || summarizeInlineText(assistText, 180) || 'Composer prepared a response for this note.'}</p>
+            {assistText && <blockquote>{assistText}</blockquote>}
+          </div>
+          <div className="composer-dock__resultActions">
+            <button type="button" className="primary-button" onClick={onAppendAssist}>
+              <Icon name="plus" />
+              <span>Insert</span>
+            </button>
+            {canReplaceAssist && (
+              <button type="button" className="ghost-button" onClick={onReplaceAssist}>
+                <Icon name="edit" />
+                <span>{replaceAssistLabel}</span>
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {!isBusy && !assistResult && draft && (
+        <section className="composer-dock__result" aria-label="Composer draft">
+          <div className="composer-dock__resultHeader">
+            <div>
+              <span>{draft.status}</span>
+              <strong>{draft.title}</strong>
+            </div>
+          </div>
+          {resultTools}
+          <div className="composer-dock__resultBody" tabIndex={0}>
+            <p>{draft.summary || summarizeInlineText(draftText, 180) || 'Composer prepared a note draft.'}</p>
+            {draftText && <blockquote>{draftText}</blockquote>}
+            {draft.tags.length > 0 && (
+              <div className="composer-dock__tags" aria-label="Draft tags">
+                {draft.tags.slice(0, 4).map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="composer-dock__resultActions">
+            <button type="button" className="primary-button" onClick={onCreateNote}>
+              <Icon name="plus" />
+              <span>Create note</span>
+            </button>
+          </div>
+        </section>
+      )}
+
+      <form className="composer-dock__form" onSubmit={handleSubmit}>
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={handlePromptKeyDown}
+          placeholder={promptPlaceholder}
+          rows={3}
+          disabled={isBusy}
+        />
+        {error && <p className="composer-dock__error">{error}</p>}
+        <div className="composer-dock__footer">
+          <span>{isBusy ? 'Composer is thinking...' : 'Cmd/Ctrl Enter'}</span>
+          <button type="submit" className="primary-button" disabled={isBusy || prompt.trim().length < 3}>
+            <Icon name="spark" />
+            <span>{isBusy ? 'Working' : 'Send'}</span>
+          </button>
         </div>
-        <div className="ai-composer__preview ai-composer__preview--loading" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
-    </aside>
+      </form>
+    </section>
   )
 }
 
@@ -4467,6 +5538,7 @@ function LibraryScreen({
   onOpenFolder,
   onOpenImport,
   onOpenNote,
+  onDeleteNote,
   onToggleArchived,
   onToggleFavorite,
   onTogglePinned,
@@ -4488,6 +5560,7 @@ function LibraryScreen({
   onOpenFolder: (folderId: string) => void
   onOpenImport: () => void
   onOpenNote: (noteId: string) => void
+  onDeleteNote: (noteId: string) => void
   onToggleArchived: (noteId: string) => void
   onToggleFavorite: (noteId: string) => void
   onTogglePinned: (noteId: string) => void
@@ -4700,6 +5773,7 @@ function LibraryScreen({
                       onOpenNote={onOpenNote}
                       actionsOpen={openActionNoteId === note.id}
                       onCloseActions={() => setOpenActionNoteId(null)}
+                      onDeleteNote={onDeleteNote}
                       onToggleActions={() =>
                         setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
                       }
@@ -4724,6 +5798,7 @@ function LibraryScreen({
                       onOpenNote={onOpenNote}
                       actionsOpen={openActionNoteId === note.id}
                       onCloseActions={() => setOpenActionNoteId(null)}
+                      onDeleteNote={onDeleteNote}
                       onToggleActions={() =>
                         setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
                       }
@@ -4748,6 +5823,7 @@ function LibraryScreen({
               onOpenNote={onOpenNote}
               actionsOpen={openActionNoteId === note.id}
               onCloseActions={() => setOpenActionNoteId(null)}
+              onDeleteNote={onDeleteNote}
               onToggleActions={() =>
                 setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
               }
@@ -4768,6 +5844,7 @@ function LibraryScreen({
               onOpenNote={onOpenNote}
               actionsOpen={openActionNoteId === note.id}
               onCloseActions={() => setOpenActionNoteId(null)}
+              onDeleteNote={onDeleteNote}
               onToggleActions={() =>
                 setOpenActionNoteId((currentNoteId) => (currentNoteId === note.id ? null : note.id))
               }
@@ -4831,7 +5908,7 @@ function getLibraryEmptyState(
 
   return {
     title: 'Start with one clear note',
-    description: 'Create a note from the rail, import Markdown, or ask Composer for a first draft.',
+    description: 'Create a note, import Markdown, or unlock Composer with an approved sign-in.',
   }
 }
 
@@ -4840,6 +5917,7 @@ function NoteCard({
   collectionNameById,
   note,
   foldersById,
+  onDeleteNote,
   onCloseActions,
   onOpenNote,
   onToggleActions,
@@ -4851,6 +5929,7 @@ function NoteCard({
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onDeleteNote: (noteId: string) => void
   onCloseActions: () => void
   onOpenNote: (noteId: string) => void
   onToggleActions: () => void
@@ -4917,6 +5996,7 @@ function NoteCard({
         isOpen={actionsOpen}
         note={note}
         onClose={onCloseActions}
+        onDeleteNote={onDeleteNote}
         onToggleOpen={onToggleActions}
         onToggleArchived={onToggleArchived}
         onToggleFavorite={onToggleFavorite}
@@ -4931,6 +6011,7 @@ function NoteListItem({
   collectionNameById,
   note,
   foldersById,
+  onDeleteNote,
   onCloseActions,
   onOpenNote,
   onToggleActions,
@@ -4942,6 +6023,7 @@ function NoteListItem({
   collectionNameById: Record<CollectionId, string>
   note: Note
   foldersById: Record<string, Folder>
+  onDeleteNote: (noteId: string) => void
   onCloseActions: () => void
   onOpenNote: (noteId: string) => void
   onToggleActions: () => void
@@ -4988,6 +6070,7 @@ function NoteListItem({
         isOpen={actionsOpen}
         note={note}
         onClose={onCloseActions}
+        onDeleteNote={onDeleteNote}
         onToggleOpen={onToggleActions}
         onToggleArchived={onToggleArchived}
         onToggleFavorite={onToggleFavorite}
@@ -5001,6 +6084,7 @@ function NoteQuickActions({
   isOpen,
   note,
   onClose,
+  onDeleteNote,
   onToggleOpen,
   onToggleArchived,
   onToggleFavorite,
@@ -5009,6 +6093,7 @@ function NoteQuickActions({
   isOpen: boolean
   note: Note
   onClose: () => void
+  onDeleteNote: (noteId: string) => void
   onToggleOpen: () => void
   onToggleArchived: (noteId: string) => void
   onToggleFavorite: (noteId: string) => void
@@ -5034,6 +6119,11 @@ function NoteQuickActions({
   const handleArchived = () => {
     onToggleArchived(note.id)
     onClose()
+  }
+
+  const handleDelete = () => {
+    onClose()
+    onDeleteNote(note.id)
   }
 
   return (
@@ -5066,6 +6156,15 @@ function NoteQuickActions({
           <button type="button" className="note-actionMenu__item" onClick={handleArchived} role="menuitem">
             <Icon name="archive" />
             <span>{note.isArchived ? 'Restore note' : 'Archive'}</span>
+          </button>
+          <button
+            type="button"
+            className="note-actionMenu__item note-actionMenu__item--danger"
+            onClick={handleDelete}
+            role="menuitem"
+          >
+            <Icon name="trash" />
+            <span>Delete note</span>
           </button>
         </div>
       )}
@@ -6458,7 +7557,12 @@ function FocusModeBar({
       <div className="focus-mode-bar__actions">
         <span className="focus-mode-bar__meta">{`${progress}% read / ${wordCount} words`}</span>
         <ModeToggle mode={mode} onChange={onModeChange} />
-        <button type="button" className="utility-button" onClick={onExit} title="Exit Focus Mode (Esc)">
+        <button
+          type="button"
+          className="utility-button focus-mode-bar__exit"
+          onClick={onExit}
+          title="Exit Focus Mode (Esc)"
+        >
           <Icon name="close" />
           <span>Exit</span>
         </button>
@@ -6589,10 +7693,10 @@ function ReaderExplorationPanel({
       </div>
       <div className="reader-depth__copy">
         <span className="reader-depth__eyebrow">{isLocked ? 'Invite-only Composer' : 'You have reached the edge of this thought.'}</span>
-        <h2>{isLocked ? 'Sign in to use Composer.' : 'Continue deeper?'}</h2>
+        <h2>{isLocked ? 'Composer is invite-only.' : 'Continue deeper?'}</h2>
         <p>
           {isLocked
-            ? 'Local mode keeps reading and writing private to this browser. AI actions are reserved for approved accounts.'
+            ? 'Local mode keeps reading and writing private to this browser. AI actions need approved access or a private local Composer setup.'
             : 'Ask Essence Composer to extend the argument, test it, or turn the ending into a research path.'}
         </p>
       </div>
@@ -6600,7 +7704,7 @@ function ReaderExplorationPanel({
       {isLocked ? (
         <div className="reader-depth__lockedNote">
           <Icon name="lock" />
-          <span>Sign in from the topbar to unlock Composer prompts for this note.</span>
+          <span>Sign in with an approved invite or enable local Composer to unlock prompts for this note.</span>
         </div>
       ) : (
         <div className="reader-depth__actions">
@@ -7168,6 +8272,18 @@ function AuthScreen({
 
   return (
     <main className="auth-screen">
+      <div className="auth-sky" aria-hidden="true">
+        <span className="auth-sky__stars auth-sky__stars--near" />
+        <span className="auth-sky__stars auth-sky__stars--far" />
+        <span className="auth-sky__nebula auth-sky__nebula--left" />
+        <span className="auth-sky__nebula auth-sky__nebula--right" />
+        <span className="auth-sky__galaxy auth-sky__galaxy--primary" />
+        <span className="auth-sky__galaxy auth-sky__galaxy--secondary" />
+        <span className="auth-sky__meteor" />
+        <span className="auth-sky__meteor" />
+        <span className="auth-sky__meteor" />
+      </div>
+
       <section className="auth-main" aria-label="Essence account access">
         <header className="auth-brandbar">
           <EssenceMark compact />
@@ -7178,12 +8294,14 @@ function AuthScreen({
 
         <div className="auth-main__content">
           <div className="auth-hero">
+            <span className="auth-hero__kicker">Personal observatory</span>
             <h1>Return to your thinking space.</h1>
+            <p>Notes, drafts, and research paths held in a quiet field of attention.</p>
           </div>
 
           <section className="auth-panel">
             <span className="auth-panel__eyebrow">Invite-only access</span>
-            <p className="auth-panel__copy">Use your approved email. Essence sends a short code first.</p>
+            <p className="auth-panel__copy">Use your approved email for sync and Composer, or keep this workspace local for now.</p>
 
             <form className="auth-form" onSubmit={handleSubmit}>
               {codeSentTo ? (
@@ -7255,13 +8373,18 @@ function AuthScreen({
               <button type="button" className="auth-local" onClick={onContinueLocally} disabled={isLoading}>
                 Use this device only
               </button>
-              <p>Stores notes in this browser. Composer and sync unlock after invite sign-in.</p>
+              <p>Local notes stay in this browser. Approved sign-in adds sync and Composer.</p>
             </div>
           </section>
         </div>
       </section>
 
       <aside className="auth-poem" aria-label="Product promise">
+        <div className="auth-window" aria-hidden="true">
+          <span className="auth-window__rim" />
+          <span className="auth-window__glow" />
+          <span className="auth-window__scanline" />
+        </div>
         <p>
           <strong>Capture</strong> the thought.
           <br />
@@ -7314,46 +8437,87 @@ function AccountControl({
 }
 
 function SettingsDialog({
+  ambienceIntensity,
   ambienceMode,
+  apiReadiness,
   colorTheme,
+  composerAvailable,
   composerHistoryCount,
+  composerSettingsError,
+  composerSettingsMessage,
+  composerSettingsState,
   currentUser,
   error,
   folderCount,
+  isComposerSaving,
+  isComposerTesting,
   isSaving,
   navigationSidebarVisible,
   noteCount,
   onAmbienceChange,
+  onAmbienceIntensityChange,
   onColorThemeChange,
   onClose,
+  onComposerRefresh,
+  onComposerSave,
+  onComposerTest,
   onNavigationSidebarChange,
   onOpenAuth,
   onSaveProfile,
   onSignOut,
 }: {
+  ambienceIntensity: number
   ambienceMode: AmbienceMode
+  apiReadiness: ApiReadinessState
   colorTheme: ColorTheme
+  composerAvailable: boolean
   composerHistoryCount: number
+  composerSettingsError: string | null
+  composerSettingsMessage: string | null
+  composerSettingsState: ComposerSettingsState
   currentUser: AuthUser | null
   error: string | null
   folderCount: number
+  isComposerSaving: boolean
+  isComposerTesting: boolean
   isSaving: boolean
   navigationSidebarVisible: boolean
   noteCount: number
   onAmbienceChange: (mode: AmbienceMode) => void
+  onAmbienceIntensityChange: (intensity: number) => void
   onColorThemeChange: (theme: ColorTheme) => void
   onClose: () => void
+  onComposerRefresh: () => void
+  onComposerSave: (draft: ComposerSettingsDraft) => void
+  onComposerTest: () => void
   onNavigationSidebarChange: (visible: boolean) => void
   onOpenAuth: () => void
   onSaveProfile: (draft: ProfileDraft) => void
   onSignOut: () => void
 }) {
   const [draft, setDraft] = useState<ProfileDraft>(() => getProfileDraftFromUser(currentUser))
+  const [composerDraft, setComposerDraft] = useState<ComposerSettingsDraft>(() =>
+    getComposerSettingsDraft(composerSettingsState),
+  )
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>('appearance')
   const isLocal = !currentUser || currentUser.isLocal
+  const composerProviderLabel = getComposerProviderLabel(apiReadiness, composerSettingsState.runtime)
+  const composerModelLabel = getComposerModelLabel(apiReadiness, composerSettingsState.runtime)
+  const composerStatusLabel = getComposerStatusLabel(apiReadiness, composerSettingsState.runtime)
+  const composerAccessLabel = getComposerAccessLabel(apiReadiness, composerAvailable, composerSettingsState.runtime)
+  const composerSettingsNote = getComposerSettingsNote(apiReadiness, composerAvailable, composerSettingsState.runtime)
+  const composerConfigBusy = isComposerSaving || isComposerTesting || composerSettingsState.loadState === 'loading'
+  const composerSourceLabel = composerSettingsState.runtime?.source === 'settings' ? 'Settings' : 'Server default'
+  const composerPromptValue =
+    composerDraft.promptMode === 'system' ? composerSettingsState.settings.systemPrompt : composerDraft.customPrompt
 
   useEffect(() => {
     setDraft(getProfileDraftFromUser(currentUser))
   }, [currentUser])
+
+  useEffect(() => {
+    setComposerDraft(getComposerSettingsDraft(composerSettingsState))
+  }, [composerSettingsState])
 
   const updateDraft = (field: keyof ProfileDraft, value: string) => {
     setDraft((currentDraft) => ({
@@ -7367,7 +8531,31 @@ function SettingsDialog({
     onSaveProfile(draft)
   }
 
+  function updateComposerDraft<Field extends keyof ComposerSettingsDraft>(
+    field: Field,
+    value: ComposerSettingsDraft[Field],
+  ) {
+    setComposerDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }))
+  }
+
+  const handleComposerSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onComposerSave(composerDraft)
+  }
+
   const accountStatus = currentUser && !currentUser.isLocal ? currentUser.email : 'Local-only workspace'
+  const settingsSections: Array<{ id: SettingsSectionId; label: string; meta: string }> = [
+    { id: 'appearance', label: 'Appearance', meta: colorThemeOptions.find((option) => option.value === colorTheme)?.label ?? 'Theme' },
+    { id: 'account', label: 'Account', meta: isLocal ? 'Local' : 'Signed in' },
+    { id: 'composer', label: 'Composer', meta: composerStatusLabel },
+    { id: 'workspace', label: 'Workspace', meta: `${noteCount} notes` },
+    { id: 'about', label: 'About', meta: appVersion },
+  ]
+  const activeSettingsLabel =
+    settingsSections.find((section) => section.id === activeSettingsSection)?.label ?? 'Appearance'
 
   return (
     <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -7375,8 +8563,8 @@ function SettingsDialog({
         <header className="settings-dialog__header">
           <div className="settings-dialog__titleGroup">
             <span className="settings-dialog__eyebrow">Settings</span>
-            <h2 id="settings-title">Essence preferences</h2>
-            <p>{accountStatus}</p>
+            <h2 id="settings-title">Preferences</h2>
+            <p>{`${activeSettingsLabel} - ${accountStatus}`}</p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close settings" title="Close settings">
             <Icon name="close" />
@@ -7384,6 +8572,23 @@ function SettingsDialog({
         </header>
 
         <div className="settings-dialog__body">
+          <nav className="settings-dialog__nav" aria-label="Settings sections">
+            {settingsSections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={activeSettingsSection === section.id ? 'settings-dialog__navItem--active' : ''}
+                onClick={() => setActiveSettingsSection(section.id)}
+                aria-current={activeSettingsSection === section.id ? 'page' : undefined}
+              >
+                <span>{section.label}</span>
+                <small>{section.meta}</small>
+              </button>
+            ))}
+          </nav>
+
+          <div className="settings-dialog__content">
+          {activeSettingsSection === 'account' && (
           <form className="settings-section settings-section--profile" onSubmit={handleSubmit}>
             <div className="settings-section__header">
               <div>
@@ -7440,7 +8645,9 @@ function SettingsDialog({
               </button>
             </div>
           </form>
+          )}
 
+          {activeSettingsSection === 'appearance' && (
           <section className="settings-section" aria-label="Appearance settings">
             <div className="settings-section__header">
               <div>
@@ -7493,6 +8700,25 @@ function SettingsDialog({
               </div>
             </div>
 
+            <label className="settings-rangeField">
+              <span className="settings-rangeField__header">
+                <span>Intensity</span>
+                <strong>{ambienceIntensity}%</strong>
+              </span>
+              <input
+                type="range"
+                min={ambienceIntensityMinimum}
+                max={ambienceIntensityMaximum}
+                step={5}
+                value={ambienceIntensity}
+                onChange={(event) => onAmbienceIntensityChange(normalizeAmbienceIntensity(event.target.value))}
+              />
+              <span className="settings-rangeField__scale">
+                <span>Quiet</span>
+                <span>Vivid</span>
+              </span>
+            </label>
+
             <label className="settings-toggle">
               <input
                 type="checkbox"
@@ -7505,7 +8731,185 @@ function SettingsDialog({
               </span>
             </label>
           </section>
+          )}
 
+          {activeSettingsSection === 'composer' && (
+          <form className="settings-section" aria-label="Composer settings" onSubmit={handleComposerSubmit}>
+            <div className="settings-section__header">
+              <div>
+                <span>Composer</span>
+                <strong>{composerProviderLabel}</strong>
+              </div>
+              <span className="settings-accountBadge">{composerStatusLabel}</span>
+            </div>
+
+            <div className="settings-runtimeGrid" aria-label="Composer runtime">
+              <div className="settings-runtimeItem">
+                <span>Provider</span>
+                <strong>{composerProviderLabel}</strong>
+              </div>
+              <div className="settings-runtimeItem">
+                <span>Model</span>
+                <strong>{composerModelLabel}</strong>
+              </div>
+              <div className="settings-runtimeItem">
+                <span>Access</span>
+                <strong>{composerAccessLabel}</strong>
+              </div>
+              <div className="settings-runtimeItem">
+                <span>Source</span>
+                <strong>{composerSourceLabel}</strong>
+              </div>
+            </div>
+
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Provider</span>
+              <div className="settings-choiceGrid settings-choiceGrid--composer" role="radiogroup" aria-label="Composer provider">
+                {composerProviderOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`settings-choice ${composerDraft.provider === option.value ? 'settings-choice--active' : ''}`}
+                    disabled={composerConfigBusy}
+                    onClick={() => updateComposerDraft('provider', option.value)}
+                    role="radio"
+                    aria-checked={composerDraft.provider === option.value}
+                  >
+                    <span
+                      className={`settings-choice__dot settings-choice__dot--provider-${option.value}`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-profileGrid">
+              <label className="settings-field">
+                <span>Model</span>
+                <input
+                  value={composerDraft.model}
+                  onChange={(event) => updateComposerDraft('model', event.target.value)}
+                  placeholder={getComposerModelPlaceholder(composerDraft.provider)}
+                  disabled={composerConfigBusy || composerDraft.provider === 'server'}
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Ollama URL</span>
+                <input
+                  value={composerDraft.ollamaBaseUrl}
+                  onChange={(event) => updateComposerDraft('ollamaBaseUrl', event.target.value)}
+                  placeholder="http://127.0.0.1:11434"
+                  disabled={composerConfigBusy || composerDraft.provider !== 'ollama'}
+                />
+              </label>
+            </div>
+
+            <div className="settings-profileGrid">
+              <label className="settings-field">
+                <span>Gemini API key</span>
+                <input
+                  autoComplete="off"
+                  type="password"
+                  value={composerDraft.apiKey}
+                  onChange={(event) => updateComposerDraft('apiKey', event.target.value)}
+                  placeholder={composerSettingsState.settings.apiKeyConfigured ? 'Saved key active' : 'Paste API key'}
+                  disabled={composerConfigBusy || composerDraft.provider !== 'gemini'}
+                />
+              </label>
+
+              <label className="settings-toggle settings-toggle--inline">
+                <input
+                  type="checkbox"
+                  checked={composerDraft.clearApiKey}
+                  disabled={composerConfigBusy || !composerSettingsState.settings.apiKeyConfigured}
+                  onChange={(event) => updateComposerDraft('clearApiKey', event.target.checked)}
+                />
+                <span>
+                  <strong>Clear saved key</strong>
+                  <small>{composerSettingsState.settings.apiKeyConfigured ? 'Remove the stored key on save.' : 'No stored key.'}</small>
+                </span>
+              </label>
+            </div>
+
+            <div className="settings-choiceBlock">
+              <span className="settings-choiceBlock__label">Prompt</span>
+              <div className="settings-choiceGrid settings-choiceGrid--prompt" role="radiogroup" aria-label="Composer prompt mode">
+                <button
+                  type="button"
+                  className={`settings-choice ${composerDraft.promptMode === 'system' ? 'settings-choice--active' : ''}`}
+                  disabled={composerConfigBusy}
+                  onClick={() => updateComposerDraft('promptMode', 'system')}
+                  role="radio"
+                  aria-checked={composerDraft.promptMode === 'system'}
+                >
+                  <span className="settings-choice__dot settings-choice__dot--provider-server" aria-hidden="true" />
+                  <span>
+                    <strong>System prompt</strong>
+                    <small>Use Essence Composer's built-in instruction.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`settings-choice ${composerDraft.promptMode === 'custom' ? 'settings-choice--active' : ''}`}
+                  disabled={composerConfigBusy}
+                  onClick={() => updateComposerDraft('promptMode', 'custom')}
+                  role="radio"
+                  aria-checked={composerDraft.promptMode === 'custom'}
+                >
+                  <span className="settings-choice__dot settings-choice__dot--provider-gemini" aria-hidden="true" />
+                  <span>
+                    <strong>Custom prompt</strong>
+                    <small>Write your own Composer instruction.</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <label className="settings-field">
+              <span>{composerDraft.promptMode === 'system' ? 'System prompt' : 'Custom prompt'}</span>
+              <textarea
+                value={composerPromptValue}
+                readOnly={composerDraft.promptMode === 'system'}
+                onChange={(event) => updateComposerDraft('customPrompt', event.target.value)}
+                placeholder="Describe how Composer should think, write, and respond."
+                disabled={composerConfigBusy && composerDraft.promptMode === 'custom'}
+              />
+            </label>
+
+            {composerSettingsError && <div className="settings-error">{composerSettingsError}</div>}
+            {composerSettingsMessage && <div className="settings-success">{composerSettingsMessage}</div>}
+
+            <p className="settings-note">{composerSettingsNote}</p>
+
+            <div className="settings-section__actions">
+              <button type="button" className="ghost-button" onClick={onComposerRefresh} disabled={composerConfigBusy}>
+                <Icon name="redo" />
+                <span>Refresh</span>
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={onComposerTest}
+                disabled={composerConfigBusy || composerSettingsState.loadState !== 'ready'}
+              >
+                <Icon name="spark" />
+                <span>{isComposerTesting ? 'Testing...' : 'Test'}</span>
+              </button>
+              <button type="submit" className="primary-button" disabled={composerConfigBusy}>
+                <Icon name="check" />
+                <span>{isComposerSaving ? 'Saving...' : 'Save Composer'}</span>
+              </button>
+            </div>
+          </form>
+          )}
+
+          {activeSettingsSection === 'workspace' && (
           <section className="settings-section" aria-label="Data and account settings">
             <div className="settings-section__header">
               <div>
@@ -7549,7 +8953,9 @@ function SettingsDialog({
               )}
             </div>
           </section>
+          )}
 
+          {activeSettingsSection === 'about' && (
           <section className="settings-section settings-section--about" aria-label="About Essence">
             <div className="settings-section__header">
               <div>
@@ -7565,10 +8971,280 @@ function SettingsDialog({
               </div>
             </dl>
           </section>
+          )}
+          </div>
         </div>
       </section>
     </div>
   )
+}
+
+function getComposerSettingsDraft(state: ComposerSettingsState): ComposerSettingsDraft {
+  return {
+    apiKey: '',
+    clearApiKey: false,
+    customPrompt: state.settings.customPrompt,
+    model: state.settings.model,
+    ollamaBaseUrl: state.settings.ollamaBaseUrl,
+    promptMode: state.settings.promptMode,
+    provider: state.settings.provider,
+  }
+}
+
+function getComposerModelPlaceholder(provider: ComposerProviderValue) {
+  switch (provider) {
+    case 'gemini':
+      return 'gemini-3-flash-preview'
+    case 'ollama':
+      return 'llama3.1'
+    case 'gemini-cli':
+      return 'Gemini CLI default'
+    case 'codex-cli':
+      return 'Codex CLI default'
+    default:
+      return 'Server default'
+  }
+}
+
+function getComposerRuntimeLabel(providerValue: string) {
+  const provider = providerValue.toLowerCase()
+
+  if (provider === 'ollama') {
+    return 'Ollama'
+  }
+
+  if (provider === 'gemini') {
+    return 'Gemini API'
+  }
+
+  if (provider === 'gemini-cli') {
+    return 'Gemini CLI'
+  }
+
+  if (provider === 'codex-cli') {
+    return 'Codex CLI'
+  }
+
+  return 'Composer'
+}
+
+function getComposerProviderLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return getComposerProviderLabelFromProvider(runtime.provider)
+  }
+
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'API unavailable'
+  }
+
+  return getComposerProviderLabelFromProvider(readiness.aiProvider)
+}
+
+function getComposerProviderLabelFromProvider(providerValue: string) {
+  const provider = providerValue.toLowerCase()
+
+  if (provider === 'ollama') {
+    return 'Ollama local'
+  }
+
+  if (provider === 'gemini') {
+    return 'Gemini API'
+  }
+
+  if (provider === 'gemini-cli') {
+    return 'Gemini CLI local'
+  }
+
+  if (provider === 'codex-cli') {
+    return 'Codex CLI local'
+  }
+
+  if (provider === 'disabled') {
+    return 'Disabled'
+  }
+
+  return humanizeStatusLabel(providerValue)
+}
+
+function getComposerModelLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return runtime.model || 'Not reported'
+  }
+
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'Unavailable'
+  }
+
+  if (readiness.aiComposer === 'disabled' || readiness.aiProvider === 'disabled') {
+    return 'Disabled'
+  }
+
+  return readiness.aiModel || 'Not reported'
+}
+
+function getComposerStatusLabel(readiness: ApiReadinessState, runtime: ComposerRuntimeState | null) {
+  if (runtime) {
+    return getComposerStatusLabelFromStatus(runtime.status)
+  }
+
+  if (readiness.loadState === 'loading') {
+    return 'Checking'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return 'Unavailable'
+  }
+
+  return getComposerStatusLabelFromStatus(readiness.aiComposer)
+}
+
+function getComposerStatusLabelFromStatus(status: string) {
+  switch (status) {
+    case 'ok':
+      return 'Ready'
+    case 'missing':
+      return 'Missing config'
+    case 'invalid':
+      return 'Invalid config'
+    case 'disabled':
+      return 'Disabled'
+    default:
+      return humanizeStatusLabel(status)
+  }
+}
+
+function getComposerAccessLabel(
+  readiness: ApiReadinessState,
+  composerAvailable: boolean,
+  runtime: ComposerRuntimeState | null,
+) {
+  if (runtime?.access === 'local-enabled') {
+    return 'Local workspace'
+  }
+
+  if (runtime) {
+    return composerAvailable ? 'Approved account' : 'Invite required'
+  }
+
+  if (readiness.loadState === 'loading') {
+    return 'Checking...'
+  }
+
+  if (readiness.loadState === 'unavailable') {
+    return composerAvailable ? 'Enabled locally' : 'Unavailable'
+  }
+
+  if (readiness.aiAccess === 'local-enabled') {
+    return 'Local workspace'
+  }
+
+  return composerAvailable ? 'Approved account' : 'Invite required'
+}
+
+function getComposerSettingsNote(
+  readiness: ApiReadinessState,
+  composerAvailable: boolean,
+  runtime: ComposerRuntimeState | null,
+) {
+  const provider = runtime?.provider ?? readiness.aiProvider
+  const status = runtime?.status ?? readiness.aiComposer
+
+  if (!runtime && readiness.loadState === 'loading') {
+    return 'Checking the API runtime so Settings can show which Composer provider is active.'
+  }
+
+  if (!runtime && readiness.loadState === 'unavailable') {
+    return 'The web app cannot reach the API right now. Start the API server to verify the active Composer provider.'
+  }
+
+  if (status === 'disabled') {
+    return 'Composer API calls are disabled. Manual notes and local writing still work.'
+  }
+
+  if (provider === 'ollama') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Ollama model. The browser does not call Ollama directly.'
+      : 'The API is set to Ollama, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
+  }
+
+  if (provider === 'gemini') {
+    return 'Composer requests go through the Essence API to Gemini. The Gemini key stays server-only.'
+  }
+
+  if (provider === 'gemini-cli') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Gemini CLI. The browser never starts CLI processes directly.'
+      : 'The API is set to Gemini CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
+  }
+
+  if (provider === 'codex-cli') {
+    return composerAvailable
+      ? 'Composer requests go through the Essence API to your local Codex CLI in a read-only, non-interactive run.'
+      : 'The API is set to Codex CLI, but the local Composer browser flag is off. Enable it or sign in with an approved account.'
+  }
+
+  return 'Composer provider details come from the API readiness check.'
+}
+
+function humanizeStatusLabel(value: string) {
+  const label = value
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return label ? label.replace(/\b\w/g, (character) => character.toUpperCase()) : 'Unknown'
+}
+
+function getComposerDockContextLabel({
+  activeNote,
+  hasTextSelection,
+  selectedBlockText,
+  view,
+}: {
+  activeNote: Note | null
+  hasTextSelection: boolean
+  selectedBlockText: string
+  view: ViewMode
+}) {
+  if (activeNote && view === 'editor') {
+    if (hasTextSelection) {
+      return 'Selected text'
+    }
+
+    return selectedBlockText.trim() ? 'Selected block' : activeNote.title || 'Current note'
+  }
+
+  return 'New draft'
+}
+
+function inferDraftCategoryFromPrompt(prompt: string): AiDraftCategory {
+  const normalizedPrompt = prompt.toLowerCase()
+
+  if (/\bquote|aphorism\b/.test(normalizedPrompt)) {
+    return 'quote'
+  }
+
+  if (/\bresearch|hypothesis|method|brief\b/.test(normalizedPrompt)) {
+    return 'research-topic'
+  }
+
+  if (/\barticle|explainer|guide\b/.test(normalizedPrompt)) {
+    return 'article'
+  }
+
+  return 'essay'
+}
+
+function getComposerDockDraftModeLabel(mode: ComposerDockDraftMode) {
+  return composerDockDraftModes.find((option) => option.value === mode)?.label ?? 'Draft'
 }
 
 function QuickSwitcher({
@@ -7826,6 +9502,13 @@ function Icon({ name }: { name: string }) {
           <path d="M14 4v4h4" />
           <path d="M8 14h8" />
           <path d="M12 10v8" />
+        </Glyph>
+      )
+    case 'copy':
+      return (
+        <Glyph>
+          <rect x="8" y="8" width="11" height="11" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
         </Glyph>
       )
     case 'edit':
@@ -8127,6 +9810,14 @@ function loadStoredAmbienceMode(): AmbienceMode {
   return isAmbienceMode(raw) ? raw : 'subtle'
 }
 
+function loadStoredAmbienceIntensity() {
+  if (typeof window === 'undefined') {
+    return defaultAmbienceIntensity
+  }
+
+  return normalizeAmbienceIntensity(window.localStorage.getItem(ambienceIntensityStorageKey))
+}
+
 function loadStoredColorTheme(): ColorTheme {
   if (typeof window === 'undefined') {
     return 'starlight'
@@ -8194,11 +9885,79 @@ function isLibrarySortMode(value: unknown): value is LibrarySortMode {
 }
 
 function isAmbienceMode(value: unknown): value is AmbienceMode {
-  return value === 'still' || value === 'subtle' || value === 'cosmic'
+  return value === 'still' || value === 'subtle' || value === 'cosmic' || value === 'observatory'
 }
 
 function isColorTheme(value: unknown): value is ColorTheme {
   return value === 'starlight' || value === 'moonlit' || value === 'daylight'
+}
+
+function normalizeAmbienceIntensity(value: unknown) {
+  const numberValue = typeof value === 'number' ? value : Number(value)
+
+  if (!Number.isFinite(numberValue)) {
+    return defaultAmbienceIntensity
+  }
+
+  return Math.min(ambienceIntensityMaximum, Math.max(ambienceIntensityMinimum, Math.round(numberValue)))
+}
+
+function getAmbienceStyle({
+  colorTheme,
+  intensity,
+  mode,
+  zenMode,
+}: {
+  colorTheme: ColorTheme
+  intensity: number
+  mode: AmbienceMode
+  zenMode: boolean
+}) {
+  const tokens = getZenAdjustedAmbienceTokens(ambienceTokensByTheme[colorTheme][mode], zenMode)
+  const normalizedIntensity = mode === 'still' ? 0 : normalizeAmbienceIntensity(intensity) / 100
+  const cappedIntensity = colorTheme === 'daylight' ? normalizedIntensity * 0.72 : normalizedIntensity
+  const quietSurfaceAlpha = colorTheme === 'daylight' ? 0.97 : 0.94
+  const surfaceAlpha =
+    mode === 'still'
+      ? tokens.surfaceAlpha
+      : quietSurfaceAlpha - (quietSurfaceAlpha - tokens.surfaceAlpha) * cappedIntensity
+
+  return {
+    '--ambience-intensity': formatCssNumber(cappedIntensity),
+    '--cosmic-breathe-high': formatCssNumber(tokens.breatheHigh * cappedIntensity),
+    '--cosmic-breathe-low': formatCssNumber(tokens.breatheLow * cappedIntensity),
+    '--cosmic-content-twinkle-high': formatCssNumber(tokens.contentTwinkleHigh * cappedIntensity),
+    '--cosmic-content-twinkle-low': formatCssNumber(tokens.contentTwinkleLow * cappedIntensity),
+    '--cosmic-opacity': formatCssNumber(tokens.opacity * cappedIntensity),
+    '--cosmic-pulse-high': formatCssNumber(tokens.pulseHigh * cappedIntensity),
+    '--cosmic-pulse-low': formatCssNumber(tokens.pulseLow * cappedIntensity),
+    '--cosmic-star-opacity': formatCssNumber(tokens.starOpacity * cappedIntensity),
+    '--cosmic-surface-alpha': formatCssNumber(surfaceAlpha),
+    '--cosmic-twinkle-opacity': formatCssNumber(tokens.twinkleOpacity * cappedIntensity),
+  } as CSSProperties
+}
+
+function getZenAdjustedAmbienceTokens(tokens: AmbienceTokens, zenMode: boolean): AmbienceTokens {
+  if (!zenMode) {
+    return tokens
+  }
+
+  return {
+    breatheHigh: Math.min(tokens.breatheHigh, 0.09),
+    breatheLow: Math.min(tokens.breatheLow, 0.04),
+    contentTwinkleHigh: Math.min(tokens.contentTwinkleHigh, 0.11),
+    contentTwinkleLow: Math.min(tokens.contentTwinkleLow, 0.05),
+    opacity: Math.min(tokens.opacity, 0.14),
+    pulseHigh: Math.min(tokens.pulseHigh, 0.12),
+    pulseLow: Math.min(tokens.pulseLow, 0.06),
+    starOpacity: Math.min(tokens.starOpacity, 0.12),
+    surfaceAlpha: Math.max(tokens.surfaceAlpha, 0.9),
+    twinkleOpacity: Math.min(tokens.twinkleOpacity, 0.06),
+  }
+}
+
+function formatCssNumber(value: number) {
+  return value.toFixed(3).replace(/\.?0+$/, '')
 }
 
 function loadAuthGateDismissed() {
@@ -8263,6 +10022,183 @@ function getApiFetchCredentials(): RequestCredentials {
 
 function getApiUrl(path: string) {
   return apiBaseUrl ? `${apiBaseUrl}${path}` : path
+}
+
+async function fetchApiReadiness(): Promise<ApiReadinessState> {
+  const response = await fetch(getApiUrl('/api/ready'), {
+    credentials: apiFetchCredentials,
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`API readiness failed with status ${response.status}.`)
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    checks?: Record<string, unknown>
+    ok?: unknown
+  }
+  const checks = payload.checks && typeof payload.checks === 'object' ? payload.checks : {}
+
+  return {
+    aiAccess: normalizeReadinessField(checks.aiAccess, 'unknown'),
+    aiComposer: normalizeReadinessField(checks.aiComposer, 'unknown'),
+    aiModel: normalizeReadinessField(checks.aiModel, ''),
+    aiProvider: normalizeReadinessField(checks.aiProvider, 'unknown'),
+    loadState: 'ready',
+    ok: payload.ok === true,
+  }
+}
+
+async function fetchRemoteComposerSettings(): Promise<ComposerSettingsState> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings'), {
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to load Composer settings: ${response.status}`)
+  }
+
+  return normalizeRemoteComposerSettings(await response.json().catch(() => ({})))
+}
+
+async function updateRemoteComposerSettings(draft: ComposerSettingsDraft): Promise<ComposerSettingsState> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings'), {
+    method: 'PUT',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(draft),
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to update Composer settings: ${response.status}`)
+  }
+
+  return normalizeRemoteComposerSettings(await response.json().catch(() => ({})))
+}
+
+async function testRemoteComposerSettings(): Promise<{ message: string; runtime: ComposerRuntimeState | null }> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/composer/settings/test'), {
+    method: 'POST',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Failed to test Composer settings: ${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as { result?: unknown; runtime?: unknown }
+  const result = payload.result && typeof payload.result === 'object' ? payload.result as { message?: unknown } : {}
+
+  return {
+    message: typeof result.message === 'string' && result.message.trim() ? result.message.trim() : 'Composer runtime checked.',
+    runtime: normalizeRemoteComposerRuntime(payload.runtime),
+  }
+}
+
+function normalizeRemoteComposerSettings(payload: unknown): ComposerSettingsState {
+  const candidate = (payload ?? {}) as { runtime?: unknown; settings?: unknown }
+  const settings = candidate.settings && typeof candidate.settings === 'object'
+    ? candidate.settings as Record<string, unknown>
+    : {}
+
+  return {
+    error: null,
+    loadState: 'ready',
+    runtime: normalizeRemoteComposerRuntime(candidate.runtime),
+    settings: {
+      apiKeyConfigured: settings.apiKeyConfigured === true,
+      apiKeyProvider: normalizeStringValue(settings.apiKeyProvider),
+      apiKeyUpdatedAt: normalizeNullableStringValue(settings.apiKeyUpdatedAt),
+      customPrompt: normalizeStringValue(settings.customPrompt),
+      model: normalizeStringValue(settings.model),
+      ollamaBaseUrl: normalizeStringValue(settings.ollamaBaseUrl),
+      promptMode: normalizeComposerPromptModeValue(settings.promptMode),
+      provider: normalizeComposerProviderValue(settings.provider),
+      systemPrompt: normalizeStringValue(settings.systemPrompt),
+      updatedAt: normalizeNullableStringValue(settings.updatedAt),
+    },
+  }
+}
+
+function normalizeRemoteComposerRuntime(value: unknown): ComposerRuntimeState | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const candidate = value as Record<string, unknown>
+  const provider = normalizeStringValue(candidate.provider).toLowerCase()
+
+  return {
+    access: normalizeStringValue(candidate.access, 'unknown'),
+    apiKeyConfigured: candidate.apiKeyConfigured === true,
+    localOnly: candidate.localOnly === true,
+    model: normalizeStringValue(candidate.model),
+    promptMode: normalizeComposerPromptModeValue(candidate.promptMode),
+    provider: isComposerRuntimeProvider(provider) ? provider : 'unknown',
+    source: normalizeStringValue(candidate.source, 'environment'),
+    status: normalizeStringValue(candidate.status, 'unknown'),
+  }
+}
+
+function normalizeComposerProviderValue(value: unknown): ComposerProviderValue {
+  const provider = normalizeStringValue(value).toLowerCase()
+
+  if (
+    provider === 'gemini' ||
+    provider === 'ollama' ||
+    provider === 'gemini-cli' ||
+    provider === 'codex-cli'
+  ) {
+    return provider
+  }
+
+  return 'server'
+}
+
+function normalizeComposerPromptModeValue(value: unknown): ComposerPromptMode {
+  return normalizeStringValue(value).toLowerCase() === 'custom' ? 'custom' : 'system'
+}
+
+function isComposerRuntimeProvider(
+  value: string,
+): value is Exclude<ComposerProviderValue, 'server'> | 'disabled' | 'unknown' {
+  return (
+    value === 'gemini' ||
+    value === 'ollama' ||
+    value === 'gemini-cli' ||
+    value === 'codex-cli' ||
+    value === 'disabled' ||
+    value === 'unknown'
+  )
+}
+
+function normalizeStringValue(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+function normalizeNullableStringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizeReadinessField(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
 function getWorkspaceStorageKey(user: AuthUser | null) {
@@ -8460,7 +10396,9 @@ async function generateRemoteAiDraft(request: {
 async function generateRemoteAiAssist(request: {
   action: AiAssistAction
   context: ComposerRequestContext
+  instruction?: string
   note: {
+    contextPack?: ComposerNoteContextPack | null
     selectedText: string
     status: string
     tags: string[]
@@ -8486,6 +10424,38 @@ async function generateRemoteAiAssist(request: {
   const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
 
   return normalizeRemoteAiAssistResult(payload.result, request.action)
+}
+
+async function generateRemoteAiChat(request: {
+  includeNoteContext: boolean
+  message: string
+  note?: {
+    contextPack?: ComposerNoteContextPack | null
+    selectedText: string
+    status: string
+    tags: string[]
+    text: string
+    title: string
+  }
+}): Promise<AiChatResult> {
+  const authHeaders = await getRemoteAuthHeaders()
+  const response = await fetch(getApiUrl('/api/ai/chat'), {
+    method: 'POST',
+    credentials: apiFetchCredentials,
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    throw await createRemoteRequestError(response, `Chat failed with status ${response.status}.`)
+  }
+
+  const payload = await response.json().catch(() => ({})) as { result?: unknown; error?: unknown }
+
+  return normalizeRemoteAiChatResult(payload.result)
 }
 
 async function persistRemoteAppState(
@@ -8521,7 +10491,7 @@ function normalizeRemoteAiAssistResult(rawResult: unknown, fallbackAction: AiAss
   const actionLabel =
     typeof candidate.actionLabel === 'string' && candidate.actionLabel.trim()
       ? candidate.actionLabel.trim()
-      : aiAssistActions.find((option) => option.value === action)?.label ?? 'Composer'
+      : getAiAssistActionLabel(action)
   const blocks = Array.isArray(candidate.blocks)
     ? candidate.blocks.map(normalizeRemoteAiDraftBlock).filter((block): block is AiDraftBlock => block !== null)
     : []
@@ -8533,6 +10503,16 @@ function normalizeRemoteAiAssistResult(rawResult: unknown, fallbackAction: AiAss
     canReplaceSelection: Boolean(candidate.canReplaceSelection),
     summary: typeof candidate.summary === 'string' ? candidate.summary.trim() : '',
     title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : actionLabel,
+  }
+}
+
+function normalizeRemoteAiChatResult(rawResult: unknown): AiChatResult {
+  const candidate = (rawResult ?? {}) as Partial<AiChatResult>
+  const text = typeof candidate.text === 'string' ? candidate.text.trim() : ''
+
+  return {
+    text: text || 'Chat returned an empty response.',
+    title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Chat response',
   }
 }
 
@@ -8559,6 +10539,14 @@ function normalizeRemoteAiDraft(rawDraft: unknown): AiDraft {
       : ['ai-draft'],
     title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Untitled AI Draft',
   }
+}
+
+function getAiAssistActionLabel(action: AiAssistAction) {
+  if (action === 'custom') {
+    return 'Custom request'
+  }
+
+  return aiAssistActions.find((option) => option.value === action)?.label ?? 'Composer'
 }
 
 function normalizeRemoteAiDraftBlock(rawBlock: unknown): AiDraftBlock | null {
@@ -8656,13 +10644,15 @@ function createDraftComposerHistoryEntry(
 
 function createAssistComposerHistoryEntry(
   result: AiAssistResult,
-  context: { action: AiAssistAction; noteTitle: string; selectedText: string },
+  context: { action: AiAssistAction; noteTitle: string; prompt?: string; selectedText: string },
 ): ComposerHistoryEntry {
+  const prompt = context.prompt?.trim() || context.selectedText || context.noteTitle
+
   return {
     id: generateId('composer'),
     mode: 'assist',
     createdAt: new Date().toISOString(),
-    prompt: context.selectedText || context.noteTitle,
+    prompt,
     sourceTitle: context.noteTitle,
     title: result.title,
     summary: result.summary,
@@ -8706,13 +10696,23 @@ function cloneAiDraftBlocks(blocks: AiDraftBlock[]) {
 
 function buildComposerRequestContext(
   history: ComposerHistoryEntry[],
-  options: { activeNoteTitle?: string | null; targetText: string },
+  options: { activeNoteTitle?: string | null; scope?: ComposerRequestContextScope; targetText: string },
 ): ComposerRequestContext {
+  const scope = options.scope ?? 'relevant'
+
+  if (scope === 'none') {
+    return { recent: [] }
+  }
+
   const targetTerms = getComposerContextTerms(options.targetText)
   const normalizedActiveTitle = normalizeComposerContextText(options.activeNoteTitle ?? '')
   const byId = new Map<string, ComposerHistoryEntry>()
+  const eligibleHistory =
+    scope === 'active-note' && normalizedActiveTitle
+      ? history.filter((entry) => normalizeComposerContextText(entry.sourceTitle) === normalizedActiveTitle)
+      : history
 
-  history
+  eligibleHistory
     .map((entry, index) => ({
       entry,
       index,
@@ -8725,7 +10725,13 @@ function buildComposerRequestContext(
       byId.set(entry.id, entry)
     })
 
-  for (const entry of history) {
+  if (scope === 'active-note') {
+    return {
+      recent: [...byId.values()].slice(0, composerRequestContextLimit).map(createComposerContextItem),
+    }
+  }
+
+  for (const entry of eligibleHistory) {
     if (byId.size >= composerRequestContextLimit) {
       break
     }
@@ -8775,6 +10781,157 @@ function createComposerContextItem(entry: ComposerHistoryEntry): ComposerContext
   }
 }
 
+function buildComposerNoteContextPack({
+  backlinks,
+  collectionNameById,
+  foldersById,
+  linkedNotes,
+  note,
+  selectedBlockId,
+}: {
+  backlinks: Note[]
+  collectionNameById: Record<CollectionId, string>
+  foldersById: Record<string, Folder>
+  linkedNotes: Note[]
+  note: Note
+  selectedBlockId: string | null
+}): ComposerNoteContextPack {
+  const selectedBlockIndex = selectedBlockId ? note.blocks.findIndex((block) => block.id === selectedBlockId) : -1
+  const windowStart = selectedBlockIndex >= 0 ? Math.max(0, selectedBlockIndex - 2) : 0
+  const windowEnd =
+    selectedBlockIndex >= 0 ? Math.min(note.blocks.length, selectedBlockIndex + 3) : Math.min(note.blocks.length, 4)
+  const neighboringBlocks = note.blocks
+    .slice(windowStart, windowEnd)
+    .map((block, index) => {
+      const blockIndex = windowStart + index
+      let role: ComposerNoteContextBlock['role'] = 'after'
+
+      if (selectedBlockIndex === -1) {
+        role = index === 0 ? 'selected' : 'after'
+      } else if (blockIndex < selectedBlockIndex) {
+        role = 'before'
+      } else if (blockIndex === selectedBlockIndex) {
+        role = 'selected'
+      }
+
+      return createComposerNoteContextBlock(block, role)
+    })
+    .filter((block): block is ComposerNoteContextBlock => Boolean(block))
+
+  return {
+    backlinks: backlinks.slice(0, 5).map(createComposerNoteContextReference),
+    blockCount: note.blocks.length,
+    collection: collectionNameById[note.collectionId] ?? humanizeCollectionId(note.collectionId),
+    currentHeading: selectedBlockIndex >= 0 ? getComposerCurrentHeading(note.blocks, selectedBlockIndex) : '',
+    folderPath: getFolderPathLabel(note.folderId, foldersById),
+    linkedNotes: linkedNotes.slice(0, 5).map(createComposerNoteContextReference),
+    neighboringBlocks,
+    outline: getComposerNoteOutline(note.blocks),
+    sources: note.sources
+      .map(createComposerNoteContextSource)
+      .filter((source): source is ComposerNoteContextSource => Boolean(source))
+      .slice(0, 6),
+    wordCount: countWordsFromBlocks(note.blocks),
+  }
+}
+
+function createComposerNoteContextBlock(
+  block: NoteBlock,
+  role: ComposerNoteContextBlock['role'],
+): ComposerNoteContextBlock | null {
+  const text = summarizeInlineText(getPlainTextFromBlocks([block]), 900)
+
+  if (!text) {
+    return null
+  }
+
+  return {
+    role,
+    text,
+    type: block.type,
+  }
+}
+
+function createComposerNoteContextReference(note: Note): ComposerNoteContextReference {
+  return {
+    status: summarizeInlineText(note.status, 60),
+    summary: summarizeInlineText(summarizeNotePreview(note), 260),
+    title: summarizeInlineText(note.title, 160),
+  }
+}
+
+function createComposerNoteContextSource(source: NoteSource): ComposerNoteContextSource | null {
+  const title = summarizeInlineText(source.title, 180)
+  const author = summarizeInlineText(source.author, 120)
+  const year = summarizeInlineText(source.year, 40)
+  const url = summarizeInlineText(source.url, 240)
+
+  if (!title && !author && !year && !url) {
+    return null
+  }
+
+  return {
+    author,
+    sourceType: source.sourceType,
+    title,
+    url,
+    year,
+  }
+}
+
+function getComposerNoteOutline(blocks: NoteBlock[]) {
+  return blocks
+    .filter((block) => block.type === 'heading')
+    .map((block) => summarizeInlineText(block.text ?? '', 120))
+    .filter(Boolean)
+    .slice(0, 12)
+}
+
+function getComposerCurrentHeading(blocks: NoteBlock[], selectedBlockIndex: number) {
+  for (let index = selectedBlockIndex; index >= 0; index -= 1) {
+    const block = blocks[index]
+
+    if (block?.type === 'heading') {
+      return summarizeInlineText(block.text ?? '', 120)
+    }
+  }
+
+  return ''
+}
+
+function getComposerContextSummary(contextPack: ComposerNoteContextPack | null, selectedText = '') {
+  if (!contextPack) {
+    return ''
+  }
+
+  const pieces = ['full note']
+  const selectedWordCount = countWordsFromText(selectedText)
+
+  if (selectedWordCount > 0) {
+    pieces.push(`${selectedWordCount} selected words`)
+  }
+
+  if (contextPack.neighboringBlocks.some((block) => block.role === 'selected')) {
+    pieces.push('nearby block')
+  }
+
+  if (contextPack.outline.length > 0) {
+    pieces.push(`${contextPack.outline.length} headings`)
+  }
+
+  if (contextPack.sources.length > 0) {
+    pieces.push(`${contextPack.sources.length} sources`)
+  }
+
+  const relationshipCount = contextPack.linkedNotes.length + contextPack.backlinks.length
+
+  if (relationshipCount > 0) {
+    pieces.push(`${relationshipCount} links`)
+  }
+
+  return `Context: ${pieces.join(' + ')}`
+}
+
 function getPlainTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
   return blocks
     .map((block) => {
@@ -8787,6 +10944,65 @@ function getPlainTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function getReadableTextFromAiDraftBlocks(blocks: AiDraftBlock[]) {
+  return blocks
+    .map((block) => {
+      if (block.type === 'bullet-list') {
+        return (block.items ?? [])
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => `- ${item}`)
+          .join('\n')
+      }
+
+      return `${block.text ?? ''} ${block.citation ?? ''}`.trim()
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function formatComposerAssistForClipboard(result: AiAssistResult, readableText: string) {
+  return [result.title, result.summary, readableText].map((part) => part.trim()).filter(Boolean).join('\n\n')
+}
+
+function formatComposerDraftForClipboard(draft: AiDraft, readableText: string) {
+  const tags = draft.tags.length > 0 ? `Tags: ${draft.tags.join(', ')}` : ''
+
+  return [draft.title, draft.summary, readableText, tags].map((part) => part.trim()).filter(Boolean).join('\n\n')
+}
+
+async function copyTextToClipboard(value: string) {
+  const text = value.trim()
+
+  if (!text) {
+    return false
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // Fall back to a temporary textarea for desktop shells or restricted browser contexts.
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
 }
 
 function getComposerContextTerms(value: string) {
@@ -10259,7 +12475,11 @@ function normalizePreviewText(value: string) {
 }
 
 function countWordsFromBlocks(blocks: NoteBlock[]) {
-  const text = getPlainTextFromBlocks(blocks)
+  return countWordsFromText(getPlainTextFromBlocks(blocks))
+}
+
+function countWordsFromText(value: string) {
+  const text = value.replace(/\s+/g, ' ').trim()
 
   if (!text) {
     return 0
@@ -11442,7 +13662,8 @@ function isAiAssistAction(value: unknown): value is AiAssistAction {
     value === 'create-outline' ||
     value === 'study-questions' ||
     value === 'counterarguments' ||
-    value === 'reading-list'
+    value === 'reading-list' ||
+    value === 'custom'
   )
 }
 

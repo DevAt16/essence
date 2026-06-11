@@ -6,6 +6,9 @@ import { after, before, beforeEach, test } from 'node:test'
 import {
   app,
   clearRateLimitBucketsForTests,
+  createCodexCliExecArgsForTests,
+  createCodexCliOutputSchema,
+  formatGeminiCliErrorDetailForTests,
   setSupabaseOtpClientForTests,
 } from './index.mjs'
 import {
@@ -35,6 +38,7 @@ beforeEach(() => {
 })
 
 after(async () => {
+  await pool.query("delete from composer_settings where user_id = 'local'")
   await pool.query("delete from approved_users where email like 'gate1-test-%@example.com'")
   await pool.query("delete from users where email like 'gate1-test-%@example.com'")
 
@@ -81,6 +85,181 @@ test('ready endpoint verifies database readiness', async () => {
   assert.equal(response.status, 200)
   assert.equal(response.body.ok, true)
   assert.equal(response.body.checks.database, 'ok')
+  assert.equal(typeof response.body.checks.aiAccess, 'string')
+  assert.equal(typeof response.body.checks.aiModel, 'string')
+  assert.equal(typeof response.body.checks.aiProvider, 'string')
+})
+
+test('ready endpoint reports Gemini CLI Composer provider', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousGeminiCliModel = process.env.GEMINI_CLI_MODEL
+
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'gemini-cli'
+  process.env.GEMINI_CLI_MODEL = 'gemini-cli-test-model'
+
+  try {
+    const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
+
+    assert.equal(response.status, 200)
+    assert.equal(response.body.checks.aiComposer, 'ok')
+    assert.equal(response.body.checks.aiModel, 'gemini-cli-test-model')
+    assert.equal(response.body.checks.aiProvider, 'gemini-cli')
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('GEMINI_CLI_MODEL', previousGeminiCliModel)
+  }
+})
+
+test('ready endpoint reports Codex CLI Composer provider', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousCodexCliModel = process.env.CODEX_CLI_MODEL
+  const previousCodexCliReasoningEffort = process.env.CODEX_CLI_REASONING_EFFORT
+
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'codex-cli'
+  process.env.CODEX_CLI_MODEL = 'codex-cli-test-model'
+  process.env.CODEX_CLI_REASONING_EFFORT = 'high'
+
+  try {
+    const response = await apiRequest('/api/ready', undefined, { method: 'GET' })
+
+    assert.equal(response.status, 200)
+    assert.equal(response.body.checks.aiComposer, 'ok')
+    assert.equal(response.body.checks.aiModel, 'codex-cli-test-model')
+    assert.equal(response.body.checks.aiProvider, 'codex-cli')
+    assert.equal(response.body.checks.aiReasoningEffort, 'high')
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('CODEX_CLI_MODEL', previousCodexCliModel)
+    restoreEnvValue('CODEX_CLI_REASONING_EFFORT', previousCodexCliReasoningEffort)
+  }
+})
+
+test('Codex CLI args include model and reasoning effort config overrides', () => {
+  const args = createCodexCliExecArgsForTests({
+    model: 'gpt-5.5',
+    outputPath: 'response.json',
+    reasoningEffort: 'medium',
+    schemaPath: 'schema.json',
+  })
+
+  assert.deepEqual(args.slice(0, 2), ['exec', '--sandbox'])
+  assert.equal(args.at(-1), '-')
+  assert.ok(args.includes('--model'))
+  assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.5')
+  assert.ok(args.includes('--config'))
+  assert.equal(args[args.indexOf('--config') + 1], 'model_reasoning_effort="medium"')
+})
+
+test('Codex CLI output schema makes optional object fields nullable and required', () => {
+  const schema = createCodexCliOutputSchema({
+    type: 'object',
+    properties: {
+      blocks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['paragraph', 'heading', 'quote', 'bullet-list', 'code'],
+            },
+            text: {
+              type: 'string',
+            },
+            items: {
+              type: 'array',
+              items: {
+                type: 'string',
+              },
+            },
+            citation: {
+              type: 'string',
+            },
+          },
+          required: ['type'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['blocks'],
+    additionalProperties: false,
+  })
+
+  const blockSchema = schema.properties.blocks.items
+
+  assert.deepEqual(blockSchema.required, ['type', 'text', 'items', 'citation'])
+  assert.equal(blockSchema.properties.type.type, 'string')
+  assert.deepEqual(blockSchema.properties.text.type, ['string', 'null'])
+  assert.deepEqual(blockSchema.properties.items.type, ['array', 'null'])
+  assert.deepEqual(blockSchema.properties.citation.type, ['string', 'null'])
+})
+
+test('Gemini CLI expired API key errors are summarized for the UI', () => {
+  const detail = '\u001b[31m{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.LocalizedMessage","locale":"en-US","message":"API key expired. Please renew the API key."}],"code":400,"status":"Bad Request"}}\u001b[0m'
+
+  assert.equal(
+    formatGeminiCliErrorDetailForTests(detail),
+    'API key expired. Renew the Gemini API key used by Gemini CLI, then restart the Essence API.',
+  )
+})
+
+test('local Composer settings can override the environment provider', async () => {
+  const previousAiAllowLocalUser = process.env.AI_ALLOW_LOCAL_USER
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousAiProvider = process.env.AI_PROVIDER
+  const previousOllamaModel = process.env.OLLAMA_MODEL
+
+  process.env.AI_ALLOW_LOCAL_USER = 'true'
+  process.env.AI_ENABLED = 'true'
+  process.env.AI_PROVIDER = 'gemini'
+  process.env.OLLAMA_MODEL = 'env-ollama-model'
+
+  try {
+    await pool.query("delete from composer_settings where user_id = 'local'")
+
+    const saveResponse = await apiRequest(
+      '/api/composer/settings',
+      {
+        customPrompt: 'Use a direct, Socratic style with compact paragraphs and careful uncertainty.',
+        model: 'llama3.2',
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        promptMode: 'custom',
+        provider: 'ollama',
+      },
+      { method: 'PUT' },
+    )
+
+    assert.equal(saveResponse.status, 200)
+    assert.equal(saveResponse.body.settings.provider, 'ollama')
+    assert.equal(saveResponse.body.settings.model, 'llama3.2')
+    assert.equal(saveResponse.body.settings.promptMode, 'custom')
+    assert.match(saveResponse.body.settings.customPrompt, /Socratic style/)
+    assert.match(saveResponse.body.settings.systemPrompt, /Essence Composer/)
+    assert.equal(saveResponse.body.runtime.provider, 'ollama')
+    assert.equal(saveResponse.body.runtime.model, 'llama3.2')
+    assert.equal(saveResponse.body.runtime.promptMode, 'custom')
+    assert.equal(saveResponse.body.runtime.source, 'settings')
+    assert.equal(saveResponse.body.runtime.status, 'ok')
+
+    const getResponse = await apiRequest('/api/composer/settings', undefined, { method: 'GET' })
+
+    assert.equal(getResponse.status, 200)
+    assert.equal(getResponse.body.settings.provider, 'ollama')
+    assert.equal(getResponse.body.settings.promptMode, 'custom')
+    assert.equal(getResponse.body.runtime.provider, 'ollama')
+  } finally {
+    await pool.query("delete from composer_settings where user_id = 'local'")
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousAiAllowLocalUser)
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_PROVIDER', previousAiProvider)
+    restoreEnvValue('OLLAMA_MODEL', previousOllamaModel)
+  }
 })
 
 test('CORS preflight allows configured development origin', async () => {
@@ -226,35 +405,64 @@ test('revoked approved users cannot request sign-in links', async () => {
 })
 
 test('workspace endpoints reject unauthenticated requests', async () => {
-  const protectedRequests = [
-    ['GET', '/api/state'],
-    ['GET', '/api/search?q=test'],
-    ['GET', '/api/notes/note-test/revisions'],
-    ['PUT', '/api/profile', { displayName: 'Test User' }],
-    ['POST', '/api/ai/draft', { category: 'essay', topic: 'consciousness' }],
-    ['POST', '/api/ai/assist', {
-      action: 'continue-writing',
-      note: {
-        selectedText: '',
-        status: 'Draft',
-        tags: [],
-        text: 'A short note body',
-        title: 'Test note',
-      },
-    }],
-    ['PUT', '/api/state', {
-      state: {
-        activeNoteId: null,
-        composerHistory: [],
-        folders: [],
-        notes: [],
-      },
-    }],
-  ]
+  const previousLocalAiUser = process.env.AI_ALLOW_LOCAL_USER
 
-  for (const [method, path, body] of protectedRequests) {
-    const response = await apiRequest(path, body, { method })
-    assert.equal(response.status, 401, `${method} ${path}`)
+  process.env.AI_ALLOW_LOCAL_USER = 'false'
+
+  try {
+    const protectedRequests = [
+      ['GET', '/api/state'],
+      ['GET', '/api/search?q=test'],
+      ['GET', '/api/notes/note-test/revisions'],
+      ['PUT', '/api/profile', { displayName: 'Test User' }],
+      ['POST', '/api/ai/draft', { category: 'essay', topic: 'consciousness' }],
+      ['POST', '/api/ai/assist', {
+        action: 'continue-writing',
+        note: {
+          selectedText: '',
+          status: 'Draft',
+          tags: [],
+          text: 'A short note body',
+          title: 'Test note',
+        },
+      }],
+      ['PUT', '/api/state', {
+        state: {
+          activeNoteId: null,
+          composerHistory: [],
+          folders: [],
+          notes: [],
+        },
+      }],
+    ]
+
+    for (const [method, path, body] of protectedRequests) {
+      const response = await apiRequest(path, body, { method })
+      assert.equal(response.status, 401, `${method} ${path}`)
+    }
+  } finally {
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousLocalAiUser)
+  }
+})
+
+test('local Composer opt-in allows unauthenticated local AI requests', async () => {
+  const previousAiEnabled = process.env.AI_ENABLED
+  const previousLocalAiUser = process.env.AI_ALLOW_LOCAL_USER
+
+  process.env.AI_ENABLED = 'false'
+  process.env.AI_ALLOW_LOCAL_USER = 'true'
+
+  try {
+    const response = await apiRequest('/api/ai/draft', {
+      category: 'essay',
+      topic: 'consciousness',
+    })
+
+    assert.equal(response.status, 503)
+    assert.match(response.body.error, /disabled/i)
+  } finally {
+    restoreEnvValue('AI_ENABLED', previousAiEnabled)
+    restoreEnvValue('AI_ALLOW_LOCAL_USER', previousLocalAiUser)
   }
 })
 

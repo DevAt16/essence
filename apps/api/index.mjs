@@ -1,7 +1,10 @@
 import 'dotenv/config'
 
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -14,6 +17,7 @@ import {
   deleteUserSession,
   ensureSchema,
   getAppSnapshot,
+  getComposerSettings,
   getLocalUser,
   getNoteRevisions,
   getOrCreateExternalUser,
@@ -23,6 +27,7 @@ import {
   localUserId,
   pool,
   saveAppState,
+  saveComposerSettings,
   searchNotes,
   updateUserProfile,
 } from './db.mjs'
@@ -38,6 +43,52 @@ const supabaseAuthConfig = createSupabaseAuthConfig()
 const supabaseJwks = supabaseAuthConfig
   ? createRemoteJWKSet(new URL(`${supabaseAuthConfig.issuer}/.well-known/jwks.json`))
   : null
+
+class DisabledRealtimeWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+
+  CONNECTING = DisabledRealtimeWebSocket.CONNECTING
+  OPEN = DisabledRealtimeWebSocket.OPEN
+  CLOSING = DisabledRealtimeWebSocket.CLOSING
+  CLOSED = DisabledRealtimeWebSocket.CLOSED
+  binaryType = 'blob'
+  bufferedAmount = 0
+  extensions = ''
+  onclose = null
+  onerror = null
+  onmessage = null
+  onopen = null
+  protocol = ''
+  readyState = DisabledRealtimeWebSocket.CLOSED
+
+  constructor(url) {
+    this.url = url
+  }
+
+  addEventListener() {
+    return undefined
+  }
+
+  close() {
+    this.readyState = DisabledRealtimeWebSocket.CLOSED
+  }
+
+  dispatchEvent() {
+    return false
+  }
+
+  removeEventListener() {
+    return undefined
+  }
+
+  send() {
+    throw new Error('Realtime is disabled for the Essence API Supabase auth client.')
+  }
+}
+
 let supabaseOtpClient = createSupabaseOtpClient()
 
 app.disable('x-powered-by')
@@ -382,6 +433,51 @@ app.put('/api/profile', async (request, response, next) => {
   }
 })
 
+app.get('/api/composer/settings', async (request, response, next) => {
+  try {
+    const user = await requireComposerUser(request)
+    const settings = await getComposerSettings(user.id)
+    const runtime = await getEffectiveComposerConfig(user.id)
+
+    response.json(serializeComposerSettingsResponse(settings, runtime))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/composer/settings', async (request, response, next) => {
+  try {
+    const user = await requireComposerUser(request)
+    const normalizedSettings = normalizeComposerSettingsPayload(request.body)
+
+    if (!normalizedSettings.ok) {
+      response.status(400).json({ error: normalizedSettings.error })
+      return
+    }
+
+    const settings = await saveComposerSettings(user.id, normalizedSettings.settings)
+    const runtime = await getEffectiveComposerConfig(user.id)
+
+    response.json(serializeComposerSettingsResponse(settings, runtime))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/composer/settings/test', async (request, response, next) => {
+  try {
+    const user = await requireComposerUser(request)
+    enforceAiEnabled()
+
+    const runtime = await getEffectiveComposerConfig(user.id)
+    const result = await testComposerRuntime(runtime)
+
+    response.json({ result, runtime: serializeComposerRuntime(runtime) })
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.get('/api/notes/:noteId/revisions', async (request, response, next) => {
   try {
     const user = await requireAccountUser(request)
@@ -408,7 +504,7 @@ app.get('/api/search', async (request, response, next) => {
 
 app.post('/api/ai/draft', async (request, response, next) => {
   try {
-    const user = await requireAccountUser(request)
+    const user = await requireComposerUser(request)
     enforceAiEnabled()
     enforceRateLimit(request, 'ai-draft-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-draft-user', getAiRateLimitOptions(), user.id)
@@ -420,10 +516,11 @@ app.post('/api/ai/draft', async (request, response, next) => {
       return
     }
 
-    const rawDraft = await generateGeminiJson(
-      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext),
+    const runtime = await getEffectiveComposerConfig(user.id)
+    const rawDraft = await generateAiJson(
+      buildGeminiDraftPrompt(requestContext.topic, requestContext.meta, requestContext.composerContext, runtime.prompt),
       geminiDraftResponseSchema,
-      { temperature: 0.72 },
+      { runtime, temperature: 0.72, userId: user.id },
     )
     const draft = normalizeAiDraft(rawDraft, requestContext)
 
@@ -435,7 +532,7 @@ app.post('/api/ai/draft', async (request, response, next) => {
 
 app.post('/api/ai/assist', async (request, response, next) => {
   try {
-    const user = await requireAccountUser(request)
+    const user = await requireComposerUser(request)
     enforceAiEnabled()
     enforceRateLimit(request, 'ai-assist-ip', getAiRateLimitOptions())
     enforceRateLimit(request, 'ai-assist-user', getAiRateLimitOptions(), user.id)
@@ -447,14 +544,46 @@ app.post('/api/ai/assist', async (request, response, next) => {
       return
     }
 
-    const rawResult = await generateGeminiJson(
-      buildGeminiAssistPrompt(requestContext),
+    const runtime = await getEffectiveComposerConfig(user.id)
+    const rawResult = await generateAiJson(
+      buildGeminiAssistPrompt(requestContext, runtime.prompt),
       geminiAssistResponseSchema,
-      { temperature: requestContext.meta.temperature },
+      { runtime, temperature: requestContext.meta.temperature, userId: user.id },
     )
     const result = normalizeAiAssistResult(rawResult, requestContext)
 
     response.json({ result })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/ai/chat', async (request, response, next) => {
+  try {
+    const user = await requireComposerUser(request)
+    enforceAiEnabled()
+    enforceRateLimit(request, 'ai-chat-ip', getAiRateLimitOptions())
+    enforceRateLimit(request, 'ai-chat-user', getAiRateLimitOptions(), user.id)
+
+    const requestContext = normalizeAiChatRequest(request.body)
+
+    if (!requestContext.ok) {
+      response.status(400).json({ error: requestContext.error })
+      return
+    }
+
+    const runtime = await getEffectiveComposerConfig(user.id)
+    const text = await generateAiText(
+      buildComposerChatPrompt(requestContext),
+      { runtime, temperature: 0.58, userId: user.id },
+    )
+
+    response.json({
+      result: {
+        text,
+        title: 'Chat response',
+      },
+    })
   } catch (error) {
     next(error)
   }
@@ -560,7 +689,7 @@ if (isMainModule()) {
   })
 }
 
-export { app }
+export { app, createCodexCliExecArgsForTests, createCodexCliOutputSchema, formatGeminiCliErrorDetailForTests }
 
 function configureStaticWeb(expressApp) {
   if (!shouldServeWeb()) {
@@ -678,8 +807,12 @@ function validateRuntimeConfig() {
     errors.push(`SERVE_WEB=true requires a built web app at ${webIndexPath}.`)
   }
 
-  if (isAiEnabled() && !process.env.GEMINI_API_KEY?.trim()) {
-    errors.push('GEMINI_API_KEY is required when AI_ENABLED is not false.')
+  if (isAiEnabled()) {
+    const aiProvider = readAiProvider()
+
+    if (!isSupportedAiProvider(aiProvider)) {
+      errors.push('AI_PROVIDER must be "gemini", "ollama", "gemini-cli", or "codex-cli".')
+    }
   }
 
   if (errors.length > 0) {
@@ -689,7 +822,11 @@ function validateRuntimeConfig() {
 
 function getReadinessChecks(databaseStatus) {
   return {
-    aiComposer: isAiEnabled() ? (process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing') : 'disabled',
+    aiAccess: isLocalAiUserAllowed() ? 'local-enabled' : 'account-only',
+    aiComposer: getAiReadinessStatus(),
+    aiModel: isAiEnabled() ? getAiModelLabel() : 'disabled',
+    aiProvider: isAiEnabled() ? readAiProvider() : 'disabled',
+    aiReasoningEffort: isAiEnabled() && readAiProvider() === 'codex-cli' ? getCodexCliReasoningEffortLabel() : '',
     database: databaseStatus,
     staticWeb: shouldServeWeb() ? (existsSync(webIndexPath) ? 'ok' : 'missing') : 'disabled',
     supabaseJwt: supabaseAuthConfig ? 'ok' : 'missing',
@@ -1072,7 +1209,21 @@ const aiAssistActionMeta = {
       'Create a research path from the note. Do not invent exact citations, URLs, or papers. Suggest source categories, search queries, canonical areas to investigate, and verification steps. Prefer headings and bullet lists.',
     temperature: 0.5,
   },
+  custom: {
+    label: 'Custom request',
+    guidance:
+      'Follow the user instruction while staying grounded in the selected text and note context. Return focused, insertable blocks instead of a chat transcript.',
+    temperature: 0.62,
+  },
 }
+
+const defaultComposerSystemPrompt = [
+  'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
+  'Create original prose suitable for a minimalist note-taking app.',
+  'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
+  'Do not invent citations, studies, URLs, books, source names, or facts you cannot ground in the provided context.',
+  'If source verification is needed, include a short note telling the user what to verify rather than pretending it was checked.',
+].join('\n')
 
 const geminiDraftResponseSchema = {
   type: 'object',
@@ -1209,6 +1360,8 @@ function normalizeAiAssistRequest(body) {
   const meta = aiAssistActionMeta[action]
   const note = body?.note && typeof body.note === 'object' ? body.note : {}
   const composerContext = normalizeComposerRequestContext(body?.context)
+  const instruction = normalizeDraftString(body?.instruction, '', 1000)
+  const contextPack = normalizeComposerNoteContextPack(note.contextPack)
   const title = normalizeDraftString(note.title, 'Untitled Note', 180)
   const status = normalizeDraftString(note.status, '', 60)
   const text = normalizeDraftString(note.text, '', 12000)
@@ -1218,7 +1371,11 @@ function normalizeAiAssistRequest(body) {
     : []
 
   if (!meta) {
-    return { ok: false, error: 'Choose Continue, Clarify, Outline, Study Questions, Counterarguments, or Reading List.' }
+    return { ok: false, error: 'Choose Continue, Clarify, Outline, Study Questions, Counterarguments, Reading List, or Custom.' }
+  }
+
+  if (action === 'custom' && instruction.length < 3) {
+    return { ok: false, error: 'Enter a Composer instruction with at least 3 characters.' }
   }
 
   if (text.length < 3 && selectedText.length < 3) {
@@ -1229,14 +1386,51 @@ function normalizeAiAssistRequest(body) {
     ok: true,
     action,
     composerContext,
+    instruction,
     meta,
     note: {
+      contextPack,
       selectedText,
       status,
       tags,
       text,
       title,
     },
+  }
+}
+
+function normalizeAiChatRequest(body) {
+  const message = normalizeDraftString(body?.message, '', 4000)
+  const note = body?.note && typeof body.note === 'object' ? body.note : null
+  const includeNoteContext = Boolean(body?.includeNoteContext)
+  const contextPack = includeNoteContext && note ? normalizeComposerNoteContextPack(note.contextPack) : null
+  const title = note ? normalizeDraftString(note.title, 'Untitled Note', 180) : ''
+  const status = note ? normalizeDraftString(note.status, '', 60) : ''
+  const text = includeNoteContext && note ? normalizeDraftString(note.text, '', 12000) : ''
+  const selectedText = includeNoteContext && note ? normalizeDraftString(note.selectedText, '', 2600) : ''
+  const tags =
+    includeNoteContext && note && Array.isArray(note.tags)
+      ? note.tags.map((tag) => normalizeDraftString(tag, '', 40)).filter(Boolean).slice(0, 10)
+      : []
+
+  if (message.length < 3) {
+    return { ok: false, error: 'Enter a chat message with at least 3 characters.' }
+  }
+
+  return {
+    ok: true,
+    includeNoteContext,
+    message,
+    note: includeNoteContext
+      ? {
+          contextPack,
+          selectedText,
+          status,
+          tags,
+          text,
+          title,
+        }
+      : null,
   }
 }
 
@@ -1273,34 +1467,149 @@ function normalizeComposerContextItem(value) {
   }
 }
 
-function buildGeminiDraftPrompt(topic, meta, composerContext) {
+function normalizeComposerNoteContextPack(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const blockCount = normalizeComposerContextNumber(value.blockCount, 0, 2000)
+  const wordCount = normalizeComposerContextNumber(value.wordCount, 0, 250000)
+  const outline = Array.isArray(value.outline)
+    ? value.outline.map((heading) => normalizeDraftString(heading, '', 120)).filter(Boolean).slice(0, 12)
+    : []
+  const neighboringBlocks = Array.isArray(value.neighboringBlocks)
+    ? value.neighboringBlocks
+        .map(normalizeComposerNoteContextBlock)
+        .filter((block) => block !== null)
+        .slice(0, 5)
+    : []
+  const sources = Array.isArray(value.sources)
+    ? value.sources.map(normalizeComposerNoteContextSource).filter((source) => source !== null).slice(0, 6)
+    : []
+  const linkedNotes = Array.isArray(value.linkedNotes)
+    ? value.linkedNotes.map(normalizeComposerNoteContextReference).filter((note) => note !== null).slice(0, 5)
+    : []
+  const backlinks = Array.isArray(value.backlinks)
+    ? value.backlinks.map(normalizeComposerNoteContextReference).filter((note) => note !== null).slice(0, 5)
+    : []
+
+  return {
+    backlinks,
+    blockCount,
+    collection: normalizeDraftString(value.collection, '', 120),
+    currentHeading: normalizeDraftString(value.currentHeading, '', 120),
+    folderPath: normalizeDraftString(value.folderPath, '', 160),
+    linkedNotes,
+    neighboringBlocks,
+    outline,
+    sources,
+    wordCount,
+  }
+}
+
+function normalizeComposerNoteContextBlock(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const role = ['before', 'selected', 'after'].includes(value.role) ? value.role : 'selected'
+  const type = supportedDraftBlockTypes.has(value.type) ? value.type : 'paragraph'
+  const text = normalizeDraftString(value.text, '', 900)
+
+  if (!text) {
+    return null
+  }
+
+  return { role, text, type }
+}
+
+function normalizeComposerNoteContextReference(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const title = normalizeDraftString(value.title, '', 160)
+  const summary = normalizeDraftString(value.summary, '', 260)
+
+  if (!title && !summary) {
+    return null
+  }
+
+  return {
+    status: normalizeDraftString(value.status, '', 60),
+    summary,
+    title,
+  }
+}
+
+function normalizeComposerNoteContextSource(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const title = normalizeDraftString(value.title, '', 180)
+  const author = normalizeDraftString(value.author, '', 120)
+  const year = normalizeDraftString(value.year, '', 40)
+  const url = normalizeDraftString(value.url, '', 240)
+
+  if (!title && !author && !year && !url) {
+    return null
+  }
+
+  return {
+    author,
+    sourceType: normalizeComposerSourceType(value.sourceType),
+    title,
+    url,
+    year,
+  }
+}
+
+function normalizeComposerSourceType(value) {
+  const sourceType = typeof value === 'string' ? value : ''
+
+  return ['book', 'paper', 'article', 'web', 'dataset', 'other'].includes(sourceType) ? sourceType : 'other'
+}
+
+function normalizeComposerContextNumber(value, minimum, maximum) {
+  const numberValue = Number(value)
+
+  if (!Number.isFinite(numberValue)) {
+    return 0
+  }
+
+  return Math.min(maximum, Math.max(minimum, Math.round(numberValue)))
+}
+
+function buildGeminiDraftPrompt(topic, meta, composerContext, composerPrompt = defaultComposerSystemPrompt) {
   return [
-    'You are Essence Composer, a quiet writing assistant for students, researchers, and deep readers.',
+    composerPrompt,
     `Topic: ${topic}`,
     `Requested note type: ${meta.label}`,
     meta.guidance,
     formatComposerContextForPrompt(composerContext),
-    'Create original prose suitable for a minimalist note-taking app.',
-    'Do not invent citations, studies, URLs, books, or source names. If the topic requires sources, include a short verification note instead of pretending sources were checked.',
-    'Write in a calm, precise, intellectually useful style. Avoid hype, filler, and generic AI disclaimers.',
     'Return only JSON matching the schema. Use block types paragraph, heading, quote, bullet-list, or code.',
-  ].join('\n\n')
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
-function buildGeminiAssistPrompt(context) {
+function buildGeminiAssistPrompt(context, composerPrompt = defaultComposerSystemPrompt) {
   const selectedSection = context.note.selectedText
-    ? [`Selected block to focus on:`, context.note.selectedText].join('\n')
-    : 'No selected block was provided. Work from the full note context.'
+    ? [`Selected text or block to focus on:`, context.note.selectedText].join('\n')
+    : 'No selected text or block was provided. Work from the full note context.'
 
   return [
-    'You are Essence Composer, an active-note assistant for students, researchers, and deep readers.',
+    composerPrompt,
     `Action: ${context.meta.label}`,
     context.meta.guidance,
+    context.instruction ? `User instruction: ${context.instruction}` : '',
     'Return only original, insertable Essence blocks. Do not invent citations, studies, URLs, books, or source names.',
     'If source verification is needed, include a short note telling the user what to verify rather than pretending it was checked.',
     `Note title: ${context.note.title}`,
     context.note.status ? `Note status: ${context.note.status}` : '',
     context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
+    formatComposerNoteContextPack(context.note.contextPack),
     selectedSection,
     formatComposerContextForPrompt(context.composerContext),
     'Full note context:',
@@ -1309,6 +1618,91 @@ function buildGeminiAssistPrompt(context) {
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function buildComposerChatPrompt(context) {
+  const noteSections = context.includeNoteContext && context.note
+    ? [
+        'Current note context:',
+        `Title: ${context.note.title}`,
+        context.note.status ? `Status: ${context.note.status}` : '',
+        context.note.tags.length > 0 ? `Tags: ${context.note.tags.join(', ')}` : '',
+        formatComposerNoteContextPack(context.note.contextPack),
+        context.note.selectedText ? `Selected text:\n${context.note.selectedText}` : '',
+        context.note.text ? `Full note text:\n${context.note.text}` : '',
+      ].filter(Boolean)
+    : []
+
+  return [
+    'You are a plain chat interface inside Essence.',
+    'Answer the user directly in concise, useful plain text.',
+    'Do not create files, modify the workspace, run commands, or claim to have checked external sources.',
+    'If facts, citations, URLs, or current information need verification, say what should be verified.',
+    ...noteSections,
+    `User message:\n${context.message}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function formatComposerNoteContextPack(contextPack) {
+  if (!contextPack) {
+    return ''
+  }
+
+  const location = [contextPack.collection, contextPack.folderPath].filter(Boolean).join(' / ')
+  const shape = [
+    contextPack.wordCount > 0 ? `${contextPack.wordCount} words` : '',
+    contextPack.blockCount > 0 ? `${contextPack.blockCount} blocks` : '',
+  ]
+    .filter(Boolean)
+    .join(' across ')
+  const sections = [
+    'Structured note context. Use this to understand where the user is writing, but let the selected block and direct instruction take priority.',
+    location ? `Location: ${location}` : '',
+    shape ? `Note shape: ${shape}.` : '',
+    contextPack.currentHeading ? `Current section: ${contextPack.currentHeading}` : '',
+    contextPack.outline.length > 0 ? `Outline:\n${contextPack.outline.map((heading, index) => `${index + 1}. ${heading}`).join('\n')}` : '',
+    contextPack.neighboringBlocks.length > 0
+      ? `Nearby blocks:\n${contextPack.neighboringBlocks
+          .map((block, index) => `${index + 1}. ${block.role} ${block.type}: ${block.text}`)
+          .join('\n')}`
+      : '',
+    contextPack.sources.length > 0
+      ? `Known sources:\n${contextPack.sources.map(formatComposerNoteContextSource).join('\n')}`
+      : '',
+    contextPack.linkedNotes.length > 0
+      ? `Linked notes:\n${contextPack.linkedNotes.map(formatComposerNoteContextReference).join('\n')}`
+      : '',
+    contextPack.backlinks.length > 0
+      ? `Notes linking here:\n${contextPack.backlinks.map(formatComposerNoteContextReference).join('\n')}`
+      : '',
+  ]
+
+  return sections.filter(Boolean).join('\n\n')
+}
+
+function formatComposerNoteContextSource(source) {
+  const details = [
+    source.author ? `by ${source.author}` : '',
+    source.year ? `(${source.year})` : '',
+    source.url ? source.url : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return `- ${source.title || 'Untitled source'} [${source.sourceType}]${details ? ` ${details}` : ''}`
+}
+
+function formatComposerNoteContextReference(note) {
+  const details = [
+    note.status ? `status: ${note.status}` : '',
+    note.summary ? `summary: ${note.summary}` : '',
+  ]
+    .filter(Boolean)
+    .join('; ')
+
+  return `- ${note.title || 'Untitled note'}${details ? ` (${details})` : ''}`
 }
 
 function formatComposerContextForPrompt(composerContext) {
@@ -1335,44 +1729,547 @@ function formatComposerContextForPrompt(composerContext) {
   ].join('\n\n')
 }
 
-async function generateGeminiJson(prompt, schema, options = {}) {
-  const apiKey = process.env.GEMINI_API_KEY?.trim()
+function normalizeComposerSettingsPayload(body) {
+  const provider = normalizeComposerSettingsProvider(body?.provider)
+  const model = normalizePlainText(body?.model, 120)
+  const ollamaBaseUrl = normalizePlainText(body?.ollamaBaseUrl, 300)
+  const promptMode = normalizeComposerPromptMode(body?.promptMode)
+  const customPrompt = normalizeMultilineText(body?.customPrompt, 4000)
+  const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
+  const clearApiKey = body?.clearApiKey === true
 
-  if (!apiKey) {
-    const error = new Error('Gemini is not configured yet. Add GEMINI_API_KEY to your .env file and restart the server.')
+  if (provider === undefined) {
+    return { ok: false, error: 'Choose a supported Composer provider.' }
+  }
+
+  if (!promptMode) {
+    return { ok: false, error: 'Choose System prompt or Custom prompt.' }
+  }
+
+  if (promptMode === 'custom' && customPrompt.length < 20) {
+    return { ok: false, error: 'Add a custom prompt with at least 20 characters, or switch back to System prompt.' }
+  }
+
+  if (ollamaBaseUrl) {
+    try {
+      new URL(ollamaBaseUrl)
+    } catch {
+      return { ok: false, error: 'Enter a valid Ollama base URL.' }
+    }
+  }
+
+  if (apiKey.length > 4000) {
+    return { ok: false, error: 'Keep the API key under 4000 characters.' }
+  }
+
+  const settings = {
+    customPrompt,
+    model,
+    ollamaBaseUrl,
+    promptMode,
+    provider,
+  }
+
+  if (apiKey) {
+    settings.apiKeyCiphertext = encryptComposerSecret(apiKey)
+    settings.apiKeyProvider = 'gemini'
+  } else if (clearApiKey) {
+    settings.apiKeyCiphertext = null
+    settings.apiKeyProvider = null
+  }
+
+  return { ok: true, settings }
+}
+
+function normalizeComposerSettingsProvider(value) {
+  const provider = typeof value === 'string' ? value.trim().toLowerCase() : 'server'
+
+  if (!provider || provider === 'server') {
+    return null
+  }
+
+  return isSupportedAiProvider(provider) ? provider : undefined
+}
+
+function normalizeComposerPromptMode(value) {
+  const mode = typeof value === 'string' ? value.trim().toLowerCase() : 'system'
+
+  if (mode === 'system' || mode === 'custom') {
+    return mode
+  }
+
+  return ''
+}
+
+function normalizePlainText(value, maxLength) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return normalized ? normalized.slice(0, maxLength) : ''
+}
+
+function normalizeMultilineText(value, maxLength) {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+
+  return normalized ? normalized.slice(0, maxLength) : ''
+}
+
+function serializeComposerSettingsResponse(settings, runtime) {
+  return {
+    runtime: serializeComposerRuntime(runtime),
+    settings: {
+      apiKeyConfigured: Boolean(settings?.apiKeyCiphertext),
+      apiKeyProvider: settings?.apiKeyProvider ?? '',
+      apiKeyUpdatedAt: settings?.apiKeyUpdatedAt ?? null,
+      customPrompt: settings?.customPrompt ?? '',
+      model: settings?.model ?? '',
+      ollamaBaseUrl: settings?.ollamaBaseUrl ?? '',
+      promptMode: settings?.promptMode === 'custom' ? 'custom' : 'system',
+      provider: settings?.provider ?? 'server',
+      systemPrompt: defaultComposerSystemPrompt,
+      updatedAt: settings?.updatedAt ?? null,
+    },
+  }
+}
+
+function serializeComposerRuntime(runtime) {
+  return {
+    access: isLocalAiUserAllowed() ? 'local-enabled' : 'account-only',
+    apiKeyConfigured: runtime.provider === 'gemini' ? Boolean(runtime.apiKey) : false,
+    localOnly: runtime.provider === 'ollama' || runtime.provider === 'gemini-cli' || runtime.provider === 'codex-cli',
+    model: runtime.model,
+    promptMode: runtime.promptMode,
+    provider: runtime.provider,
+    reasoningEffort: runtime.provider === 'codex-cli' ? getCodexCliReasoningEffortLabel() : '',
+    source: runtime.source,
+    status: getComposerRuntimeStatus(runtime),
+  }
+}
+
+async function getEffectiveComposerConfig(userId) {
+  const settings = userId ? await getComposerSettings(userId) : null
+  const savedProvider = settings?.provider && isSupportedAiProvider(settings.provider) ? settings.provider : ''
+  const provider = savedProvider || getAiProvider()
+  const model = getEffectiveComposerModel(provider, settings?.model)
+  const apiKey = provider === 'gemini' ? getEffectiveGeminiApiKey(settings) : ''
+  const ollamaBaseUrl = provider === 'ollama' ? getOllamaBaseUrl(settings?.ollamaBaseUrl) : ''
+  const promptSettings = getEffectiveComposerPrompt(settings)
+
+  return {
+    apiKey,
+    model,
+    ollamaBaseUrl,
+    prompt: promptSettings.prompt,
+    promptMode: promptSettings.promptMode,
+    provider,
+    source: savedProvider ? 'settings' : 'environment',
+  }
+}
+
+function getEffectiveComposerPrompt(settings) {
+  const promptMode = settings?.promptMode === 'custom' ? 'custom' : 'system'
+  const customPrompt = normalizeMultilineText(settings?.customPrompt, 4000)
+
+  if (promptMode === 'custom' && customPrompt) {
+    return {
+      prompt: customPrompt,
+      promptMode,
+    }
+  }
+
+  return {
+    prompt: defaultComposerSystemPrompt,
+    promptMode: 'system',
+  }
+}
+
+function getEffectiveComposerModel(provider, savedModel) {
+  const configuredModel = normalizePlainText(savedModel, 120)
+
+  if (configuredModel) {
+    return configuredModel
+  }
+
+  if (provider === 'gemini') {
+    return process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  }
+
+  if (provider === 'ollama') {
+    return getOllamaModel()
+  }
+
+  if (provider === 'gemini-cli') {
+    return getGeminiCliModel() || 'Gemini CLI default'
+  }
+
+  if (provider === 'codex-cli') {
+    return getCodexCliModel() || 'Codex CLI default'
+  }
+
+  return ''
+}
+
+function getEffectiveGeminiApiKey(settings) {
+  if (settings?.apiKeyCiphertext && (!settings.apiKeyProvider || settings.apiKeyProvider === 'gemini')) {
+    return decryptComposerSecret(settings.apiKeyCiphertext)
+  }
+
+  return process.env.GEMINI_API_KEY?.trim() || ''
+}
+
+function getComposerRuntimeStatus(runtime) {
+  if (!isAiEnabled()) {
+    return 'disabled'
+  }
+
+  if (!isSupportedAiProvider(runtime.provider)) {
+    return 'invalid'
+  }
+
+  if (runtime.provider === 'gemini') {
+    return runtime.apiKey ? 'ok' : 'missing'
+  }
+
+  if (runtime.provider === 'ollama') {
+    return runtime.model && runtime.ollamaBaseUrl ? 'ok' : 'missing'
+  }
+
+  if (runtime.provider === 'gemini-cli') {
+    try {
+      getGeminiCliCwd()
+      return getGeminiCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
+  }
+
+  if (runtime.provider === 'codex-cli') {
+    try {
+      getCodexCliCwd()
+      getCodexCliReasoningEffort()
+      return getCodexCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
+  }
+
+  return 'invalid'
+}
+
+function encryptComposerSecret(value) {
+  const secret = getComposerSettingsSecret()
+
+  if (!secret) {
+    const error = new Error('Set COMPOSER_SETTINGS_SECRET before saving Composer API keys in production.')
     error.status = 503
     throw error
   }
 
-  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
-  const geminiResponse = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: 'POST',
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', createComposerSettingsKey(secret), iv)
+  const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+
+  return `v1:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`
+}
+
+function decryptComposerSecret(value) {
+  const secret = getComposerSettingsSecret()
+
+  if (!secret) {
+    const error = new Error('Set COMPOSER_SETTINGS_SECRET before using saved Composer API keys in production.')
+    error.status = 503
+    throw error
+  }
+
+  try {
+    const [version, ivValue, tagValue, ciphertextValue] = String(value ?? '').split(':')
+
+    if (version !== 'v1' || !ivValue || !tagValue || !ciphertextValue) {
+      throw new Error('Invalid Composer secret format.')
+    }
+
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      createComposerSettingsKey(secret),
+      Buffer.from(ivValue, 'base64url'),
+    )
+    decipher.setAuthTag(Buffer.from(tagValue, 'base64url'))
+
+    return Buffer.concat([
+      decipher.update(Buffer.from(ciphertextValue, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8')
+  } catch (cause) {
+    const error = new Error('Saved Composer API key could not be decrypted. Clear it and save a new key.')
+    error.cause = cause
+    error.status = 503
+    throw error
+  }
+}
+
+function createComposerSettingsKey(secret) {
+  return createHash('sha256').update(secret).digest()
+}
+
+function getComposerSettingsSecret() {
+  const configuredSecret = process.env.COMPOSER_SETTINGS_SECRET?.trim()
+
+  if (configuredSecret) {
+    return configuredSecret
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    return ''
+  }
+
+  return process.env.DATABASE_URL || 'essence-development-composer-settings'
+}
+
+async function testComposerRuntime(runtime) {
+  const status = getComposerRuntimeStatus(runtime)
+
+  if (status !== 'ok') {
+    const error = new Error(`Composer runtime is ${status}. Save a complete Composer configuration first.`)
+    error.status = status === 'disabled' ? 503 : 400
+    throw error
+  }
+
+  if (runtime.provider === 'gemini') {
+    await testGeminiRuntime(runtime)
+    return { ok: true, message: 'Gemini API is reachable.' }
+  }
+
+  if (runtime.provider === 'ollama') {
+    await testOllamaRuntime(runtime)
+    return { ok: true, message: 'Ollama is reachable.' }
+  }
+
+  if (runtime.provider === 'gemini-cli') {
+    await runCliVersionCheck(getGeminiCliCommand(), getGeminiCliCwd(), 15_000, 'Gemini CLI')
+    return { ok: true, message: 'Gemini CLI can be started.' }
+  }
+
+  if (runtime.provider === 'codex-cli') {
+    await runCliVersionCheck(getCodexCliCommand(), getCodexCliCwd(), 15_000, 'Codex CLI')
+    return { ok: true, message: 'Codex CLI can be started.' }
+  }
+
+  const error = new Error('Unsupported Composer provider.')
+  error.status = 400
+  throw error
+}
+
+async function testGeminiRuntime(runtime) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  let response
+
+  try {
+    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(runtime.model)}`, {
       headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
+        'x-goog-api-key': runtime.apiKey,
       },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: schema,
-          temperature: options.temperature ?? 0.64,
-          topP: options.topP ?? 0.9,
+      signal: controller.signal,
+    })
+  } catch (cause) {
+    const error = new Error('Gemini API could not be reached.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const upstreamMessage =
+      typeof payload?.error?.message === 'string'
+        ? payload.error.message
+        : `Gemini API test failed with status ${response.status}.`
+    const error = new Error(truncateErrorDetail(upstreamMessage))
+    error.status = response.status === 429 ? 429 : 502
+    throw error
+  }
+}
+
+async function testOllamaRuntime(runtime) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8_000)
+  let response
+
+  try {
+    response = await fetch(`${runtime.ollamaBaseUrl}/api/tags`, {
+      signal: controller.signal,
+    })
+  } catch (cause) {
+    const error = new Error('Ollama could not be reached. Start Ollama and check the base URL.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!response.ok) {
+    const error = new Error(`Ollama test failed with status ${response.status}.`)
+    error.status = 502
+    throw error
+  }
+}
+
+async function runCliVersionCheck(command, cwd, timeoutMs, label) {
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    let didTimeout = false
+    let settled = false
+    const child = spawn(command, ['--version'], {
+      cwd,
+      env: process.env,
+      shell: shouldSpawnThroughShell(command),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const timeout = setTimeout(() => {
+      didTimeout = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
+    const settle = (callback) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeout)
+      callback()
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = appendLimitedProcessOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr = appendLimitedProcessOutput(stderr, chunk)
+    })
+
+    child.on('error', (cause) => {
+      settle(() => {
+        const error = new Error(`${label} could not be started.`)
+        error.cause = cause
+        error.status = 502
+        reject(error)
+      })
+    })
+
+    child.on('close', (code, signal) => {
+      settle(() => {
+        if (didTimeout) {
+          const error = new Error(`${label} version check timed out after ${timeoutMs}ms.`)
+          error.status = 504
+          reject(error)
+          return
+        }
+
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
+          const error = new Error(`${label} version check failed. ${truncateErrorDetail(detail)}`)
+          error.status = 502
+          reject(error)
+          return
+        }
+
+        resolve({ stderr, stdout })
+      })
+    })
+  })
+}
+
+async function generateAiJson(prompt, schema, options = {}) {
+  const runtime = options.runtime ?? await getEffectiveComposerConfig(options.userId)
+  const provider = runtime.provider
+
+  if (provider === 'ollama') {
+    return generateOllamaJson(prompt, schema, options, runtime)
+  }
+
+  if (provider === 'gemini-cli') {
+    return generateGeminiCliJson(prompt, schema, options, runtime)
+  }
+
+  if (provider === 'codex-cli') {
+    return generateCodexCliJson(prompt, schema, options, runtime)
+  }
+
+  return generateGeminiJson(prompt, schema, options, runtime)
+}
+
+async function generateAiText(prompt, options = {}) {
+  const runtime = options.runtime ?? await getEffectiveComposerConfig(options.userId)
+  const provider = runtime.provider
+
+  if (provider === 'ollama') {
+    return generateOllamaText(prompt, options, runtime)
+  }
+
+  if (provider === 'gemini-cli') {
+    return generateGeminiCliText(prompt, options, runtime)
+  }
+
+  if (provider === 'codex-cli') {
+    return generateCodexCliText(prompt, options, runtime)
+  }
+
+  return generateGeminiText(prompt, options, runtime)
+}
+
+async function generateGeminiJson(prompt, schema, options = {}, runtime = {}) {
+  const apiKey = runtime.apiKey || process.env.GEMINI_API_KEY?.trim()
+
+  if (!apiKey) {
+    const error = new Error('Gemini is not configured yet. Add a Gemini API key in Settings or set GEMINI_API_KEY.')
+    error.status = 503
+    throw error
+  }
+
+  const model = runtime.model || process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  let geminiResponse
+
+  try {
+    geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
-      }),
-    },
-  )
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseJsonSchema: schema,
+            temperature: options.temperature ?? 0.64,
+            topP: options.topP ?? 0.9,
+          },
+        }),
+      },
+    )
+  } catch (cause) {
+    const error = new Error('Gemini could not be reached. Check the server network and Gemini configuration.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
 
   const geminiPayload = await geminiResponse.json().catch(() => null)
 
@@ -1401,6 +2298,619 @@ async function generateGeminiJson(prompt, schema, options = {}) {
     error.status = 502
     throw error
   }
+}
+
+async function generateGeminiText(prompt, options = {}, runtime = {}) {
+  const apiKey = runtime.apiKey || process.env.GEMINI_API_KEY?.trim()
+
+  if (!apiKey) {
+    const error = new Error('Gemini is not configured yet. Add a Gemini API key in Settings or set GEMINI_API_KEY.')
+    error.status = 503
+    throw error
+  }
+
+  const model = runtime.model || process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  let geminiResponse
+
+  try {
+    geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: options.temperature ?? 0.58,
+            topP: options.topP ?? 0.9,
+          },
+        }),
+      },
+    )
+  } catch (cause) {
+    const error = new Error('Gemini could not be reached. Check the server network and Gemini configuration.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const geminiPayload = await geminiResponse.json().catch(() => null)
+
+  if (!geminiResponse.ok) {
+    const upstreamMessage =
+      typeof geminiPayload?.error?.message === 'string'
+        ? geminiPayload.error.message
+        : `Gemini request failed with status ${geminiResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = geminiResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = extractGeminiText(geminiPayload)
+
+  if (!responseText) {
+    const error = new Error('Gemini returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
+async function generateOllamaJson(prompt, schema, options = {}, runtime = {}) {
+  const model = runtime.model || getOllamaModel()
+  const baseUrl = runtime.ollamaBaseUrl || getOllamaBaseUrl()
+  let ollamaResponse
+
+  try {
+    ollamaResponse = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        format: 'json',
+        model,
+        options: {
+          temperature: options.temperature ?? 0.64,
+          top_p: options.topP ?? 0.9,
+        },
+        prompt: [
+          prompt,
+          'Return valid JSON only. Do not wrap the response in Markdown fences.',
+          `The JSON must match this schema:\n${JSON.stringify(schema)}`,
+        ].join('\n\n'),
+        stream: false,
+      }),
+    })
+  } catch (cause) {
+    const error = new Error('Ollama could not be reached. Start Ollama and check OLLAMA_BASE_URL.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const ollamaPayload = await ollamaResponse.json().catch(() => null)
+
+  if (!ollamaResponse.ok) {
+    const upstreamMessage =
+      typeof ollamaPayload?.error === 'string'
+        ? ollamaPayload.error
+        : `Ollama request failed with status ${ollamaResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = ollamaResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = typeof ollamaPayload?.response === 'string' ? ollamaPayload.response.trim() : ''
+
+  if (!responseText) {
+    const error = new Error('Ollama returned an empty Composer response.')
+    error.status = 502
+    throw error
+  }
+
+  try {
+    return parseJsonText(responseText)
+  } catch {
+    const error = new Error('Ollama returned content the app could not parse. Try again.')
+    error.status = 502
+    throw error
+  }
+}
+
+async function generateOllamaText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model || getOllamaModel()
+  const baseUrl = runtime.ollamaBaseUrl || getOllamaBaseUrl()
+  let ollamaResponse
+
+  try {
+    ollamaResponse = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        options: {
+          temperature: options.temperature ?? 0.58,
+          top_p: options.topP ?? 0.9,
+        },
+        prompt,
+        stream: false,
+      }),
+    })
+  } catch (cause) {
+    const error = new Error('Ollama could not be reached. Start Ollama and check OLLAMA_BASE_URL.')
+    error.cause = cause
+    error.status = 502
+    throw error
+  }
+
+  const ollamaPayload = await ollamaResponse.json().catch(() => null)
+
+  if (!ollamaResponse.ok) {
+    const upstreamMessage =
+      typeof ollamaPayload?.error === 'string'
+        ? ollamaPayload.error
+        : `Ollama request failed with status ${ollamaResponse.status}.`
+    const error = new Error(upstreamMessage)
+    error.status = ollamaResponse.status === 429 ? 429 : 502
+    throw error
+  }
+
+  const responseText = typeof ollamaPayload?.response === 'string' ? ollamaPayload.response.trim() : ''
+
+  if (!responseText) {
+    const error = new Error('Ollama returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
+async function generateGeminiCliJson(prompt, schema, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Gemini CLI default' ? runtime.model : getGeminiCliModel()
+  const cliPrompt = [
+    prompt,
+    'Return valid JSON only. Do not wrap the response in Markdown fences.',
+    `The JSON must match this schema:\n${JSON.stringify(schema)}`,
+  ].join('\n\n')
+  const args = ['--output-format', 'json']
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  const result = await runGeminiCli(args, cliPrompt, options)
+  const responseText = extractGeminiCliResponseText(result.stdout)
+
+  if (!responseText) {
+    const error = new Error('Gemini CLI returned an empty Composer response.')
+    error.status = 502
+    throw error
+  }
+
+  try {
+    return parseJsonText(responseText)
+  } catch {
+    const error = new Error('Gemini CLI returned content the app could not parse. Try again.')
+    error.status = 502
+    throw error
+  }
+}
+
+async function generateGeminiCliText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Gemini CLI default' ? runtime.model : getGeminiCliModel()
+  const args = ['--output-format', 'json']
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  const result = await runGeminiCli(args, prompt, options)
+  const responseText = extractGeminiCliResponseText(result.stdout)
+
+  if (!responseText) {
+    const error = new Error('Gemini CLI returned an empty chat response.')
+    error.status = 502
+    throw error
+  }
+
+  return responseText
+}
+
+async function runGeminiCli(args, input, options = {}) {
+  const command = getGeminiCliCommand()
+  const cwd = getGeminiCliCwd()
+  const timeoutMs = getGeminiCliTimeoutMs()
+
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    let didTimeout = false
+    let settled = false
+    const child = spawn(command, args, {
+      cwd,
+      env: {
+        ...process.env,
+        GEMINI_CLI_TRUST_WORKSPACE: process.env.GEMINI_CLI_TRUST_WORKSPACE?.trim() || 'true',
+      },
+      shell: shouldSpawnThroughShell(command),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const timeout = setTimeout(() => {
+      didTimeout = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
+
+    const settle = (callback) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeout)
+      callback()
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = appendLimitedProcessOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr = appendLimitedProcessOutput(stderr, chunk)
+    })
+
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+
+    child.on('error', (cause) => {
+      settle(() => {
+        const error = new Error('Gemini CLI could not be started. Install Gemini CLI or set GEMINI_CLI_COMMAND.')
+        error.cause = cause
+        error.status = 502
+        reject(error)
+      })
+    })
+
+    child.on('close', (code, signal) => {
+      settle(() => {
+        if (didTimeout) {
+          const error = new Error(`Gemini CLI timed out after ${timeoutMs}ms.`)
+          error.status = 504
+          reject(error)
+          return
+        }
+
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
+          const error = new Error(`Gemini CLI request failed. ${formatGeminiCliErrorDetail(detail)}`)
+          error.status = code === 429 ? 429 : 502
+          reject(error)
+          return
+        }
+
+        resolve({ stderr, stdout, timeoutMs: options.timeoutMs ?? timeoutMs })
+      })
+    })
+  })
+}
+
+function extractGeminiCliResponseText(stdout) {
+  const output = stdout.trim()
+
+  if (!output) {
+    return ''
+  }
+
+  try {
+    const payload = parseJsonText(output)
+
+    if (typeof payload?.error?.message === 'string' && payload.error.message.trim()) {
+      const error = new Error(payload.error.message.trim())
+      error.status = 502
+      throw error
+    }
+
+    if (typeof payload?.response === 'string') {
+      return payload.response.trim()
+    }
+
+    if (payload && typeof payload === 'object') {
+      return JSON.stringify(payload)
+    }
+  } catch (error) {
+    if (error?.status) {
+      throw error
+    }
+  }
+
+  return output
+}
+
+async function generateCodexCliJson(prompt, schema, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Codex CLI default' ? runtime.model : getCodexCliModel()
+  const reasoningEffort = getCodexCliReasoningEffort()
+  const timeoutMs = getCodexCliTimeoutMs()
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'essence-codex-'))
+  const schemaPath = path.join(tempDirectory, 'schema.json')
+  const outputPath = path.join(tempDirectory, 'response.json')
+  const codexPrompt = [
+    prompt,
+    'Return valid JSON only. Do not wrap the response in Markdown fences.',
+    'Your final response must match the provided output schema.',
+  ].join('\n\n')
+  const args = createCodexCliExecArgs({ model, outputPath, reasoningEffort, schemaPath })
+
+  try {
+    await writeFile(schemaPath, JSON.stringify(createCodexCliOutputSchema(schema)), 'utf8')
+    await runCodexCli(args, codexPrompt, { ...options, timeoutMs })
+
+    const responseText = (await readFile(outputPath, 'utf8').catch(() => '')).trim()
+
+    if (!responseText) {
+      const error = new Error('Codex CLI returned an empty Composer response.')
+      error.status = 502
+      throw error
+    }
+
+    try {
+      return parseJsonText(responseText)
+    } catch {
+      const error = new Error('Codex CLI returned content the app could not parse. Try again.')
+      error.status = 502
+      throw error
+    }
+  } finally {
+    await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
+  }
+}
+
+async function generateCodexCliText(prompt, options = {}, runtime = {}) {
+  const model = runtime.model && runtime.model !== 'Codex CLI default' ? runtime.model : getCodexCliModel()
+  const reasoningEffort = getCodexCliReasoningEffort()
+  const timeoutMs = getCodexCliTimeoutMs()
+  const tempDirectory = await mkdtemp(path.join(tmpdir(), 'essence-codex-'))
+  const outputPath = path.join(tempDirectory, 'response.txt')
+  const args = createCodexCliExecArgs({ model, outputPath, reasoningEffort })
+
+  try {
+    await runCodexCli(args, prompt, { ...options, timeoutMs })
+
+    const responseText = (await readFile(outputPath, 'utf8').catch(() => '')).trim()
+
+    if (!responseText) {
+      const error = new Error('Codex CLI returned an empty chat response.')
+      error.status = 502
+      throw error
+    }
+
+    return responseText
+  } finally {
+    await rm(tempDirectory, { force: true, recursive: true }).catch(() => undefined)
+  }
+}
+
+function createCodexCliExecArgsForTests(options) {
+  return createCodexCliExecArgs(options)
+}
+
+function formatGeminiCliErrorDetailForTests(detail) {
+  return formatGeminiCliErrorDetail(detail)
+}
+
+function createCodexCliExecArgs({ model = '', outputPath, reasoningEffort = '', schemaPath }) {
+  const args = [
+    'exec',
+    '--sandbox',
+    'read-only',
+    '--ephemeral',
+    '--skip-git-repo-check',
+    '--output-last-message',
+    outputPath,
+    '--color',
+    'never',
+  ]
+
+  if (schemaPath) {
+    args.splice(5, 0, '--output-schema', schemaPath)
+  }
+
+  if (model) {
+    args.push('--model', model)
+  }
+
+  if (reasoningEffort) {
+    args.push('--config', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`)
+  }
+
+  args.push('-')
+
+  return args
+}
+
+function createCodexCliOutputSchema(schema) {
+  return makeOpenAiStrictSchema(schema)
+}
+
+function makeOpenAiStrictSchema(value) {
+  if (Array.isArray(value)) {
+    return value.map(makeOpenAiStrictSchema)
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  const next = { ...value }
+
+  if (next.properties && typeof next.properties === 'object' && !Array.isArray(next.properties)) {
+    const originalRequired = Array.isArray(next.required) ? new Set(next.required) : new Set()
+    const properties = Object.entries(next.properties)
+
+    next.properties = Object.fromEntries(
+      properties.map(([key, propertySchema]) => {
+        const strictPropertySchema = makeOpenAiStrictSchema(propertySchema)
+        return [key, originalRequired.has(key) ? strictPropertySchema : makeSchemaNullable(strictPropertySchema)]
+      }),
+    )
+    next.required = properties.map(([key]) => key)
+
+    if (next.additionalProperties === undefined) {
+      next.additionalProperties = false
+    }
+  }
+
+  if (next.items) {
+    next.items = makeOpenAiStrictSchema(next.items)
+  }
+
+  if (Array.isArray(next.anyOf)) {
+    next.anyOf = next.anyOf.map(makeOpenAiStrictSchema)
+  }
+
+  if (Array.isArray(next.oneOf)) {
+    next.oneOf = next.oneOf.map(makeOpenAiStrictSchema)
+  }
+
+  if (Array.isArray(next.allOf)) {
+    next.allOf = next.allOf.map(makeOpenAiStrictSchema)
+  }
+
+  return next
+}
+
+function makeSchemaNullable(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return schema
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    if (schema.anyOf.some((option) => option?.type === 'null')) {
+      return schema
+    }
+
+    return { ...schema, anyOf: [...schema.anyOf, { type: 'null' }] }
+  }
+
+  if (Array.isArray(schema.type)) {
+    return schema.type.includes('null') ? schema : { ...schema, type: [...schema.type, 'null'] }
+  }
+
+  if (typeof schema.type === 'string') {
+    return schema.type === 'null' ? schema : { ...schema, type: [schema.type, 'null'] }
+  }
+
+  return { anyOf: [schema, { type: 'null' }] }
+}
+
+async function runCodexCli(args, input, options = {}) {
+  const command = getCodexCliCommand()
+  const cwd = getCodexCliCwd()
+  const timeoutMs = options.timeoutMs ?? getCodexCliTimeoutMs()
+
+  return new Promise((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    let didTimeout = false
+    let settled = false
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      shell: shouldSpawnThroughShell(command),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const timeout = setTimeout(() => {
+      didTimeout = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
+
+    const settle = (callback) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeout)
+      callback()
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = appendLimitedProcessOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderr = appendLimitedProcessOutput(stderr, chunk)
+    })
+
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(input)
+
+    child.on('error', (cause) => {
+      settle(() => {
+        const error = new Error('Codex CLI could not be started. Install Codex CLI or set CODEX_CLI_COMMAND.')
+        error.cause = cause
+        error.status = 502
+        reject(error)
+      })
+    })
+
+    child.on('close', (code, signal) => {
+      settle(() => {
+        if (didTimeout) {
+          const error = new Error(`Codex CLI timed out after ${timeoutMs}ms.`)
+          error.status = 504
+          reject(error)
+          return
+        }
+
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `Process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`
+          const error = new Error(`Codex CLI request failed. ${truncateErrorDetail(detail)}`)
+          error.status = code === 429 ? 429 : 502
+          reject(error)
+          return
+        }
+
+        resolve({ stderr, stdout, timeoutMs })
+      })
+    })
+  })
+}
+
+function appendLimitedProcessOutput(currentValue, chunk) {
+  const nextValue = `${currentValue}${chunk.toString('utf8')}`
+  const maxLength = 2_000_000
+
+  if (nextValue.length <= maxLength) {
+    return nextValue
+  }
+
+  return nextValue.slice(nextValue.length - maxLength)
+}
+
+function shouldSpawnThroughShell(command) {
+  return process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)
+}
+
+function truncateErrorDetail(value) {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim()
+
+  if (normalizedValue.length <= 360) {
+    return normalizedValue
+  }
+
+  return `...${normalizedValue.slice(-357).trimStart()}`
 }
 
 function extractGeminiText(payload) {
@@ -1594,6 +3104,29 @@ async function requireAccountUser(request) {
   }
 
   const error = new Error('Sign in required for workspace sync.')
+  error.status = 401
+  throw error
+}
+
+async function requireComposerUser(request) {
+  const sessionUser = await getAccountUserFromRequest(request)
+
+  if (sessionUser) {
+    return sessionUser
+  }
+
+  if (isLocalAiUserAllowed()) {
+    return (
+      (await getLocalUser()) ?? {
+        id: localUserId,
+        email: 'local@essence.local',
+        displayName: 'Local Workspace',
+        isLocal: true,
+      }
+    )
+  }
+
+  const error = new Error('Sign in required for Composer. Set AI_ALLOW_LOCAL_USER=true for private local Composer use.')
   error.status = 401
   throw error
 }
@@ -1832,6 +3365,9 @@ function createSupabaseOtpClient() {
       autoRefreshToken: false,
       persistSession: false,
     },
+    realtime: {
+      transport: DisabledRealtimeWebSocket,
+    },
   })
 }
 
@@ -1928,6 +3464,244 @@ function isDevEmailLoginEnabled() {
 
 function isAiEnabled() {
   return process.env.AI_ENABLED !== 'false'
+}
+
+function isLocalAiUserAllowed() {
+  return process.env.AI_ALLOW_LOCAL_USER === 'true'
+}
+
+function readAiProvider() {
+  return process.env.AI_PROVIDER?.trim().toLowerCase() || 'gemini'
+}
+
+function isSupportedAiProvider(provider) {
+  return provider === 'gemini' || provider === 'ollama' || provider === 'gemini-cli' || provider === 'codex-cli'
+}
+
+function getAiProvider() {
+  const provider = readAiProvider()
+
+  if (isSupportedAiProvider(provider)) {
+    return provider
+  }
+
+  const error = new Error(`Unsupported AI_PROVIDER "${provider}". Use "gemini", "ollama", "gemini-cli", or "codex-cli".`)
+  error.status = 503
+  throw error
+}
+
+function getCodexCliCommand() {
+  return process.env.CODEX_CLI_COMMAND?.trim() || 'codex'
+}
+
+function getCodexCliCwd() {
+  const configuredCwd = process.env.CODEX_CLI_CWD?.trim()
+  const cwd = configuredCwd ? path.resolve(configuredCwd) : apiDirectory
+
+  if (!existsSync(cwd)) {
+    const error = new Error('Invalid CODEX_CLI_CWD.')
+    error.status = 503
+    throw error
+  }
+
+  return cwd
+}
+
+function getCodexCliModel() {
+  return process.env.CODEX_CLI_MODEL?.trim() || ''
+}
+
+function formatGeminiCliErrorDetail(value) {
+  const detail = stripAnsi(String(value ?? '')).trim()
+  const localizedMessage = extractJsonStringField(detail, 'message')
+  const status = extractJsonStringField(detail, 'status')
+
+  if (/api key expired/i.test(detail)) {
+    return 'API key expired. Renew the Gemini API key used by Gemini CLI, then restart the Essence API.'
+  }
+
+  if (/not running in a trusted directory|skip-trust|trusted folders?/i.test(detail)) {
+    return 'Gemini CLI does not trust this workspace. Set GEMINI_CLI_TRUST_WORKSPACE=true or trust the directory interactively.'
+  }
+
+  if (/api key/i.test(detail) && /invalid|expired|not valid|bad request/i.test(detail)) {
+    return localizedMessage || 'Gemini API key is invalid or expired. Renew the key used by Gemini CLI.'
+  }
+
+  return truncateErrorDetail(localizedMessage || status || detail)
+}
+
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+}
+
+function extractJsonStringField(value, fieldName) {
+  const pattern = new RegExp(`"${fieldName}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i')
+  const match = value.match(pattern)
+
+  if (!match) {
+    return ''
+  }
+
+  try {
+    return JSON.parse(`"${match[1]}"`).trim()
+  } catch {
+    return match[1].trim()
+  }
+}
+
+function getCodexCliReasoningEffort() {
+  return normalizeCodexCliReasoningEffort(process.env.CODEX_CLI_REASONING_EFFORT)
+}
+
+function getCodexCliReasoningEffortLabel() {
+  return getCodexCliReasoningEffort() || 'Codex CLI default'
+}
+
+function normalizeCodexCliReasoningEffort(value) {
+  const normalizedValue = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+
+  if (!normalizedValue) {
+    return ''
+  }
+
+  const aliases = new Map([
+    ['x-high', 'high'],
+    ['xhigh', 'high'],
+    ['extra-high', 'high'],
+    ['extra-highest', 'high'],
+    ['extra', 'high'],
+  ])
+  const effort = aliases.get(normalizedValue) ?? normalizedValue
+
+  if (['minimal', 'low', 'medium', 'high'].includes(effort)) {
+    return effort
+  }
+
+  const error = new Error('Invalid CODEX_CLI_REASONING_EFFORT. Use minimal, low, medium, or high.')
+  error.status = 503
+  throw error
+}
+
+function getCodexCliTimeoutMs() {
+  const rawValue = process.env.CODEX_CLI_TIMEOUT_MS?.trim()
+  const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 120_000
+
+  if (!Number.isFinite(parsedValue)) {
+    return 120_000
+  }
+
+  return Math.min(600_000, Math.max(10_000, parsedValue))
+}
+
+function getGeminiCliCommand() {
+  return process.env.GEMINI_CLI_COMMAND?.trim() || 'gemini'
+}
+
+function getGeminiCliCwd() {
+  const configuredCwd = process.env.GEMINI_CLI_CWD?.trim()
+  const cwd = configuredCwd ? path.resolve(configuredCwd) : apiDirectory
+
+  if (!existsSync(cwd)) {
+    const error = new Error('Invalid GEMINI_CLI_CWD.')
+    error.status = 503
+    throw error
+  }
+
+  return cwd
+}
+
+function getGeminiCliModel() {
+  return process.env.GEMINI_CLI_MODEL?.trim() || ''
+}
+
+function getGeminiCliTimeoutMs() {
+  const rawValue = process.env.GEMINI_CLI_TIMEOUT_MS?.trim()
+  const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 90_000
+
+  if (!Number.isFinite(parsedValue)) {
+    return 90_000
+  }
+
+  return Math.min(300_000, Math.max(5_000, parsedValue))
+}
+
+function getOllamaBaseUrl(overrideValue = '') {
+  const value = overrideValue?.trim() || process.env.OLLAMA_BASE_URL?.trim() || 'http://127.0.0.1:11434'
+
+  try {
+    return new URL(value).toString().replace(/\/+$/g, '')
+  } catch {
+    const error = new Error('Invalid OLLAMA_BASE_URL.')
+    error.status = 503
+    throw error
+  }
+}
+
+function getOllamaModel() {
+  return process.env.OLLAMA_MODEL?.trim() || 'llama3.1'
+}
+
+function getAiModelLabel() {
+  const provider = readAiProvider()
+
+  if (provider === 'gemini') {
+    return process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview'
+  }
+
+  if (provider === 'ollama') {
+    return getOllamaModel()
+  }
+
+  if (provider === 'gemini-cli') {
+    return getGeminiCliModel() || 'Gemini CLI default'
+  }
+
+  if (provider === 'codex-cli') {
+    return getCodexCliModel() || 'Codex CLI default'
+  }
+
+  return 'unknown'
+}
+
+function getAiReadinessStatus() {
+  if (!isAiEnabled()) {
+    return 'disabled'
+  }
+
+  const provider = readAiProvider()
+
+  if (!isSupportedAiProvider(provider)) {
+    return 'invalid'
+  }
+
+  if (provider === 'gemini') {
+    return process.env.GEMINI_API_KEY?.trim() ? 'ok' : 'missing'
+  }
+
+  if (provider === 'gemini-cli') {
+    try {
+      getGeminiCliCwd()
+      return getGeminiCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
+  }
+
+  if (provider === 'codex-cli') {
+    try {
+      getCodexCliCwd()
+      getCodexCliReasoningEffort()
+      return getCodexCliCommand() ? 'ok' : 'missing'
+    } catch {
+      return 'invalid'
+    }
+  }
+
+  return getOllamaModel() ? 'ok' : 'missing'
 }
 
 function enforceAiEnabled() {

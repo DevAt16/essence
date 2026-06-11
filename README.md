@@ -54,6 +54,69 @@ Frontend-only development still works with:
 npm run dev
 ```
 
+## Local Composer Providers
+
+For a private personal setup, Composer can use a local provider through the API without requiring an approved remote account.
+
+### Ollama
+
+Keep Ollama on localhost, pull the model you want, and enable the local Composer flags in `.env`:
+
+```bash
+ollama pull llama3.1
+```
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=ollama
+AI_ALLOW_LOCAL_USER=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+### Gemini CLI
+
+If you already use Gemini CLI locally, Composer can call it through the API in headless mode. Install and authenticate Gemini CLI first, then use:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=gemini-cli
+AI_ALLOW_LOCAL_USER=true
+GEMINI_CLI_COMMAND=gemini
+GEMINI_CLI_MODEL=
+GEMINI_CLI_CWD=
+GEMINI_CLI_TRUST_WORKSPACE=true
+GEMINI_CLI_TIMEOUT_MS=90000
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+Leave `GEMINI_CLI_MODEL` empty to use the CLI default, or set a model supported by your Gemini CLI setup. `GEMINI_CLI_CWD` is optional; when empty, Essence runs the CLI from the API directory. `GEMINI_CLI_TRUST_WORKSPACE=true` lets headless API calls run without Gemini CLI's interactive trusted-folder prompt.
+
+### Codex CLI
+
+If you use OpenAI Codex CLI locally, Composer can run it in non-interactive mode through the API. Install and authenticate Codex CLI first, then use:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=codex-cli
+AI_ALLOW_LOCAL_USER=true
+CODEX_CLI_COMMAND=codex
+CODEX_CLI_MODEL=
+CODEX_CLI_REASONING_EFFORT=
+CODEX_CLI_CWD=
+CODEX_CLI_TIMEOUT_MS=120000
+VITE_AI_ALLOW_LOCAL_USER=true
+```
+
+Leave `CODEX_CLI_MODEL` empty to use the CLI default, or set a model such as `gpt-5.5`. Set `CODEX_CLI_REASONING_EFFORT` to `minimal`, `low`, `medium`, or `high` when you want Essence to override the Codex CLI default reasoning effort. Composer runs `codex exec` with read-only sandboxing, an output schema, and an ephemeral session.
+
+Then run:
+
+```bash
+npm run dev:full
+```
+
 Build the web app:
 
 ```bash
@@ -91,6 +154,7 @@ npm run check
 This runs lint, API auth tests, and the production web build. Supabase dashboard settings still need to be verified separately before a real deployment.
 
 For production runtime, health checks, logging, backups, and deployment options, see [DEPLOYMENT.md](DEPLOYMENT.md).
+For the release smoke checklist, see [docs/production-qa.md](docs/production-qa.md).
 
 ## PostgreSQL
 
@@ -107,8 +171,9 @@ Current backend model:
 - normalized tables for `workspace_state`, `folders`, `notes`, `note_blocks`, `note_tags`, and `note_links`
 - `note_revisions` as the foundation for note history/version restore
 - legacy `app_state` kept in sync as a compatibility backup snapshot
-- signed-in account sessions are required for sync, search, note history, and AI endpoints
-- local-only mode stays in browser `localStorage` and does not receive remote API capabilities
+- signed-in account sessions are required for sync, search, and note history
+- AI endpoints require signed-in account sessions unless private local Composer is explicitly enabled
+- local-only mode stays in browser `localStorage` and does not receive remote sync/search/history capabilities
 
 ## Authentication
 

@@ -15,6 +15,7 @@ type AiAssistAction =
   | 'study-questions'
   | 'counterarguments'
   | 'reading-list'
+  | 'custom'
 type AiAssistActionGroup = 'Write' | 'Review'
 
 interface AiDraftBlock {
@@ -81,6 +82,7 @@ interface AiComposerPanelProps {
   isGenerating: boolean
   isOpen: boolean
   mode: AiComposerMode
+  runtimeLabel: string
   onAppendAssist: () => void
   onAssistActionChange: (action: AiAssistAction) => void
   onCategoryChange: (category: AiDraftCategory) => void
@@ -200,6 +202,7 @@ export default function AiComposerPanel({
   isGenerating,
   isOpen,
   mode,
+  runtimeLabel,
   onAppendAssist,
   onAssistActionChange,
   onCategoryChange,
@@ -219,6 +222,7 @@ export default function AiComposerPanel({
   const previewBlocks = draft?.blocks.slice(0, 4) ?? []
   const assistPreviewBlocks = assistResult?.blocks.slice(0, 4) ?? []
   const activeAssistAction = aiAssistActions.find((action) => action.value === assistAction) ?? aiAssistActions[0]
+  const runtimeSuffix = runtimeLabel && runtimeLabel !== 'Composer' ? ` with ${runtimeLabel}` : ''
   const outputResetKey =
     mode === 'draft'
       ? `draft:${draft?.title ?? 'empty'}:${draft?.blocks.length ?? 0}:${draft?.summary ?? ''}`
@@ -298,12 +302,17 @@ export default function AiComposerPanel({
                   onChange={(event) => onTopicChange(event.target.value)}
                   placeholder="Cliodynamics and the rise of empires"
                   rows={3}
+                  disabled={isGenerating}
                 />
               </label>
 
               <label className="ai-composer__field">
                 <span>Type</span>
-                <select value={category} onChange={(event) => onCategoryChange(event.target.value as AiDraftCategory)}>
+                <select
+                  value={category}
+                  onChange={(event) => onCategoryChange(event.target.value as AiDraftCategory)}
+                  disabled={isGenerating}
+                >
                   {aiDraftCategories.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -317,13 +326,22 @@ export default function AiComposerPanel({
               {error && <p className="ai-composer__error">{error}</p>}
 
               <button type="submit" className="primary-button ai-composer__submit" disabled={isGenerating}>
-                <Icon name="spark" />
+                {isGenerating ? <span className="ai-composer__buttonSpinner" aria-hidden="true" /> : <Icon name="spark" />}
                 <span>{isGenerating ? 'Composing...' : 'Generate draft'}</span>
               </button>
             </form>
 
             <div className="ai-composer__preview" aria-live="polite" aria-busy={isGenerating}>
-              {draft ? (
+              {isGenerating ? (
+                <ComposerWaitingState
+                  title={`Composing${runtimeSuffix}...`}
+                  detail={
+                    runtimeLabel === 'Ollama'
+                      ? 'Waking the local model and shaping the result into editable blocks.'
+                      : 'Sending the prompt through the API and shaping the result into editable blocks.'
+                  }
+                />
+              ) : draft ? (
                 <>
                   <AiOutputToolbar
                     mode={outputMode}
@@ -400,6 +418,7 @@ export default function AiComposerPanel({
                             onClick={() => onAssistActionChange(action.value)}
                             role="radio"
                             aria-checked={assistAction === action.value}
+                            disabled={isAssisting}
                           >
                             <strong>{action.label}</strong>
                             <span>{action.description}</span>
@@ -419,13 +438,22 @@ export default function AiComposerPanel({
                 className="primary-button ai-composer__submit"
                 disabled={isAssisting || !activeNoteTitle}
               >
-                <Icon name="spark" />
+                {isAssisting ? <span className="ai-composer__buttonSpinner" aria-hidden="true" /> : <Icon name="spark" />}
                 <span>{isAssisting ? 'Thinking...' : 'Assist this note'}</span>
               </button>
             </form>
 
             <div className="ai-composer__preview" aria-live="polite" aria-busy={isAssisting}>
-              {assistResult ? (
+              {isAssisting ? (
+                <ComposerWaitingState
+                  title={`Thinking${runtimeSuffix}...`}
+                  detail={
+                    runtimeLabel === 'Ollama'
+                      ? 'Local models can take a moment, especially on the first request after launch.'
+                      : 'Reading the note context and preparing editable blocks.'
+                  }
+                />
+              ) : assistResult ? (
                 <>
                   <AiOutputToolbar
                     mode={outputMode}
@@ -540,6 +568,23 @@ function ComposerHistoryList({
         ))}
       </div>
     </section>
+  )
+}
+
+function ComposerWaitingState({ detail, title }: { detail: string; title: string }) {
+  return (
+    <div className="ai-composer__working" role="status">
+      <span className="ai-composer__workingSpinner" aria-hidden="true" />
+      <div>
+        <strong>{title}</strong>
+        <p>{detail}</p>
+      </div>
+      <div className="ai-composer__workingLines" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+    </div>
   )
 }
 
